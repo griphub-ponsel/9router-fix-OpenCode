@@ -72,6 +72,56 @@ function stripContentTypes(body, stripList = []) {
   }
 }
 
+function isGeminiImageLimitedModel(model) {
+  const m = String(model || "").toLowerCase();
+  return /gemini-3(?:\.1)?-pro/.test(m);
+}
+
+function isOpenAIImagePart(part) {
+  return part?.type === "image_url" || part?.type === "image";
+}
+
+// Gemini 3/3.1 Pro currently rejects requests with more than 10 images.
+// Keep the newest images because old screenshots in long OpenCode sessions are
+// usually stale context and should not block the current request.
+function limitImagesForGeminiPro(body, model, maxImages = 10) {
+  if (!isGeminiImageLimitedModel(model) || !Array.isArray(body?.messages)) return;
+
+  let imageCount = 0;
+  for (const msg of body.messages) {
+    if (!Array.isArray(msg.content)) continue;
+    for (const part of msg.content) {
+      if (isOpenAIImagePart(part)) imageCount++;
+    }
+  }
+
+  if (imageCount <= maxImages) return;
+
+  let keepRemaining = maxImages;
+  for (let i = body.messages.length - 1; i >= 0; i--) {
+    const msg = body.messages[i];
+    if (!Array.isArray(msg.content)) continue;
+
+    const nextContent = [];
+    for (let j = msg.content.length - 1; j >= 0; j--) {
+      const part = msg.content[j];
+      if (!isOpenAIImagePart(part)) {
+        nextContent.unshift(part);
+        continue;
+      }
+
+      if (keepRemaining > 0) {
+        keepRemaining--;
+        nextContent.unshift(part);
+      }
+    }
+
+    msg.content = nextContent.length > 0 ? nextContent : "";
+  }
+
+  console.log(`[IMAGE_LIMIT] ${model}: trimmed ${imageCount - maxImages} old image(s), kept ${maxImages}`);
+}
+
 // Translate request: source -> openai -> target
 export function translateRequest(sourceFormat, targetFormat, model, body, stream = true, credentials = null, provider = null, reqLogger = null, stripList = [], connectionId = null, clientTool = null) {
   ensureInitialized();
@@ -83,6 +133,8 @@ export function translateRequest(sourceFormat, targetFormat, model, body, stream
   // get silently dropped because their `type` ("file") isn't in the OpenAI
   // valid-content-types list.
   normalizeImageBlocks(result);
+
+  limitImagesForGeminiPro(result, model);
 
   // Strip explicit content types (opt-in via strip[] in PROVIDER_MODELS entry)
   stripContentTypes(result, stripList);

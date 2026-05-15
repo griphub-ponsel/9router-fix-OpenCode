@@ -184,6 +184,11 @@ export async function buildModelsList(kindFilter) {
 
   const models = [];
 
+  // Track model IDs that are members of any combo matching this kind filter so
+  // they don't get exposed as separate entries (otherwise tools like OpenCode
+  // see both the combo and its members, e.g. "Gemini 3.1 Pro" twice).
+  const comboMemberIds = new Set();
+
   // Combos first (filtered by kind). Web combos expose `kind` so AI knows search vs fetch.
   for (const combo of combos) {
     if (!comboMatchesKinds(combo, kindFilter)) continue;
@@ -196,6 +201,13 @@ export async function buildModelsList(kindFilter) {
       entry.kind = combo.kind;
     }
     models.push(entry);
+    if (Array.isArray(combo.models)) {
+      for (const memberId of combo.models) {
+        if (typeof memberId === "string" && memberId.includes("/")) {
+          comboMemberIds.add(memberId);
+        }
+      }
+    }
   }
 
   if (connections.length === 0) {
@@ -209,8 +221,10 @@ export async function buildModelsList(kindFilter) {
       for (const model of providerModels) {
         if (!kindFilter.includes(modelKind(model))) continue;
         if (isDisabled(alias, model.id)) continue;
+        const fullId = `${alias}/${model.id}`;
+        if (comboMemberIds.has(fullId)) continue;
         models.push({
-          id: `${alias}/${model.id}`,
+          id: fullId,
           object: "model",
           owned_by: alias,
         });
@@ -226,9 +240,11 @@ export async function buildModelsList(kindFilter) {
 
       const modelId = String(customModel.id).trim();
       if (!modelId) continue;
+      const fullId = `${providerAlias}/${modelId}`;
+      if (comboMemberIds.has(fullId)) continue;
 
       models.push({
-        id: `${providerAlias}/${modelId}`,
+        id: fullId,
         object: "model",
         owned_by: providerAlias,
       });
@@ -338,9 +354,17 @@ export async function buildModelsList(kindFilter) {
         const kind = staticModelKindById.get(modelId) || inferKindFromUnknownModelId(modelId);
         if (!kindFilter.includes(kind)) continue;
         if (isDisabled(outputAlias, modelId) || isDisabled(staticAlias, modelId)) continue;
+        const fullId = `${outputAlias}/${modelId}`;
+        if (
+          comboMemberIds.has(fullId) ||
+          comboMemberIds.has(`${staticAlias}/${modelId}`) ||
+          comboMemberIds.has(`${providerId}/${modelId}`)
+        ) {
+          continue;
+        }
 
         models.push({
-          id: `${outputAlias}/${modelId}`,
+          id: fullId,
           object: "model",
           owned_by: outputAlias,
         });
@@ -361,8 +385,16 @@ export async function buildModelsList(kindFilter) {
       }
       for (const subId of subConfigModels) {
         if (isDisabled(outputAlias, subId) || isDisabled(staticAlias, subId)) continue;
+        const fullId = `${outputAlias}/${subId}`;
+        if (
+          comboMemberIds.has(fullId) ||
+          comboMemberIds.has(`${staticAlias}/${subId}`) ||
+          comboMemberIds.has(`${providerId}/${subId}`)
+        ) {
+          continue;
+        }
         models.push({
-          id: `${outputAlias}/${subId}`,
+          id: fullId,
           object: "model",
           owned_by: outputAlias,
         });

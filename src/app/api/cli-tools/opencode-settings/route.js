@@ -7,6 +7,7 @@ import fs from "fs/promises";
 import path from "path";
 import os from "os";
 import { findModelName } from "open-sse/config/providerModels.js";
+import { getCombos } from "@/lib/localDb";
 
 const execAsync = promisify(exec);
 
@@ -24,7 +25,54 @@ function resolveModelDisplayName(fullId) {
 }
 
 const getConfigDir = () => path.join(os.homedir(), ".config", "opencode");
-const getConfigPath = () => path.join(getConfigDir(), "opencode.json");
+const getConfigPaths = () => [
+  path.join(getConfigDir(), "opencode.jsonc"),
+  path.join(getConfigDir(), "opencode.json"),
+];
+
+async function readConfig() {
+  for (const configPath of getConfigPaths()) {
+    try {
+      const content = await fs.readFile(configPath, "utf-8");
+      return { config: JSON.parse(content), configPath };
+    } catch (error) {
+      if (error.code === "ENOENT") continue;
+      // Invalid JSON in one file should not block fallback to the other.
+    }
+  }
+  return { config: null, configPath: null };
+}
+
+async function writeConfig(config) {
+  const content = JSON.stringify(config, null, 2);
+  const configPaths = getConfigPaths();
+  await Promise.all(configPaths.map((p) => fs.writeFile(p, content)));
+  return configPaths[0];
+}
+
+async function stripSelectedComboMembers(modelsArray) {
+  if (!Array.isArray(modelsArray) || modelsArray.length === 0) return [];
+
+  const combos = await getCombos();
+  if (!Array.isArray(combos) || combos.length === 0) return modelsArray;
+
+  const selectedComboNames = new Set(modelsArray.filter((m) => typeof m === "string" && !m.includes("/")));
+  if (selectedComboNames.size === 0) return modelsArray;
+
+  const comboMemberIds = new Set();
+  for (const combo of combos) {
+    if (!selectedComboNames.has(combo?.name)) continue;
+    if (!Array.isArray(combo.models)) continue;
+    for (const member of combo.models) {
+      if (typeof member === "string" && member.includes("/")) {
+        comboMemberIds.add(member);
+      }
+    }
+  }
+
+  if (comboMemberIds.size === 0) return modelsArray;
+  return modelsArray.filter((m) => !comboMemberIds.has(m));
+}
 
 // Check if opencode CLI is installed (via which/where or config file exists)
 const checkOpenCodeInstalled = async () => {
@@ -37,22 +85,15 @@ const checkOpenCodeInstalled = async () => {
     await execAsync(command, { windowsHide: true, env });
     return true;
   } catch {
-    try {
-      await fs.access(getConfigPath());
-      return true;
-    } catch {
-      return false;
+    for (const configPath of getConfigPaths()) {
+      try {
+        await fs.access(configPath);
+        return true;
+      } catch {
+        // try next path
+      }
     }
-  }
-};
-
-const readConfig = async () => {
-  try {
-    const content = await fs.readFile(getConfigPath(), "utf-8");
-    return JSON.parse(content);
-  } catch (error) {
-    if (error.code === "ENOENT") return null;
-    throw error;
+    return false;
   }
 };
 
@@ -74,7 +115,7 @@ export async function GET() {
       });
     }
 
-    const config = await readConfig();
+    const { config, configPath } = await readConfig();
     const providerConfig = config?.provider?.["9router"];
     const modelMap = providerConfig?.models || {};
     const modelNames = Object.fromEntries(
@@ -85,7 +126,7 @@ export async function GET() {
       installed: true,
       config,
       has9Router: has9RouterConfig(config),
-      configPath: getConfigPath(),
+      configPath: configPath || getConfigPaths()[0],
       opencode: {
         models: Object.keys(modelMap),
         modelNames,
@@ -105,23 +146,19 @@ export async function POST(request) {
     const { baseUrl, apiKey, model, models, activeModel, subagentModel, modelNames = {} } = await request.json();
 
     // Accept either `model` (string, legacy) or `models` (array of strings)
-    const modelsArray = Array.isArray(models) ? models.slice() : (typeof model === "string" ? [model] : []);
+    const modelsArrayRaw = Array.isArray(models) ? models.slice() : (typeof model === "string" ? [model] : []);
+    const modelsArray = await stripSelectedComboMembers(modelsArrayRaw);
 
     if (!baseUrl || modelsArray.length === 0) {
       return NextResponse.json({ error: "baseUrl and at least one model are required" }, { status: 400 });
     }
 
     const configDir = getConfigDir();
-    const configPath = getConfigPath();
-
     await fs.mkdir(configDir, { recursive: true });
 
     // Read existing config or start fresh
-    let config = {};
-    try {
-      const existing = await fs.readFile(configPath, "utf-8");
-      config = JSON.parse(existing);
-    } catch { /* No existing config */ }
+    const readResult = await readConfig();
+    const config = readResult.config || {};
 
     const normalizedBaseUrl = baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1`;
     const keyToUse = apiKey || "sk_9router";
@@ -140,8 +177,8 @@ export async function POST(request) {
       apiKey: keyToUse,
     };
 
-    // Ensure models map exists
-    existingProvider.models = existingProvider.models || {};
+    const previousModels = existingProvider.models || {};
+    const nextModels = {};
 
     // Add or update entries for all requested models
     for (const m of modelsArray) {
@@ -158,7 +195,7 @@ export async function POST(request) {
       //     "this model does not support image input" error)
       //   - `tool_call: true`, `reasoning: true`, `temperature: true` keep
       //     other UI features unlocked
-      const existingModel = existingProvider.models[m] || {};
+      const existingModel = previousModels[m] || {};
       const existingModalities = existingModel.modalities || {};
       // Pull the friendly display name from the 9router registry so OpenCode
       // shows e.g. "Claude Opus 4.7" instead of the raw id "kr/claude-opus-4.7".
@@ -174,7 +211,7 @@ export async function POST(request) {
         previousName !== m &&
         previousName !== previousResolved;
       const finalName = requestedName || (userCustomizedName ? previousName : resolvedName);
-      existingProvider.models[m] = {
+      nextModels[m] = {
         ...existingModel,
         name: finalName,
         attachment: true,
@@ -187,6 +224,10 @@ export async function POST(request) {
         },
       };
     }
+
+    // Keep only currently selected models to prevent stale entries from staying
+    // in opencode.json (previous behavior merged forever and caused duplicates).
+    existingProvider.models = nextModels;
 
     // Save merged provider back
     config.provider["9router"] = existingProvider;
@@ -210,7 +251,7 @@ export async function POST(request) {
       model: `9router/${effectiveSubagentModel}`,
     };
 
-    await fs.writeFile(configPath, JSON.stringify(config, null, 2));
+    const configPath = await writeConfig(config);
 
     return NextResponse.json({
       success: true,
@@ -227,18 +268,10 @@ export async function POST(request) {
 export async function PATCH(request) {
   try {
     const { clearActiveModel } = await request.json();
-    const configPath = getConfigPath();
-
-    let config = {};
-    try {
-      const existing = await fs.readFile(configPath, "utf-8");
-      config = JSON.parse(existing);
-    } catch (error) {
-      if (error.code === "ENOENT") {
-        return NextResponse.json({ success: true, message: "No config file found" });
-      }
-      throw error;
-    }
+    const readResult = await readConfig();
+    const configPath = readResult.configPath || getConfigPaths()[0];
+    const config = readResult.config;
+    if (!config) return NextResponse.json({ success: true, message: "No config file found" });
 
     if (clearActiveModel === true) {
       // Clear active model but keep models in the list
@@ -247,7 +280,7 @@ export async function PATCH(request) {
       }
     }
 
-    await fs.writeFile(configPath, JSON.stringify(config, null, 2));
+    await writeConfig(config);
 
     return NextResponse.json({
       success: true,
@@ -264,18 +297,9 @@ export async function DELETE(request) {
   try {
     const { searchParams } = new URL(request.url);
     const modelToRemove = searchParams.get("model");
-    const configPath = getConfigPath();
-
-    let config = {};
-    try {
-      const existing = await fs.readFile(configPath, "utf-8");
-      config = JSON.parse(existing);
-    } catch (error) {
-      if (error.code === "ENOENT") {
-        return NextResponse.json({ success: true, message: "No config file to reset" });
-      }
-      throw error;
-    }
+    const readResult = await readConfig();
+    const config = readResult.config;
+    if (!config) return NextResponse.json({ success: true, message: "No config file to reset" });
 
     // If specific model provided, remove just that model
     if (modelToRemove && config.provider?.["9router"]?.models) {
@@ -303,7 +327,7 @@ export async function DELETE(request) {
       if (Object.keys(config.agent).length === 0) delete config.agent;
     }
 
-    await fs.writeFile(configPath, JSON.stringify(config, null, 2));
+    await writeConfig(config);
 
     return NextResponse.json({
       success: true,
