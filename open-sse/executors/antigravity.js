@@ -1,4 +1,6 @@
 import crypto from "crypto";
+import fs from "fs";
+import path from "path";
 import { BaseExecutor } from "./base.js";
 import { PROVIDERS } from "../config/providers.js";
 import { OAUTH_ENDPOINTS, ANTIGRAVITY_HEADERS, INTERNAL_REQUEST_HEADER, AG_DEFAULT_TOOLS, AG_TOOL_SUFFIX } from "../config/appConstants.js";
@@ -17,6 +19,18 @@ function sanitizeFunctionName(name) {
 
 const MAX_RETRY_AFTER_MS = 10000;
 const MAX_ANTIGRAVITY_OUTPUT_TOKENS = 16384;
+const GEMINI_BUILTIN_TOOLS = new Set(["google_search", "web_search", "search_web", "googleSearch"]);
+
+function collectHistoryToolNames(contents = []) {
+  const names = new Set();
+  for (const content of contents) {
+    for (const part of content.parts || []) {
+      const name = part.functionCall?.name || part.functionResponse?.name;
+      if (name) names.add(sanitizeFunctionName(name));
+    }
+  }
+  return names;
+}
 
 export class AntigravityExecutor extends BaseExecutor {
   constructor() {
@@ -69,15 +83,29 @@ export class AntigravityExecutor extends BaseExecutor {
     if (tools && tools.length > 0) {
       // Merge all groups into a single functionDeclarations group (Gemini expects 1 group)
       const allDeclarations = tools.flatMap(group =>
-        (group.functionDeclarations || []).map(fn => ({
-          ...fn,
-          name: sanitizeFunctionName(fn.name),
-          parameters: fn.parameters
-            ? cleanJSONSchemaForAntigravity(structuredClone(fn.parameters))
-            : { type: "object", properties: { reason: { type: "string", description: "Brief explanation" } }, required: ["reason"] }
-        }))
+        (group.functionDeclarations || [])
+          .filter(fn => !GEMINI_BUILTIN_TOOLS.has(fn.name))
+          .map(fn => ({
+            ...fn,
+            name: sanitizeFunctionName(fn.name),
+            parameters: fn.parameters
+              ? cleanJSONSchemaForAntigravity(structuredClone(fn.parameters))
+              : { type: "object", properties: { reason: { type: "string", description: "Brief explanation" } }, required: ["reason"] }
+          }))
       );
-      tools = allDeclarations.length > 0 ? [{ functionDeclarations: allDeclarations }] : [];
+
+      const declaredNames = new Set(allDeclarations.map(fn => fn.name));
+      for (const name of collectHistoryToolNames(contents)) {
+        if (declaredNames.has(name) || GEMINI_BUILTIN_TOOLS.has(name)) continue;
+        declaredNames.add(name);
+        allDeclarations.push({
+          name,
+          description: "Historical tool call from the conversation context.",
+          parameters: { type: "object", properties: {} }
+        });
+      }
+
+      tools = allDeclarations.length > 0 ? [{ functionDeclarations: allDeclarations }] : undefined;
     }
 
     const { tools: _originalTools, toolConfig: _originalToolConfig, ...requestWithoutTools } = body.request || {};
@@ -226,6 +254,17 @@ export class AntigravityExecutor extends BaseExecutor {
           body: JSON.stringify(transformedBody),
           signal
         }, proxyOptions);
+
+        if (response.status === HTTP_STATUS.BAD_REQUEST) {
+          try {
+            const debugDir = path.join(process.cwd(), "logs");
+            fs.mkdirSync(debugDir, { recursive: true });
+            fs.writeFileSync(
+              path.join(debugDir, "antigravity-last-400-request.json"),
+              JSON.stringify({ url, body: transformedBody }, null, 2)
+            );
+          } catch { }
+        }
 
         if (response.status === HTTP_STATUS.RATE_LIMITED || response.status === HTTP_STATUS.SERVICE_UNAVAILABLE) {
           // Try to get retry time from headers first

@@ -20,6 +20,8 @@ import {
 } from "../helpers/geminiHelper.js";
 import { deriveSessionId } from "../../utils/sessionManager.js";
 
+const GEMINI_BUILTIN_TOOLS = new Set(["google_search", "web_search", "search_web", "googleSearch"]);
+
 // Sanitize function names for Gemini API.
 // Gemini requires: starts with [a-zA-Z_], followed by [a-zA-Z0-9_.:\-], max 64 chars.
 // Replace any invalid character with '_' and truncate to 64.
@@ -302,8 +304,18 @@ function wrapInCloudCodeEnvelope(model, geminiCLI, credentials = null, isAntigra
       envelope.request.systemInstruction = { role: "user", parts: systemParts };
     }
 
-    // Add toolConfig for Antigravity
-    if (geminiCLI.tools?.length > 0) {
+    // Antigravity v1internal rejects mixing built-in tools with functionDeclarations.
+    if (envelope.request.tools?.length > 0) {
+      const customDeclarations = envelope.request.tools
+        .flatMap(tool => tool.functionDeclarations || [])
+        .filter(fn => !GEMINI_BUILTIN_TOOLS.has(fn.name));
+
+      envelope.request.tools = customDeclarations.length > 0
+        ? [{ functionDeclarations: customDeclarations }]
+        : undefined;
+    }
+
+    if (envelope.request.tools?.some(tool => tool.functionDeclarations?.length > 0)) {
       envelope.request.toolConfig = {
         functionCallingConfig: { mode: "VALIDATED" }
       };
@@ -403,6 +415,7 @@ function wrapInCloudCodeEnvelopeForClaude(model, claudeRequest, credentials = nu
     const functionDeclarations = [];
     for (const tool of claudeRequest.tools) {
       if (tool.name && tool.input_schema) {
+        if (GEMINI_BUILTIN_TOOLS.has(tool.name)) continue;
         const cleanedSchema = cleanJSONSchemaForAntigravity(tool.input_schema);
         functionDeclarations.push({
           name: sanitizeGeminiFunctionName(tool.name),
