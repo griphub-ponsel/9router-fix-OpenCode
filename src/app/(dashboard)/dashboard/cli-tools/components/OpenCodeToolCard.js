@@ -23,6 +23,7 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
   const [showManualConfigModal, setShowManualConfigModal] = useState(false);
   const [customBaseUrl, setCustomBaseUrl] = useState("");
   const [selectedModels, setSelectedModels] = useState([]);
+  const [modelDisplayNames, setModelDisplayNames] = useState({});
   const [activeModel, setActiveModel] = useState("");
   const selectedModelsRef = useRef([]);
 
@@ -52,6 +53,14 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
   useEffect(() => {
     if (status?.opencode?.models) {
       setSelectedModels(status.opencode.models);
+      setModelDisplayNames((prev) => {
+        const next = { ...prev };
+        status.opencode.models.forEach((model) => {
+          const configuredName = status.opencode.modelNames?.[model];
+          next[model] = configuredName || next[model] || modelAliases?.[model] || model;
+        });
+        return next;
+      });
     }
     if (status?.opencode?.activeModel) {
       setActiveModel(status.opencode.activeModel);
@@ -61,7 +70,25 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
     if (status?.config?.agent?.explorer?.model?.startsWith("9router/")) {
       setSubagentModel(status.config.agent.explorer.model.replace("9router/", ""));
     }
-  }, [status]);
+  }, [status, modelAliases]);
+
+  const getDefaultModelName = (model) => {
+    const aliasName = modelAliases?.[model];
+    return typeof aliasName === "string" && aliasName.trim() ? aliasName : model;
+  };
+
+  const getModelDisplayName = (model) => {
+    const displayName = modelDisplayNames?.[model];
+    return typeof displayName === "string" && displayName.trim() ? displayName.trim() : getDefaultModelName(model);
+  };
+
+  const getSelectedModelNames = (models = selectedModels) => (
+    Object.fromEntries(models.map((model) => [model, getModelDisplayName(model)]))
+  );
+
+  const setModelDisplayName = (model, value) => {
+    setModelDisplayNames((prev) => ({ ...prev, [model]: value }));
+  };
 
   const fetchModelAliases = async () => {
     try {
@@ -86,6 +113,7 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
           baseUrl: getEffectiveBaseUrl(),
           apiKey: keyToUse,
           models,
+          modelNames: getSelectedModelNames(models),
           activeModel: validActiveModel,
           subagentModel,
         }),
@@ -140,6 +168,7 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
           baseUrl: getEffectiveBaseUrl(),
           apiKey: keyToUse,
           models: selectedModels,
+          modelNames: getSelectedModelNames(),
           activeModel: activeModel === "" ? "" : (activeModel || selectedModels[0]),
           subagentModel: subagentModel
         }),
@@ -169,6 +198,7 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
         setSelectedModel("");
         setSubagentModel("");
         setSelectedModels([]);
+        setModelDisplayNames({});
         setActiveModel("");
         checkStatus();
       } else {
@@ -192,7 +222,22 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
 
     const modelsObj = {};
     modelsToShow.forEach(m => {
-      modelsObj[m] = { name: m, modalities: { input: ["text", "image"], output: ["text"] } };
+      // Match the capability flags we set in opencode-settings/route.js so the
+      // OpenCode UI lets users attach images, tools, and see reasoning UI.
+      // The `modalities` field is what actually gates the "this model does
+      // not support image input" UI error.
+      // Use friendly display name from the model alias map (e.g. "Claude Opus
+      // 4.7" instead of "kr/claude-opus-4.7") so OpenCode's model picker is
+      // readable. Falls back to the raw id when no alias is registered.
+      const friendly = getModelDisplayName(m);
+      modelsObj[m] = {
+        name: friendly,
+        attachment: true,
+        tool_call: true,
+        reasoning: true,
+        temperature: true,
+        modalities: { input: ["text", "image"], output: ["text"] },
+      };
     });
 
     return [{
@@ -367,6 +412,11 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
                                   if (res.ok) {
                                     const newModels = selectedModels.filter((m) => m !== model);
                                     setSelectedModels(newModels);
+                                    setModelDisplayNames((prev) => {
+                                      const next = { ...prev };
+                                      delete next[model];
+                                      return next;
+                                    });
                                     if (activeModel === model) {
                                       setActiveModel("");
                                     }
@@ -396,6 +446,28 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
                         )}
                       </span>
                     </div>
+                    {selectedModels.length > 0 && (
+                      <div className="flex flex-col gap-2 rounded border border-border bg-surface/40 p-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-medium text-text-main">Display Names</span>
+                          <span className="text-[11px] text-text-muted">Shown in OpenCode</span>
+                        </div>
+                        <div className="flex flex-col gap-1.5">
+                          {selectedModels.map((model) => (
+                            <label key={`${model}-display-name`} className="grid grid-cols-1 gap-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)] sm:items-center">
+                              <span className="truncate text-[11px] text-text-muted" title={model}>{model}</span>
+                              <input
+                                type="text"
+                                value={modelDisplayNames[model] ?? getDefaultModelName(model)}
+                                onChange={(e) => setModelDisplayName(model, e.target.value)}
+                                placeholder={getDefaultModelName(model)}
+                                className="w-full min-w-0 rounded border border-border bg-surface px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-primary/50"
+                              />
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -461,12 +533,21 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
         onSelect={(model) => {
           if (!selectedModels.includes(model.value)) {
             setSelectedModels([...selectedModels, model.value]);
+            setModelDisplayNames((prev) => ({
+              ...prev,
+              [model.value]: prev[model.value] || getDefaultModelName(model.value),
+            }));
             if (!activeModel) setActiveModel(model.value);
           }
         }}
         onDeselect={(model) => {
           const remaining = selectedModels.filter(m => m !== model.value);
           setSelectedModels(remaining);
+          setModelDisplayNames((prev) => {
+            const next = { ...prev };
+            delete next[model.value];
+            return next;
+          });
           if (activeModel === model.value) {
             setActiveModel(remaining[0] || "");
           }

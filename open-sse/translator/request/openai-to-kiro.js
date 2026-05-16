@@ -269,6 +269,14 @@ function convertMessages(messages, tools, model) {
         mergedHistory[mergedHistory.length - 1].userInputMessage) {
       const prev = mergedHistory[mergedHistory.length - 1];
       prev.userInputMessage.content += "\n\n" + current.userInputMessage.content;
+      // Preserve any image attachments from the message we're merging in,
+      // otherwise images on prior user turns get silently dropped.
+      if (Array.isArray(current.userInputMessage.images) && current.userInputMessage.images.length > 0) {
+        prev.userInputMessage.images = [
+          ...(prev.userInputMessage.images || []),
+          ...current.userInputMessage.images,
+        ];
+      }
     } else {
       mergedHistory.push(current);
     }

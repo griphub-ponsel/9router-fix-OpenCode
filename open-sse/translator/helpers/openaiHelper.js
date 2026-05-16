@@ -1,8 +1,12 @@
 // OpenAI helper functions for translator
 
 // Valid OpenAI content block types
-export const VALID_OPENAI_CONTENT_TYPES = ["text", "image_url", "image", "input_audio", "audio_url"];
-export const VALID_OPENAI_MESSAGE_TYPES = ["text", "image_url", "image", "tool_calls", "tool_result"];
+// Note: "file" is included so AI SDK file-blocks (used by OpenCode and other
+// @ai-sdk/openai-compatible clients) survive `filterToOpenAIFormat` even if
+// `normalizeImageBlocks` was bypassed for some reason. Image-typed file blocks
+// are converted to image_url here as a safety net.
+export const VALID_OPENAI_CONTENT_TYPES = ["text", "image_url", "image", "file", "input_audio", "audio_url"];
+export const VALID_OPENAI_MESSAGE_TYPES = ["text", "image_url", "image", "file", "tool_calls", "tool_result"];
 
 // Filter messages to OpenAI standard format
 // Remove: thinking, redacted_thinking, signature, and other non-OpenAI blocks
@@ -29,7 +33,28 @@ export function filterToOpenAIFormat(body) {
       for (const block of msg.content) {
         // Skip thinking blocks
         if (block.type === "thinking" || block.type === "redacted_thinking") continue;
-        
+
+        // AI SDK file-block safety net: if normalizeImageBlocks didn't run
+        // (or a new shape slipped through), convert image-typed file blocks
+        // to OpenAI image_url here so the image isn't dropped.
+        if (block.type === "file" && typeof block.mediaType === "string" && block.mediaType.startsWith("image/")) {
+          const data = block.data;
+          let url = null;
+          if (typeof data === "string") {
+            if (data.startsWith("data:") || data.startsWith("http://") || data.startsWith("https://")) {
+              url = data;
+            } else {
+              url = `data:${block.mediaType};base64,${data}`;
+            }
+          } else if (data && typeof data === "object" && typeof data.url === "string") {
+            url = data.url;
+          }
+          if (url) {
+            filteredContent.push({ type: "image_url", image_url: { url } });
+          }
+          continue;
+        }
+
         // Only keep valid OpenAI content types
         if (VALID_OPENAI_CONTENT_TYPES.includes(block.type)) {
           // Remove signature field if exists

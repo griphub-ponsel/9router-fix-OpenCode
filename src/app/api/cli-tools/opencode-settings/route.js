@@ -6,8 +6,22 @@ import { promisify } from "util";
 import fs from "fs/promises";
 import path from "path";
 import os from "os";
+import { findModelName } from "open-sse/config/providerModels.js";
 
 const execAsync = promisify(exec);
+
+// Resolve a friendly display name for "<alias>/<modelId>" using the same
+// PROVIDER_MODELS registry the dashboard uses. Falls back to the raw id when
+// the alias is unknown (e.g. user-added custom model).
+function resolveModelDisplayName(fullId) {
+  if (typeof fullId !== "string" || fullId.length === 0) return fullId;
+  const slash = fullId.indexOf("/");
+  if (slash <= 0) return fullId;
+  const alias = fullId.slice(0, slash);
+  const modelId = fullId.slice(slash + 1);
+  const name = findModelName(alias, modelId);
+  return name && name !== modelId ? name : fullId;
+}
 
 const getConfigDir = () => path.join(os.homedir(), ".config", "opencode");
 const getConfigPath = () => path.join(getConfigDir(), "opencode.json");
@@ -63,17 +77,21 @@ export async function GET() {
     const config = await readConfig();
     const providerConfig = config?.provider?.["9router"];
     const modelMap = providerConfig?.models || {};
+    const modelNames = Object.fromEntries(
+      Object.entries(modelMap).map(([id, entry]) => [id, entry?.name || resolveModelDisplayName(id)])
+    );
 
     return NextResponse.json({
       installed: true,
       config,
       has9Router: has9RouterConfig(config),
       configPath: getConfigPath(),
-        opencode: {
-          models: Object.keys(modelMap),
-          activeModel: config?.model?.startsWith("9router/") ? config.model.replace(/^9router\//, "") : null,
-          baseURL: providerConfig?.options?.baseURL || null,
-        },
+      opencode: {
+        models: Object.keys(modelMap),
+        modelNames,
+        activeModel: config?.model?.startsWith("9router/") ? config.model.replace(/^9router\//, "") : null,
+        baseURL: providerConfig?.options?.baseURL || null,
+      },
     });
   } catch (error) {
     console.log("Error checking opencode settings:", error);
@@ -84,7 +102,7 @@ export async function GET() {
 // POST - Apply 9Router as openai-compatible provider (multi-model support)
 export async function POST(request) {
   try {
-    const { baseUrl, apiKey, model, models, activeModel, subagentModel } = await request.json();
+    const { baseUrl, apiKey, model, models, activeModel, subagentModel, modelNames = {} } = await request.json();
 
     // Accept either `model` (string, legacy) or `models` (array of strings)
     const modelsArray = Array.isArray(models) ? models.slice() : (typeof model === "string" ? [model] : []);
@@ -128,7 +146,46 @@ export async function POST(request) {
     // Add or update entries for all requested models
     for (const m of modelsArray) {
       if (!m || typeof m !== "string") continue;
-      existingProvider.models[m] = { name: m, modalities: { input: ["text", "image"], output: ["text"] } };
+      // Preserve any existing per-model overrides, but always advertise the
+      // capabilities OpenCode's UI gates on. Without these the UI rejects
+      // attachments client-side ("this model does not support image input")
+      // before the request reaches 9router.
+      //
+      // Schema reference: https://opencode.ai/config.json (ProviderConfig.models)
+      //   - `attachment: true` enables the paperclip / drag-drop affordance
+      //   - `modalities.input: ["text","image"]` tells the UI the model
+      //     actually accepts the attachment (this is the field that gates the
+      //     "this model does not support image input" error)
+      //   - `tool_call: true`, `reasoning: true`, `temperature: true` keep
+      //     other UI features unlocked
+      const existingModel = existingProvider.models[m] || {};
+      const existingModalities = existingModel.modalities || {};
+      // Pull the friendly display name from the 9router registry so OpenCode
+      // shows e.g. "Claude Opus 4.7" instead of the raw id "kr/claude-opus-4.7".
+      // We always recompute it on apply so users get fresh names when the
+      // registry updates, but never overwrite a name a user already customized
+      // by hand (i.e. one that differs from both the id AND the resolved name).
+      const resolvedName = resolveModelDisplayName(m);
+      const requestedName = typeof modelNames?.[m] === "string" ? modelNames[m].trim() : "";
+      const previousName = existingModel.name;
+      const previousResolved = resolveModelDisplayName(m);
+      const userCustomizedName =
+        previousName &&
+        previousName !== m &&
+        previousName !== previousResolved;
+      const finalName = requestedName || (userCustomizedName ? previousName : resolvedName);
+      existingProvider.models[m] = {
+        ...existingModel,
+        name: finalName,
+        attachment: true,
+        tool_call: true,
+        reasoning: true,
+        temperature: true,
+        modalities: {
+          input: existingModalities.input || ["text", "image"],
+          output: existingModalities.output || ["text"],
+        },
+      };
     }
 
     // Save merged provider back

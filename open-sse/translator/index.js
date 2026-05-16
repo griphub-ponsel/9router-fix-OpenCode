@@ -3,6 +3,7 @@ import { ensureToolCallIds, fixMissingToolResponses } from "./helpers/toolCallHe
 import { prepareClaudeRequest } from "./helpers/claudeHelper.js";
 import { cloakClaudeTools } from "../utils/claudeCloaking.js";
 import { filterToOpenAIFormat } from "./helpers/openaiHelper.js";
+import { normalizeImageBlocks } from "./helpers/imageHelper.js";
 import { normalizeThinkingConfig } from "../services/provider.js";
 import { AntigravityExecutor } from "../executors/antigravity.js";
 
@@ -75,6 +76,13 @@ function stripContentTypes(body, stripList = []) {
 export function translateRequest(sourceFormat, targetFormat, model, body, stream = true, credentials = null, provider = null, reqLogger = null, stripList = [], connectionId = null, clientTool = null) {
   ensureInitialized();
   let result = body;
+
+  // Normalize non-OpenAI image shapes (AI SDK file/image blocks → image_url).
+  // Must run BEFORE stripContentTypes/filterToOpenAIFormat, otherwise AI SDK
+  // image blocks (used by OpenCode and other @ai-sdk/openai-compatible clients)
+  // get silently dropped because their `type` ("file") isn't in the OpenAI
+  // valid-content-types list.
+  normalizeImageBlocks(result);
 
   // Strip explicit content types (opt-in via strip[] in PROVIDER_MODELS entry)
   stripContentTypes(result, stripList);
