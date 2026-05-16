@@ -27,7 +27,9 @@ export default function ProfilePage() {
   const [oidcLoading, setOidcLoading] = useState(false);
   const [oidcTestLoading, setOidcTestLoading] = useState(false);
   const [oidcTestStatus, setOidcTestStatus] = useState({ type: "", message: "" });
-  const [oidcRedirectUri, setOidcRedirectUri] = useState("/api/auth/oidc/callback");
+  const oidcRedirectUri = typeof window !== "undefined"
+    ? `${window.location.origin}/api/auth/oidc/callback`
+    : "/api/auth/oidc/callback";
   const [oidcExpanded, setOidcExpanded] = useState(false);
   const importFileRef = useRef(null);
   const [proxyForm, setProxyForm] = useState({
@@ -38,6 +40,15 @@ export default function ProfilePage() {
   const [proxyStatus, setProxyStatus] = useState({ type: "", message: "" });
   const [proxyLoading, setProxyLoading] = useState(false);
   const [proxyTestLoading, setProxyTestLoading] = useState(false);
+  // Autostart status is OS-level (launchd / Startup folder / .desktop), not
+  // stored in the app db, so it lives in its own state and has its own fetch.
+  const [autostart, setAutostart] = useState({
+    supported: false,
+    enabled: false,
+    platform: "",
+  });
+  const [autostartLoading, setAutostartLoading] = useState(false);
+  const [autostartStatus, setAutostartStatus] = useState({ type: "", message: "" });
 
   useEffect(() => {
     fetch("/api/settings")
@@ -66,11 +77,64 @@ export default function ProfilePage() {
       });
   }, []);
 
+  // Pull live OS-level autostart status on mount. Separate endpoint from
+  // /api/settings because reading it can shell out (e.g. `launchctl list` on
+  // macOS) and we don't want that on every settings fetch.
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      setOidcRedirectUri(`${window.location.origin}/api/auth/oidc/callback`);
-    }
+    fetch("/api/settings/autostart")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data && typeof data === "object" && !data.error) {
+          setAutostart({
+            supported: data.supported === true,
+            enabled: data.enabled === true,
+            platform: data.platform || "",
+          });
+        }
+      })
+      .catch(() => {
+        // Silent: autostart UI will fall back to "unsupported" copy.
+      });
   }, []);
+
+  const updateAutostart = async (enabled) => {
+    setAutostartLoading(true);
+    setAutostartStatus({ type: "", message: "" });
+
+    try {
+      const res = await fetch("/api/settings/autostart", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setAutostart({
+          supported: data.supported === true,
+          enabled: data.enabled === true,
+          platform: data.platform || autostart.platform,
+        });
+        // Trust the server-reported state: on macOS launchctl can fail even
+        // after the plist write, so the toggle should follow `data.enabled`,
+        // not the value the user clicked.
+        setAutostartStatus({
+          type: "success",
+          message: data.enabled
+            ? "Autostart enabled - 9Router will launch on system startup"
+            : "Autostart disabled",
+        });
+      } else {
+        setAutostartStatus({
+          type: "error",
+          message: data?.error || "Failed to update autostart",
+        });
+      }
+    } catch (err) {
+      setAutostartStatus({ type: "error", message: "An error occurred" });
+    } finally {
+      setAutostartLoading(false);
+    }
+  };
 
   const updateOutboundProxy = async (e) => {
     e.preventDefault();
@@ -1021,6 +1085,53 @@ export default function ProfilePage() {
               onChange={updateObservabilityEnabled}
               disabled={loading}
             />
+          </div>
+        </Card>
+
+        {/* System / Autostart */}
+        <Card>
+          <div className="flex items-center gap-3 mb-4">
+            <div className="p-2 rounded-lg bg-cyan-500/10 text-cyan-500 shrink-0">
+              <span className="material-symbols-outlined text-[20px]">power_settings_new</span>
+            </div>
+            <h3 className="text-base sm:text-lg font-semibold">System</h3>
+          </div>
+
+          <div className="flex flex-col gap-3">
+            <div className="flex items-start sm:items-center justify-between gap-4">
+              <div className="flex-1 min-w-0">
+                <p className="font-medium text-sm sm:text-base">Launch on system startup</p>
+                <p className="text-xs sm:text-sm text-text-muted">
+                  {autostart.supported
+                    ? "Run 9Router automatically when you log in to your computer (hidden in tray)."
+                    : "Autostart isn't supported on this platform or session."}
+                </p>
+              </div>
+              <Toggle
+                checked={autostart.enabled}
+                onChange={() => updateAutostart(!autostart.enabled)}
+                disabled={!autostart.supported || autostartLoading}
+              />
+            </div>
+
+            {autostartStatus.message && (
+              <p
+                className={cn(
+                  "text-xs sm:text-sm pt-2 border-t border-border/50",
+                  autostartStatus.type === "error" ? "text-red-500" : "text-green-500"
+                )}
+              >
+                {autostartStatus.message}
+              </p>
+            )}
+
+            {autostart.supported && (
+              <p className="text-xs text-text-muted italic pt-2 border-t border-border/50">
+                {autostart.platform === "darwin" && "macOS: registers a LaunchAgent under ~/Library/LaunchAgents."}
+                {autostart.platform === "win32" && "Windows: drops a hidden launcher in your Startup folder."}
+                {autostart.platform === "linux" && "Linux: writes a .desktop entry to ~/.config/autostart."}
+              </p>
+            )}
           </div>
         </Card>
 
