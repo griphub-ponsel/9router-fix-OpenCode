@@ -322,12 +322,16 @@ export default function ProviderDetailPage() {
       });
       if (res.ok) {
         await fetchAliases();
+        return true;
       } else {
         const data = await res.json();
         alert(data.error || "Failed to set alias");
+        return false;
       }
     } catch (error) {
       console.log("Error setting alias:", error);
+      alert(error?.message || "Failed to set alias");
+      return false;
     }
   };
 
@@ -1230,13 +1234,11 @@ export default function ProviderDetailPage() {
           isOpen={showAddCustomModel}
           providerAlias={providerStorageAlias}
           providerDisplayAlias={providerDisplayAlias}
-          onSave={async (modelId) => {
-            // For passthrough providers (OpenRouter), use last segment as alias to avoid slash conflicts
-            const alias = providerInfo?.passthroughModels
-              ? modelId.split("/").pop()
-              : modelId;
-            await handleSetAlias(modelId, alias, providerStorageAlias);
-            setShowAddCustomModel(false);
+          modelAliases={modelAliases}
+          onSave={async (modelId, alias) => {
+            const saved = await handleSetAlias(modelId, alias, providerStorageAlias);
+            if (saved) setShowAddCustomModel(false);
+            return saved;
           }}
           onClose={() => setShowAddCustomModel(false)}
         />

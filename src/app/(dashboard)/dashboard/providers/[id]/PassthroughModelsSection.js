@@ -89,6 +89,12 @@ PassthroughModelRow.propTypes = {
 export default function PassthroughModelsSection({ providerAlias, modelAliases, copied, onCopy, onSetAlias, onDeleteAlias }) {
   const [newModel, setNewModel] = useState("");
   const [adding, setAdding] = useState(false);
+  // When the auto-derived alias clashes with an existing one we open an
+  // inline manual-alias panel instead of throwing an alert. Mirrors the UX
+  // in CompatibleModelsSection so users always have an escape hatch.
+  const [aliasConflict, setAliasConflict] = useState(null);
+  const [manualAlias, setManualAlias] = useState("");
+  const [manualError, setManualError] = useState("");
 
   // Filter aliases for this provider - models are persisted via alias
   const providerAliases = Object.entries(modelAliases).filter(
@@ -110,23 +116,69 @@ export default function PassthroughModelsSection({ providerAlias, modelAliases, 
   const handleAdd = async () => {
     if (!newModel.trim() || adding) return;
     const modelId = newModel.trim();
-    const defaultAlias = generateDefaultAlias(modelId);
-    
-    // Check if alias already exists
-    if (modelAliases[defaultAlias]) {
-      alert(`Alias "${defaultAlias}" already exists. Please use a different model or edit existing alias.`);
+    const fullModel = `${providerAlias}/${modelId}`;
+    if (Object.values(modelAliases).includes(fullModel)) {
+      alert(`Model "${modelId}" is already added to this provider.`);
       return;
     }
-    
+    const defaultAlias = generateDefaultAlias(modelId);
+
+    // Check if alias already exists
+    if (modelAliases[defaultAlias]) {
+      setAliasConflict({
+        modelId,
+        conflicts: [{ alias: defaultAlias, takenBy: modelAliases[defaultAlias] }],
+      });
+      setManualAlias(`${providerAlias}-${defaultAlias}`);
+      setManualError("");
+      return;
+    }
+
     setAdding(true);
     try {
-      await onSetAlias(modelId, defaultAlias);
-      setNewModel("");
+      const saved = await onSetAlias(modelId, defaultAlias);
+      if (saved) setNewModel("");
     } catch (error) {
       console.log("Error adding model:", error);
     } finally {
       setAdding(false);
     }
+  };
+
+  const handleManualAliasSubmit = async () => {
+    if (!aliasConflict || adding) return;
+    const alias = manualAlias.trim();
+    if (!alias) {
+      setManualError("Alias cannot be empty");
+      return;
+    }
+    if (modelAliases[alias]) {
+      setManualError(`"${alias}" is already taken by ${modelAliases[alias]}`);
+      return;
+    }
+    setAdding(true);
+    setManualError("");
+    try {
+      const saved = await onSetAlias(aliasConflict.modelId, alias);
+      if (saved) {
+        setNewModel("");
+        setAliasConflict(null);
+        setManualAlias("");
+      } else {
+        setManualError("Failed to add model. Check the alert for details.");
+      }
+    } catch (error) {
+      console.log("Error adding model with manual alias:", error);
+      setManualError(error?.message || "Failed to add model");
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const cancelManualAlias = () => {
+    setAliasConflict(null);
+    setManualAlias("");
+    setManualError("");
   };
 
   return (
@@ -153,6 +205,51 @@ export default function PassthroughModelsSection({ providerAlias, modelAliases, 
           {adding ? "Adding..." : "Add"}
         </Button>
       </div>
+
+      {aliasConflict && (
+        <div className="flex flex-col gap-2 p-3 rounded-lg border border-amber-500/40 bg-amber-500/5">
+          <p className="text-sm font-medium">
+            Auto-suggested alias for &quot;{aliasConflict.modelId}&quot; is already taken
+          </p>
+          {aliasConflict.conflicts.length > 0 && (
+            <ul className="text-xs text-text-muted space-y-0.5">
+              {aliasConflict.conflicts.map((c) => (
+                <li key={c.alias}>
+                  <code className="font-mono">{c.alias}</code>
+                  {" -> "}
+                  <code className="font-mono">{c.takenBy}</code>
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="text-xs text-text-muted">
+            Pick a custom alias instead, or remove the conflicting alias and try again.
+          </p>
+          <div className="flex items-end gap-2 flex-wrap">
+            <div className="flex-1 min-w-[200px]">
+              <label htmlFor="passthrough-manual-alias-input" className="text-xs text-text-muted mb-1 block">Custom alias</label>
+              <input
+                id="passthrough-manual-alias-input"
+                type="text"
+                value={manualAlias}
+                onChange={(e) => { setManualAlias(e.target.value); setManualError(""); }}
+                onKeyDown={(e) => e.key === "Enter" && handleManualAliasSubmit()}
+                placeholder="my-alias"
+                className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary"
+              />
+            </div>
+            <Button size="sm" onClick={handleManualAliasSubmit} disabled={adding}>
+              {adding ? "Adding..." : "Add with this alias"}
+            </Button>
+            <Button size="sm" variant="secondary" onClick={cancelManualAlias} disabled={adding}>
+              Cancel
+            </Button>
+          </div>
+          {manualError && (
+            <p className="text-xs text-red-500">{manualError}</p>
+          )}
+        </div>
+      )}
 
       {/* Models list */}
       {allModels.length > 0 && (
