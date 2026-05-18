@@ -108,13 +108,8 @@ export const ANTIGRAVITY_CONFIG = {
   onboardUserEndpoint: "https://cloudcode-pa.googleapis.com/v1internal:onboardUser",
   loadCodeAssistUserAgent: "google-api-nodejs-client/9.15.1",
   loadCodeAssistApiClient: "google-cloud-sdk vscode_cloudshelleditor/0.1",
-  // Numeric enums match the Antigravity binary's ClientMetadata so the OAuth
-  // handshake fingerprints identically to the runtime API calls. Mismatch
-  // between OAuth metadata (string enums) and runtime metadata was used by
-  // Google to fingerprint and block 9router accounts (issue #1226).
-  get loadCodeAssistClientMetadata() {
-    return JSON.stringify(getOAuthClientMetadata());
-  },
+  // Numeric enums matching Antigravity binary ClientMetadata (see getOAuthClientMetadata below)
+  loadCodeAssistClientMetadata: JSON.stringify({ ideType: 9, platform: getOAuthPlatformEnum(), pluginType: 2 }),
 };
 
 /**

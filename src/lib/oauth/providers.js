@@ -307,7 +307,7 @@ const PROVIDERS = {
       return await response.json();
     },
     postExchange: async (tokens) => {
-      // Matches CLIProxyAPI Go source: string enum, no mode field
+      // Numeric enums matching Antigravity binary ClientMetadata
       const loadHeaders = {
         "Authorization": `Bearer ${tokens.access_token}`,
         "Content-Type": "application/json",

@@ -92,8 +92,7 @@ export class AntigravityService {
 
   /**
    * Get metadata object for loadCodeAssist / onboardUser API calls.
-   * Uses the same numeric enum values as the Antigravity binary so the OAuth
-   * fingerprint matches the runtime API fingerprint (issue #1226).
+   * Uses numeric enum values matching Antigravity binary ClientMetadata.
    */
   getMetadata() {
     return getOAuthClientMetadata();
