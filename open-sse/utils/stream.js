@@ -222,6 +222,7 @@ export function createSSEStream(options = {}) {
         if (translated?._openaiIntermediate) {
           for (const item of translated._openaiIntermediate) {
             const openaiOutput = formatSSE(item, FORMATS.OPENAI);
+            if (!openaiOutput) continue;
             reqLogger?.appendOpenAIChunk?.(openaiOutput);
           }
         }
@@ -246,6 +247,9 @@ export function createSSEStream(options = {}) {
             }
 
             const output = formatSSE(item, sourceFormat);
+            if (!output) {
+              continue;
+            }
             reqLogger?.appendConvertedChunk?.(output);
             controller.enqueue(sharedEncoder.encode(output));
           }
@@ -304,6 +308,7 @@ export function createSSEStream(options = {}) {
             if (translated?._openaiIntermediate) {
               for (const item of translated._openaiIntermediate) {
                 const openaiOutput = formatSSE(item, FORMATS.OPENAI);
+                if (!openaiOutput) continue;
                 reqLogger?.appendOpenAIChunk?.(openaiOutput);
               }
             }
@@ -311,6 +316,7 @@ export function createSSEStream(options = {}) {
             if (translated?.length > 0) {
               for (const item of translated) {
                 const output = formatSSE(item, sourceFormat);
+                if (!output) continue;
                 reqLogger?.appendConvertedChunk?.(output);
                 controller.enqueue(sharedEncoder.encode(output));
               }
@@ -323,6 +329,7 @@ export function createSSEStream(options = {}) {
         if (flushed?._openaiIntermediate) {
           for (const item of flushed._openaiIntermediate) {
             const openaiOutput = formatSSE(item, FORMATS.OPENAI);
+            if (!openaiOutput) continue;
             reqLogger?.appendOpenAIChunk?.(openaiOutput);
           }
         }
@@ -330,6 +337,7 @@ export function createSSEStream(options = {}) {
         if (flushed?.length > 0) {
           for (const item of flushed) {
             const output = formatSSE(item, sourceFormat);
+            if (!output) continue;
             reqLogger?.appendConvertedChunk?.(output);
             controller.enqueue(sharedEncoder.encode(output));
           }

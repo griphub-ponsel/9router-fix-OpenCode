@@ -237,6 +237,7 @@ export class GithubExecutor extends BaseExecutor {
           const converted = openaiResponsesToOpenAIResponse(parsed, state);
           if (converted) {
             const sseString = formatSSE(converted, "openai");
+            if (!sseString) continue;
             controller.enqueue(new TextEncoder().encode(sseString));
           }
         }
@@ -247,7 +248,9 @@ export class GithubExecutor extends BaseExecutor {
           if (parsed && !parsed.done) {
             const converted = openaiResponsesToOpenAIResponse(parsed, state);
             if (converted) {
-              controller.enqueue(new TextEncoder().encode(formatSSE(converted, "openai")));
+              const sseString = formatSSE(converted, "openai");
+              if (!sseString) return;
+              controller.enqueue(new TextEncoder().encode(sseString));
             }
           }
         }
