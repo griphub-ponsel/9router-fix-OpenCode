@@ -1,24 +1,47 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import PropTypes from "prop-types";
 import { Button, Modal } from "@/shared/components";
 
-export default function AddCustomModelModal({ isOpen, providerAlias, providerDisplayAlias, onSave, onClose }) {
+export default function AddCustomModelModal({ isOpen, providerAlias, providerDisplayAlias, modelAliases, onSave, onClose }) {
   const [modelId, setModelId] = useState("");
+  const [customAlias, setCustomAlias] = useState("");
+  const [aliasError, setAliasError] = useState("");
   const [testStatus, setTestStatus] = useState(null); // null | "testing" | "ok" | "error"
   const [testError, setTestError] = useState("");
   const [saving, setSaving] = useState(false);
 
-  // Reset state when modal opens
-  useEffect(() => {
-    if (isOpen) { setModelId(""); setTestStatus(null); setTestError(""); }
-  }, [isOpen]);
+  const resetForm = () => {
+    setModelId("");
+    setCustomAlias("");
+    setAliasError("");
+    setTestStatus(null);
+    setTestError("");
+  };
+
+  const handleClose = () => {
+    resetForm();
+    onClose();
+  };
 
   // Strip provider's own alias prefix (e.g. "cc/model" -> "model" for cc provider)
   const stripAlias = (id) => {
     const prefix = `${providerAlias}/`;
     return id.startsWith(prefix) ? id.slice(prefix.length) : id;
+  };
+
+  const defaultAliasFor = (id) => id.split("/").pop();
+
+  const getAliasCandidates = (cleanId) => {
+    const baseAlias = defaultAliasFor(cleanId);
+    return [baseAlias, `${providerDisplayAlias}-${baseAlias}`, `${providerDisplayAlias}/${cleanId}`];
+  };
+
+  const getAliasToSave = (cleanId) => {
+    const manual = customAlias.trim();
+    if (manual) return manual;
+    return getAliasCandidates(cleanId).find((alias) => !modelAliases[alias]) || defaultAliasFor(cleanId);
   };
 
   const handleTest = async () => {
@@ -44,9 +67,17 @@ export default function AddCustomModelModal({ isOpen, providerAlias, providerDis
   const handleSave = async () => {
     const cleanId = stripAlias(modelId.trim());
     if (!cleanId || saving) return;
+    const alias = getAliasToSave(cleanId);
+    if (modelAliases[alias] && modelAliases[alias] !== `${providerAlias}/${cleanId}`) {
+      setAliasError(`"${alias}" is already used by ${modelAliases[alias]}`);
+      return;
+    }
     setSaving(true);
+    setAliasError("");
     try {
-      await onSave(cleanId);
+      const saved = await onSave(cleanId, alias);
+      if (!saved) setAliasError("Failed to add model. Check the alert for details.");
+      else resetForm();
     } finally {
       setSaving(false);
     }
@@ -57,7 +88,7 @@ export default function AddCustomModelModal({ isOpen, providerAlias, providerDis
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Add Custom Model">
+    <Modal isOpen={isOpen} onClose={handleClose} title="Add Custom Model">
       <div className="flex flex-col gap-4">
         <div>
           <label className="text-sm font-medium mb-1.5 block">Model ID</label>
@@ -86,6 +117,21 @@ export default function AddCustomModelModal({ isOpen, providerAlias, providerDis
           </p>
         </div>
 
+        <div>
+          <label className="text-sm font-medium mb-1.5 block">Alias</label>
+          <input
+            type="text"
+            value={customAlias}
+            onChange={(e) => { setCustomAlias(e.target.value); setAliasError(""); }}
+            placeholder={defaultAliasFor(stripAlias(modelId.trim()) || "model-id")}
+            className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary"
+          />
+          <p className="text-xs text-text-muted mt-1">
+            Leave empty to use the first available alias, usually <code className="font-mono bg-sidebar px-1 rounded">{getAliasToSave(stripAlias(modelId.trim()) || "model-id")}</code>.
+          </p>
+          {aliasError && <p className="text-xs text-red-500 mt-1">{aliasError}</p>}
+        </div>
+
         {/* Test result */}
         {testStatus === "ok" && (
           <div className="flex items-center gap-2 text-sm text-green-600">
@@ -101,7 +147,7 @@ export default function AddCustomModelModal({ isOpen, providerAlias, providerDis
         )}
 
         <div className="flex gap-2 pt-1">
-          <Button onClick={onClose} variant="ghost" fullWidth size="sm">Cancel</Button>
+          <Button onClick={handleClose} variant="ghost" fullWidth size="sm">Cancel</Button>
           <Button
             onClick={handleSave}
             fullWidth
@@ -120,6 +166,11 @@ AddCustomModelModal.propTypes = {
   isOpen: PropTypes.bool.isRequired,
   providerAlias: PropTypes.string.isRequired,
   providerDisplayAlias: PropTypes.string.isRequired,
+  modelAliases: PropTypes.object,
   onSave: PropTypes.func.isRequired,
   onClose: PropTypes.func.isRequired,
+};
+
+AddCustomModelModal.defaultProps = {
+  modelAliases: {},
 };
