@@ -117,9 +117,13 @@ export function waitForCallback(timeoutMs = 300000) {
 // Singleton proxy server for Codex OAuth callback on fixed port
 let codexProxyServer = null;
 let codexProxyTimeout = null;
+let xaiProxyServer = null;
+let xaiProxyTimeout = null;
 
 const CODEX_PROXY_TIMEOUT_MS = 300000; // 5 minutes
 const CODEX_PORT = 1455;
+const XAI_PROXY_TIMEOUT_MS = 300000; // 5 minutes
+const XAI_PORT = 56121;
 
 // Pending exchange sessions keyed by state — used by server-side exchange mode
 const pendingExchanges = new Map();
@@ -271,6 +275,142 @@ export function stopCodexProxy() {
   if (codexProxyServer) {
     codexProxyServer.close();
     codexProxyServer = null;
+  }
+}
+
+const pendingXaiExchanges = new Map();
+
+export function registerXaiSession({ state, codeVerifier, redirectUri }) {
+  if (!state || !codeVerifier || !redirectUri) return false;
+  pendingXaiExchanges.set(state, {
+    codeVerifier,
+    redirectUri,
+    status: "pending",
+    createdAt: Date.now(),
+  });
+  return true;
+}
+
+export function getXaiSessionStatus(state) {
+  return pendingXaiExchanges.get(state) || null;
+}
+
+export function clearXaiSession(state) {
+  pendingXaiExchanges.delete(state);
+}
+
+export function startXaiProxy() {
+  return new Promise((resolve) => {
+    if (xaiProxyServer) {
+      resolve({ success: true });
+      return;
+    }
+
+    const server = http.createServer(async (req, res) => {
+      const url = new URL(req.url, "http://127.0.0.1");
+
+      const writeXaiCorsHeaders = () => {
+        const origin = req.headers.origin;
+        if (origin === "https://accounts.x.ai" || origin === "https://auth.x.ai") {
+          res.setHeader("Access-Control-Allow-Origin", origin);
+          res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+          res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+          res.setHeader("Access-Control-Allow-Private-Network", "true");
+          res.setHeader("Vary", "Origin");
+        }
+      };
+
+      if (req.method === "OPTIONS") {
+        writeXaiCorsHeaders();
+        res.writeHead(204);
+        res.end();
+        return;
+      }
+
+      if (url.pathname !== "/callback") {
+        res.writeHead(404);
+        res.end("Not found");
+        return;
+      }
+
+      const code = url.searchParams.get("code");
+      const state = url.searchParams.get("state");
+      const errorParam = url.searchParams.get("error");
+      const session = state ? pendingXaiExchanges.get(state) : null;
+
+      if (!session) {
+        writeXaiCorsHeaders();
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        res.end(renderCodexResultPage(false, "Unknown or expired xAI OAuth session."));
+        return;
+      }
+
+      try {
+        if (errorParam) throw new Error(url.searchParams.get("error_description") || errorParam);
+        if (!code) throw new Error("No authorization code received");
+
+        const { exchangeTokens } = await import("../providers.js");
+        const { createProviderConnection } = await import("@/models");
+
+        const tokenData = await exchangeTokens(
+          "xai-oauth",
+          code,
+          session.redirectUri,
+          session.codeVerifier,
+          state,
+        );
+        const connection = await createProviderConnection({
+          provider: "xai-oauth",
+          authType: "oauth",
+          ...tokenData,
+          expiresAt: tokenData.expiresIn
+            ? new Date(Date.now() + tokenData.expiresIn * 1000).toISOString()
+            : null,
+          testStatus: "active",
+        });
+
+        session.status = "done";
+        session.connectionId = connection.id;
+        session.email = connection.email;
+
+        writeXaiCorsHeaders();
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        res.end(renderCodexResultPage(true, "xAI Grok OAuth connected. You can close this window."));
+      } catch (err) {
+        session.status = "error";
+        session.error = err.message;
+        writeXaiCorsHeaders();
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        res.end(renderCodexResultPage(false, err.message));
+      } finally {
+        stopXaiProxy();
+      }
+    });
+
+    server.listen(XAI_PORT, "127.0.0.1", () => {
+      xaiProxyServer = server;
+      xaiProxyTimeout = setTimeout(() => stopXaiProxy(), XAI_PROXY_TIMEOUT_MS);
+      resolve({ success: true });
+    });
+
+    server.on("error", (err) => {
+      if (err.code === "EADDRINUSE") {
+        resolve({ success: false, reason: "port_busy" });
+      } else {
+        resolve({ success: false, reason: err.message });
+      }
+    });
+  });
+}
+
+export function stopXaiProxy() {
+  if (xaiProxyTimeout) {
+    clearTimeout(xaiProxyTimeout);
+    xaiProxyTimeout = null;
+  }
+  if (xaiProxyServer) {
+    xaiProxyServer.close();
+    xaiProxyServer = null;
   }
 }
 

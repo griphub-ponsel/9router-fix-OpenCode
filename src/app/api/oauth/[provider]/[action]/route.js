@@ -13,6 +13,11 @@ import {
   registerCodexSession,
   getCodexSessionStatus,
   clearCodexSession,
+  startXaiProxy,
+  stopXaiProxy,
+  registerXaiSession,
+  getXaiSessionStatus,
+  clearXaiSession,
 } from "@/lib/oauth/utils/server";
 
 /**
@@ -38,48 +43,54 @@ export async function GET(request, { params }) {
     }
 
     if (action === "start-proxy") {
-      if (provider !== "codex") {
-        return NextResponse.json({ error: "Proxy only supported for codex" }, { status: 400 });
+      if (provider !== "codex" && provider !== "xai-oauth") {
+        return NextResponse.json({ error: "Proxy only supported for codex and xai-oauth" }, { status: 400 });
       }
       const appPort = searchParams.get("app_port");
-      if (!appPort) {
+      if (provider === "codex" && !appPort) {
         return NextResponse.json({ error: "Missing app_port" }, { status: 400 });
       }
       // Optional server-side mode params: register session for auto-exchange
       const state = searchParams.get("state");
       const codeVerifier = searchParams.get("code_verifier");
       const redirectUri = searchParams.get("redirect_uri");
-      const result = await startCodexProxy(Number(appPort));
+      const result = provider === "codex"
+        ? await startCodexProxy(Number(appPort))
+        : await startXaiProxy();
       let serverSide = false;
       if (result.success && state && codeVerifier && redirectUri) {
-        serverSide = registerCodexSession({ state, codeVerifier, redirectUri });
+        serverSide = provider === "codex"
+          ? registerCodexSession({ state, codeVerifier, redirectUri })
+          : registerXaiSession({ state, codeVerifier, redirectUri });
       }
       return NextResponse.json({ ...result, serverSide });
     }
 
     if (action === "poll-status") {
-      if (provider !== "codex") {
-        return NextResponse.json({ error: "Poll only supported for codex" }, { status: 400 });
+      if (provider !== "codex" && provider !== "xai-oauth") {
+        return NextResponse.json({ error: "Poll only supported for codex and xai-oauth" }, { status: 400 });
       }
       const state = searchParams.get("state");
       if (!state) {
         return NextResponse.json({ error: "Missing state" }, { status: 400 });
       }
-      const session = getCodexSessionStatus(state);
+      const session = provider === "codex" ? getCodexSessionStatus(state) : getXaiSessionStatus(state);
       if (!session) return NextResponse.json({ status: "unknown" });
       if (session.status === "done" || session.status === "error") {
         const payload = { ...session };
-        clearCodexSession(state);
+        if (provider === "codex") clearCodexSession(state);
+        else clearXaiSession(state);
         return NextResponse.json(payload);
       }
       return NextResponse.json({ status: session.status });
     }
 
     if (action === "stop-proxy") {
-      if (provider !== "codex") {
-        return NextResponse.json({ error: "Proxy only supported for codex" }, { status: 400 });
+      if (provider !== "codex" && provider !== "xai-oauth") {
+        return NextResponse.json({ error: "Proxy only supported for codex and xai-oauth" }, { status: 400 });
       }
-      stopCodexProxy();
+      if (provider === "codex") stopCodexProxy();
+      else stopXaiProxy();
       return NextResponse.json({ success: true });
     }
 

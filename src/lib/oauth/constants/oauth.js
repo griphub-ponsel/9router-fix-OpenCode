@@ -25,6 +25,26 @@ export const CLAUDE_CONFIG = {
   codeChallengeMethod: "S256",
 };
 
+// xAI Grok OAuth Configuration (Authorization Code Flow with PKCE)
+// Reverse-engineered from Hermes Agent (NousResearch/hermes-agent) which uses
+// the public Grok-CLI client_id and the SuperGrok subscription bearer token
+// against api.x.ai/v1.  Uses the discovered endpoints from
+// https://auth.x.ai/.well-known/openid-configuration.
+export const XAI_OAUTH_CONFIG = {
+  clientId: "b1a00492-073a-47ea-816f-4c329264a828",
+  authorizeUrl: "https://auth.x.ai/oauth2/authorize",
+  tokenUrl: "https://auth.x.ai/oauth2/token",
+  apiBaseUrl: "https://api.x.ai/v1",
+  scope: "openid profile email offline_access grok-cli:access api:access",
+  codeChallengeMethod: "S256",
+  // accounts.x.ai requires `plan=generic` to allow loopback OAuth from
+  // non-allowlisted clients; `referrer` lets xAI attribute the request
+  extraParams: {
+    plan: "generic",
+    referrer: "hermes-agent",
+  },
+};
+
 // Codex (OpenAI) OAuth Configuration (Authorization Code Flow with PKCE)
 export const CODEX_CONFIG = {
   clientId: "app_EMoamEEZ73f0CkXaXp7hrann",
@@ -275,4 +295,5 @@ export const PROVIDERS = {
   CLINE: "cline",
   GITLAB: "gitlab",
   CODEBUDDY: "codebuddy",
+  XAI_OAUTH: "xai-oauth",
 };

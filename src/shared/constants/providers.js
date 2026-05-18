@@ -171,7 +171,6 @@ export const APIKEY_PROVIDERS = {
 
 // Web Cookie Providers (use browser session cookie instead of API key)
 export const WEB_COOKIE_PROVIDERS = {
-  // "grok-web": removed — superseded by xai-oauth (PKCE flow against api.x.ai). Cookie auth no longer needed.
   "perplexity-web": { id: "perplexity-web", alias: "pw", name: "Perplexity Web (Pro/Max)", icon: "search", color: "#20808D", textIcon: "PW", website: "https://www.perplexity.ai", authType: "cookie", authHint: "Paste your __Secure-next-auth.session-token cookie value from perplexity.ai", serviceKinds: ["llm"] },
 };
 

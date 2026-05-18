@@ -367,10 +367,12 @@ export const PROVIDERS = {
     format: "openai",
     headers: {}
   },
-  "grok-web": {
-    baseUrl: "https://grok.com/rest/app-chat/conversations/new",
-    format: "grok-web",
-    authType: "cookie"
+  "xai-oauth": {
+    baseUrl: "https://api.x.ai/v1/responses",
+    format: "openai-responses",
+    authType: "oauth",
+    tokenUrl: "https://auth.x.ai/oauth2/token",
+    clientId: "b1a00492-073a-47ea-816f-4c329264a828"
   },
   "perplexity-web": {
     baseUrl: "https://www.perplexity.ai/rest/sse/perplexity_ask",

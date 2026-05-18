@@ -12,9 +12,7 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
   const isOllamaLocal = provider === "ollama-local";
   const isCookie = authType === "cookie";
   const credentialLabel = isCookie ? "Cookie Value" : "API Key";
-  const credentialPlaceholder = isCookie
-    ? (provider === "grok-web" ? "sso=xxxxx... or just the raw value" : "eyJhbGciOi...")
-    : "";
+  const credentialPlaceholder = isCookie ? "eyJhbGciOi..." : "";
 
   const isAzure = provider === "azure";
   const isCloudflareAi = provider === "cloudflare-ai";
