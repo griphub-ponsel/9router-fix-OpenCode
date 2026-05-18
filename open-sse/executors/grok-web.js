@@ -19,6 +19,7 @@ const MODEL_MAP = {
   "grok-4.2": { grokModel: "grok-420", modelMode: "MODEL_MODE_GROK_420", isThinking: false },
   "grok-4.20": { grokModel: "grok-420", modelMode: "MODEL_MODE_GROK_420", isThinking: false },
   "grok-4.20-beta": { grokModel: "grok-420", modelMode: "MODEL_MODE_GROK_420", isThinking: false },
+  "grok-4.3": { grokModel: "grok-4", modelMode: "MODEL_MODE_GROK_4", isThinking: false },
 };
 
 function randomString(length, alphanumeric = false) {
@@ -42,31 +43,52 @@ function randomHex(bytes) {
 }
 
 function parseOpenAIMessages(messages) {
-  const extracted = [];
+  const turns = [];
   for (const msg of messages) {
     let role = String(msg.role || "user");
     if (role === "developer") role = "system";
-    let content = "";
+    let text = "";
     if (typeof msg.content === "string") {
-      content = msg.content;
+      text = msg.content;
     } else if (Array.isArray(msg.content)) {
-      content = msg.content.filter((c) => c.type === "text").map((c) => String(c.text || "")).join(" ");
+      text = msg.content
+        .filter((c) => c.type === "text")
+        .map((c) => String(c.text || ""))
+        .join(" ");
     }
-    if (!content.trim()) continue;
-    extracted.push({ role, text: content });
+    text = text.trim();
+    if (!text) continue;
+    turns.push({ role, text });
   }
 
+  // Last user turn becomes the actual prompt; earlier turns are flattened
+  // into a single context block tagged by role. Grok web reject "Invalid input"
+  // when it can't find a clean trailing user message.
   let lastUserIdx = -1;
-  for (let i = extracted.length - 1; i >= 0; i--) {
-    if (extracted[i].role === "user") { lastUserIdx = i; break; }
+  for (let i = turns.length - 1; i >= 0; i--) {
+    if (turns[i].role === "user") {
+      lastUserIdx = i;
+      break;
+    }
   }
 
-  const parts = [];
-  for (let i = 0; i < extracted.length; i++) {
-    const { role, text } = extracted[i];
-    parts.push(i === lastUserIdx ? text : `${role}: ${text}`);
+  if (lastUserIdx === -1) {
+    // No user message at all — Grok will reject. Caller handles empty-message.
+    return turns.map((t) => t.text).join("\n\n");
   }
-  return parts.join("\n\n");
+
+  const prior = turns.slice(0, lastUserIdx);
+  const lastUser = turns[lastUserIdx].text;
+
+  if (prior.length === 0) return lastUser;
+
+  const contextLines = prior.map((t) => {
+    const tag =
+      t.role === "system" ? "System" : t.role === "assistant" ? "Assistant" : "User";
+    return `[${tag}]\n${t.text}`;
+  });
+
+  return `${contextLines.join("\n\n")}\n\n[User]\n${lastUser}`;
 }
 
 async function* readGrokNdjsonEvents(body, signal) {
@@ -102,10 +124,20 @@ async function* extractContent(eventStream, isThinkingModel, signal) {
   let fingerprint = "";
   let responseId = "";
   let thinkOpened = false;
+  let hasOutput = false;
 
   for await (const event of readGrokNdjsonEvents(eventStream, signal)) {
     if (event.error) {
-      yield { error: event.error.message || `Grok error: ${event.error.code}`, done: true };
+      const code = event.error.code || event.error.status || "";
+      const msg = event.error.message || event.error.detail || "";
+      if (hasOutput && /^invalid input\b/i.test(String(msg || "").trim())) {
+        yield { done: true, fingerprint, responseId };
+        return;
+      }
+      yield {
+        error: msg ? `${msg}${code ? ` (${code})` : ""}` : `Grok error: ${code || "unknown"}`,
+        done: true,
+      };
       return;
     }
     const resp = event.result?.response;
@@ -116,16 +148,54 @@ async function* extractContent(eventStream, isThinkingModel, signal) {
 
     if (resp.modelResponse) {
       const mr = resp.modelResponse;
+      // Grok upstream sometimes returns its rejection text inside modelResponse
+      // instead of an error envelope. Surface those as errors so downstream
+      // clients see a real error chunk instead of "Invalid input" leaking
+      // through as plain content.
+      const trimmed = (mr.message || "").trim();
+      if (trimmed && /^invalid input\b/i.test(trimmed)) {
+        if (hasOutput) {
+          yield { done: true, fingerprint, responseId };
+          return;
+        }
+        yield {
+          error:
+            "Grok rejected the request (Invalid input). The selected model alias may not be available on your subscription, or the request payload is malformed.",
+          done: true,
+        };
+        return;
+      }
       if (thinkOpened && isThinkingModel) {
-        if (mr.message) yield { thinking: mr.message };
+        if (mr.message) {
+          hasOutput = true;
+          yield { thinking: mr.message };
+        }
         thinkOpened = false;
       }
-      if (mr.message) yield { fullMessage: mr.message, fingerprint, responseId };
+      if (mr.message) {
+        hasOutput = true;
+        yield { fullMessage: mr.message, fingerprint, responseId };
+      }
       if (mr.metadata?.llm_info?.modelHash) fingerprint = mr.metadata.llm_info.modelHash;
       continue;
     }
 
-    if (resp.token != null) yield { delta: resp.token, fingerprint, responseId };
+    if (resp.token != null) {
+      const token = String(resp.token);
+      if (/^invalid input\b/i.test(token.trim())) {
+        if (hasOutput) {
+          yield { done: true, fingerprint, responseId };
+          return;
+        }
+        yield {
+          error: "Grok rejected the request (Invalid input).",
+          done: true,
+        };
+        return;
+      }
+      hasOutput = true;
+      yield { delta: resp.token, fingerprint, responseId };
+    }
   }
   yield { done: true, fingerprint, responseId };
 }
@@ -134,8 +204,16 @@ function sseChunk(data) {
   return `data: ${JSON.stringify(data)}\n\n`;
 }
 
+function stripTrailingInvalidInput(text) {
+  if (!text) return "";
+  return String(text)
+    .replace(/(?:\n|\r|\s)*invalid input\s*$/i, "")
+    .trimEnd();
+}
+
 function buildStreamingResponse(eventStream, model, cid, created, isThinkingModel, signal) {
   const encoder = new TextEncoder();
+  const tailSentinel = "Invalid input";
   return new ReadableStream({
     async start(controller) {
       try {
@@ -145,6 +223,7 @@ function buildStreamingResponse(eventStream, model, cid, created, isThinkingMode
         })));
 
         let fp = "";
+        let pendingText = "";
         for await (const chunk of extractContent(eventStream, isThinkingModel, signal)) {
           if (chunk.fingerprint) fp = chunk.fingerprint;
 
@@ -164,9 +243,30 @@ function buildStreamingResponse(eventStream, model, cid, created, isThinkingMode
           }
           if (chunk.done) break;
           if (chunk.delta) {
+            pendingText += chunk.delta;
+
+            // Keep a small tail buffer so we can strip trailing "Invalid input"
+            // that Grok occasionally appends after a valid answer.
+            const keep = tailSentinel.length + 8;
+            if (pendingText.length > keep) {
+              const flushPart = pendingText.slice(0, pendingText.length - keep);
+              pendingText = pendingText.slice(pendingText.length - keep);
+              if (flushPart) {
+                controller.enqueue(encoder.encode(sseChunk({
+                  id: cid, object: "chat.completion.chunk", created, model, system_fingerprint: fp || null,
+                  choices: [{ index: 0, delta: { content: flushPart }, finish_reason: null, logprobs: null }],
+                })));
+              }
+            }
+          }
+        }
+
+        if (pendingText) {
+          const finalText = stripTrailingInvalidInput(pendingText);
+          if (finalText) {
             controller.enqueue(encoder.encode(sseChunk({
               id: cid, object: "chat.completion.chunk", created, model, system_fingerprint: fp || null,
-              choices: [{ index: 0, delta: { content: chunk.delta }, finish_reason: null, logprobs: null }],
+              choices: [{ index: 0, delta: { content: finalText }, finish_reason: null, logprobs: null }],
             })));
           }
         }
@@ -207,6 +307,8 @@ async function buildNonStreamingResponse(eventStream, model, cid, created, isThi
     else if (chunk.delta) fullContent += chunk.delta;
   }
 
+  fullContent = stripTrailingInvalidInput(fullContent);
+
   const msg = { role: "assistant", content: fullContent };
   if (thinkingParts.length > 0) msg.reasoning_content = thinkingParts.join("\n");
 
@@ -235,8 +337,14 @@ export class GrokWebExecutor extends BaseExecutor {
     }
 
     const modelInfo = MODEL_MAP[model];
-    if (!modelInfo) log?.info?.("GROK-WEB", `Unmapped model ${model}, defaulting to grok-4.1-fast`);
-    const { grokModel, modelMode, isThinking } = modelInfo || MODEL_MAP["grok-4.1-fast"];
+    if (!modelInfo) {
+      log?.warn?.(
+        "GROK-WEB",
+        `Unmapped model "${model}", falling back to grok-4. ` +
+          `Pick one of: ${Object.keys(MODEL_MAP).join(", ")}.`,
+      );
+    }
+    const { grokModel, modelMode, isThinking } = modelInfo || MODEL_MAP["grok-4"];
 
     const message = parseOpenAIMessages(messages);
     if (!message.trim()) {
