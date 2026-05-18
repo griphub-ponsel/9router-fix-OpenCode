@@ -108,12 +108,19 @@ export const ANTIGRAVITY_CONFIG = {
   onboardUserEndpoint: "https://cloudcode-pa.googleapis.com/v1internal:onboardUser",
   loadCodeAssistUserAgent: "google-api-nodejs-client/9.15.1",
   loadCodeAssistApiClient: "google-cloud-sdk vscode_cloudshelleditor/0.1",
-  // String enum matches CLIProxyAPI Go source (internal/auth/antigravity/constants.go)
-  loadCodeAssistClientMetadata: JSON.stringify({ ideType: "IDE_UNSPECIFIED", platform: "PLATFORM_UNSPECIFIED", pluginType: "GEMINI" }),
+  // Numeric enums match the Antigravity binary's ClientMetadata so the OAuth
+  // handshake fingerprints identically to the runtime API calls. Mismatch
+  // between OAuth metadata (string enums) and runtime metadata was used by
+  // Google to fingerprint and block 9router accounts (issue #1226).
+  get loadCodeAssistClientMetadata() {
+    return JSON.stringify(getOAuthClientMetadata());
+  },
 };
 
 /**
  * Get client metadata using numeric enum values for API calls.
+ * Values match the Antigravity binary:
+ *   ideType=9 (ANTIGRAVITY), pluginType=2 (GEMINI), platform=OS-specific.
  * @returns {{ ideType: number, platform: number, pluginType: number }}
  */
 export function getOAuthClientMetadata() {

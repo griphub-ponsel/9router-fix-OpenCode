@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import open from "open";
-import { ANTIGRAVITY_CONFIG } from "../constants/oauth.js";
+import { ANTIGRAVITY_CONFIG, getOAuthClientMetadata } from "../constants/oauth.js";
 import { getServerCredentials } from "../config/index.js";
 import { startLocalServer } from "../utils/server.js";
 import { spinner as createSpinner } from "../utils/ui.js";
@@ -92,14 +92,11 @@ export class AntigravityService {
 
   /**
    * Get metadata object for loadCodeAssist / onboardUser API calls.
-   * Uses string enum values matching CLIProxyAPI Go source.
+   * Uses the same numeric enum values as the Antigravity binary so the OAuth
+   * fingerprint matches the runtime API fingerprint (issue #1226).
    */
   getMetadata() {
-    return {
-      ideType: "IDE_UNSPECIFIED",
-      platform: "PLATFORM_UNSPECIFIED",
-      pluginType: "GEMINI",
-    };
+    return getOAuthClientMetadata();
   }
 
   /**
