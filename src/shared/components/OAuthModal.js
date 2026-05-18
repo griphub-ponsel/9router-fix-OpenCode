@@ -58,6 +58,8 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
 
+      // Close popup window automatically once exchange completes
+      try { popupRef.current?.close?.(); } catch { /* ignore */ }
       setStep("success");
       onSuccess?.();
     } catch (err) {
@@ -175,6 +177,8 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
       let redirectUri;
       if (provider === "codex") {
         redirectUri = "http://localhost:1455/auth/callback";
+      } else if (provider === "xai-oauth") {
+        redirectUri = "http://127.0.0.1:56121/callback";
       } else {
         redirectUri = `http://localhost:${appPort}/callback`;
       }
@@ -208,10 +212,44 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
         }
       }
 
-      setAuthData({ ...data, redirectUri, codexServerSide });
+      let xaiProxyActive = false;
+      let xaiServerSide = false;
+      if (provider === "xai-oauth") {
+        try {
+          const proxyUrl = new URL(`/api/oauth/xai-oauth/start-proxy`, window.location.origin);
+          proxyUrl.searchParams.set("state", data.state);
+          proxyUrl.searchParams.set("code_verifier", data.codeVerifier);
+          proxyUrl.searchParams.set("redirect_uri", redirectUri);
+          const proxyRes = await fetch(proxyUrl.toString());
+          const proxyData = await proxyRes.json();
+          xaiProxyActive = proxyData.success;
+          xaiServerSide = !!proxyData.serverSide;
+          if (!xaiProxyActive) {
+            throw new Error(proxyData.reason === "port_busy"
+              ? "Port 56121 is already in use. Close Hermes/xAI auth flow and try again."
+              : (proxyData.reason || "Failed to start xAI callback server"));
+          }
+        } catch (err) {
+          throw new Error(err.message || "Failed to start xAI callback server");
+        }
+      }
+
+      setAuthData({
+        ...data,
+        redirectUri,
+        codexServerSide,
+        xaiServerSide,
+        serverSideProvider: xaiServerSide ? "xai-oauth" : (codexServerSide ? "codex" : null),
+      });
 
       if (provider === "codex" && codexProxyActive) {
         // Proxy active: callback will be handled server-side (auto-exchange) or via channels (fallback)
+        setStep("waiting");
+        popupRef.current = window.open(data.authUrl, "oauth_popup", "width=600,height=700");
+        if (!popupRef.current) {
+          setStep("input");
+        }
+      } else if (provider === "xai-oauth" && xaiProxyActive) {
         setStep("waiting");
         popupRef.current = window.open(data.authUrl, "oauth_popup", "width=600,height=700");
         if (!popupRef.current) {
@@ -252,12 +290,15 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
       if (provider === "codex") {
         fetch("/api/oauth/codex/stop-proxy").catch(() => {});
       }
+      if (provider === "xai-oauth") {
+        fetch("/api/oauth/xai-oauth/stop-proxy").catch(() => {});
+      }
     }
   }, [isOpen, provider, startOAuthFlow]);
 
-  // Codex server-side mode: poll status (proxy auto-exchanges + saves DB)
+  // Server-side mode: poll status (proxy auto-exchanges + saves DB)
   useEffect(() => {
-    if (!authData?.codexServerSide || !authData?.state) return;
+    if (!authData?.serverSideProvider || !authData?.state) return;
     if (callbackProcessedRef.current) return;
     let cancelled = false;
     const POLL_INTERVAL_MS = 1500;
@@ -268,11 +309,13 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
       if (cancelled || callbackProcessedRef.current) return;
       attempts += 1;
       try {
-        const res = await fetch(`/api/oauth/codex/poll-status?state=${encodeURIComponent(authData.state)}`);
+        const res = await fetch(`/api/oauth/${authData.serverSideProvider}/poll-status?state=${encodeURIComponent(authData.state)}`);
         const data = await res.json();
         if (cancelled || callbackProcessedRef.current) return;
         if (data.status === "done") {
           callbackProcessedRef.current = true;
+          // Close popup window automatically once exchange completes
+          try { popupRef.current?.close?.(); } catch { /* ignore */ }
           setStep("success");
           onSuccess?.();
           return;
@@ -383,17 +426,27 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
   const handleManualSubmit = async () => {
     try {
       setError(null);
-      const url = new URL(callbackUrl);
-      const code = url.searchParams.get("code");
-      const state = url.searchParams.get("state");
-      const errorParam = url.searchParams.get("error");
+      const trimmed = callbackUrl.trim();
+      let code = "";
+      let state = null;
+      let errorParam = null;
+
+      if (provider === "xai-oauth" && !/^https?:\/\//i.test(trimmed)) {
+        code = trimmed;
+        state = authData?.state || null;
+      } else {
+        const url = new URL(trimmed);
+        code = url.searchParams.get("code");
+        state = url.searchParams.get("state");
+        errorParam = url.searchParams.get("error");
+      }
 
       if (errorParam) {
         throw new Error(url.searchParams.get("error_description") || errorParam);
       }
 
       if (!code) {
-        throw new Error("No authorization code found in URL");
+        throw new Error(provider === "xai-oauth" ? "No authorization code found" : "No authorization code found in URL");
       }
 
       await exchangeTokens(code, state);
@@ -407,6 +460,9 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
   const handleClose = useCallback(() => {
     if (provider === "codex") {
       fetch("/api/oauth/codex/stop-proxy").catch(() => {});
+    }
+    if (provider === "xai-oauth") {
+      fetch("/api/oauth/xai-oauth/stop-proxy").catch(() => {});
     }
     onClose();
   }, [onClose, provider]);
@@ -448,14 +504,18 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
               </div>
 
               <div>
-                <p className="text-sm font-medium mb-2">Step 2: Paste the callback URL here</p>
+                <p className="text-sm font-medium mb-2">
+                  Step 2: Paste the {provider === "xai-oauth" ? "callback URL or Grok Build code" : "callback URL"} here
+                </p>
                 <p className="text-xs text-text-muted mb-2">
-                  After authorization, copy the full URL from your browser.
+                  {provider === "xai-oauth"
+                    ? "If xAI shows 'Could not establish connection', copy the code shown on that page and paste it here."
+                    : "After authorization, copy the full URL from your browser."}
                 </p>
                 <Input
                   value={callbackUrl}
                   onChange={(e) => setCallbackUrl(e.target.value)}
-                  placeholder={placeholderUrl}
+                  placeholder={provider === "xai-oauth" ? "Paste Grok Build code or callback URL..." : placeholderUrl}
                   className="font-mono text-xs"
                 />
               </div>
