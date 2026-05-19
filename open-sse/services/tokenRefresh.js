@@ -282,6 +282,79 @@ export async function refreshCodexToken(refreshToken, log) {
 }
 
 /**
+ * Specialized refresh for xAI Grok OAuth (SuperGrok subscription) tokens.
+ * Public PKCE client — no client secret.
+ */
+export async function refreshXaiOauthToken(refreshToken, log) {
+  const config = PROVIDERS["xai-oauth"];
+  if (!config?.tokenUrl || !config?.clientId) {
+    log?.warn?.("TOKEN_REFRESH", "xai-oauth provider config is incomplete");
+    return null;
+  }
+
+  try {
+    const response = await fetch(config.tokenUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Accept: "application/json",
+      },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        client_id: config.clientId,
+        refresh_token: refreshToken,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      let errorCode = null;
+      try {
+        const parsed = JSON.parse(errorText);
+        errorCode = parsed?.error?.code || (typeof parsed?.error === "string" ? parsed.error : null);
+      } catch {}
+
+      if (
+        errorCode === "invalid_grant" ||
+        errorCode === "invalid_request" ||
+        errorCode === "refresh_token_reused" ||
+        response.status === 400 ||
+        response.status === 401
+      ) {
+        log?.error?.("TOKEN_REFRESH", "xAI OAuth refresh token invalid. Re-auth required.", {
+          status: response.status,
+          errorCode,
+          error: errorText,
+        });
+        return { error: "unrecoverable_refresh_error", code: errorCode || "invalid_grant" };
+      }
+
+      log?.error?.("TOKEN_REFRESH", "Failed to refresh xAI OAuth token", {
+        status: response.status,
+        error: errorText,
+      });
+      return null;
+    }
+
+    const tokens = await response.json();
+    log?.info?.("TOKEN_REFRESH", "Successfully refreshed xAI OAuth token", {
+      hasNewAccessToken: !!tokens.access_token,
+      hasNewRefreshToken: !!tokens.refresh_token,
+      expiresIn: tokens.expires_in,
+    });
+
+    return {
+      accessToken: tokens.access_token,
+      refreshToken: tokens.refresh_token || refreshToken,
+      expiresIn: tokens.expires_in,
+    };
+  } catch (error) {
+    log?.error?.("TOKEN_REFRESH", `Network error refreshing xAI OAuth token: ${error.message}`);
+    return null;
+  }
+}
+
+/**
  * Specialized refresh for Kiro (AWS CodeWhisperer) tokens
  * Supports both AWS SSO OIDC (Builder ID/IDC) and Social Auth (Google/GitHub)
  */
@@ -560,6 +633,9 @@ async function _getAccessTokenInternal(provider, credentials, log) {
     case "github":
       return await refreshGitHubToken(credentials.refreshToken, log);
 
+    case "xai-oauth":
+      return await refreshXaiOauthToken(credentials.refreshToken, log);
+
     case "kiro":
       return await refreshKiroToken(
         credentials.refreshToken,
@@ -605,6 +681,8 @@ export async function refreshTokenByProvider(provider, credentials, log) {
       return refreshIflowToken(credentials.refreshToken, log);
     case "github":
       return refreshGitHubToken(credentials.refreshToken, log);
+    case "xai-oauth":
+      return refreshXaiOauthToken(credentials.refreshToken, log);
     case "kiro":
       return refreshKiroToken(
         credentials.refreshToken,

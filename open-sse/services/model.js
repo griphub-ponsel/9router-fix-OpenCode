@@ -12,6 +12,8 @@ const ALIAS_TO_PROVIDER_ID = {
   kc: "kilocode",
   kmc: "kimi-coding",
   cl: "cline",
+  xog: "xai-oauth",
+  "xai-oauth": "xai-oauth",
   oc: "opencode",
   ocg: "opencode-go",
   // TTS providers
@@ -63,8 +65,6 @@ const ALIAS_TO_PROVIDER_ID = {
   vxp: "vertex-partner",
   "vertex-partner": "vertex-partner",
   // Web cookie providers
-  gw: "grok-web",
-  "grok-web": "grok-web",
   pw: "perplexity-web",
   "perplexity-web": "perplexity-web",
   mimo: "xiaomi-mimo",

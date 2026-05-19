@@ -7,6 +7,12 @@
 import "open-sse/index.js";
 
 import { generatePKCE, generateState } from "./utils/pkce";
+import crypto from "crypto";
+
+function computePkceS256Challenge(verifier) {
+  if (!verifier || typeof verifier !== "string") return "";
+  return crypto.createHash("sha256").update(verifier).digest("base64url");
+}
 import {
   CLAUDE_CONFIG,
   CODEX_CONFIG,
@@ -23,6 +29,7 @@ import {
   CLINE_CONFIG,
   GITLAB_CONFIG,
   CODEBUDDY_CONFIG,
+  XAI_OAUTH_CONFIG,
   getOAuthClientMetadata,
 } from "./constants/oauth";
 
@@ -1157,6 +1164,98 @@ const PROVIDERS = {
       refreshToken: tokens.refresh_token,
       expiresIn: 86400,
       providerSpecificData: {},
+    }),
+  },
+
+  // xAI Grok OAuth (SuperGrok Subscription) — PKCE loopback
+  // Mirrors NousResearch/hermes-agent's xai-oauth flow.  Clients receive an
+  // OAuth bearer token from auth.x.ai and use it against api.x.ai/v1.
+  "xai-oauth": {
+    config: XAI_OAUTH_CONFIG,
+    flowType: "authorization_code_pkce",
+    buildAuthUrl: (config, redirectUri, state, codeChallenge) => {
+      const params = new URLSearchParams({
+        response_type: "code",
+        client_id: config.clientId,
+        redirect_uri: redirectUri,
+        scope: config.scope,
+        code_challenge: codeChallenge,
+        code_challenge_method: config.codeChallengeMethod,
+        state,
+        ...(config.extraParams || {}),
+      });
+      return `${config.authorizeUrl}?${params.toString()}`;
+    },
+    exchangeToken: async (config, code, redirectUri, codeVerifier) => {
+      const body = new URLSearchParams({
+        grant_type: "authorization_code",
+        client_id: config.clientId,
+        code,
+        redirect_uri: redirectUri,
+        code_verifier: codeVerifier,
+      });
+      // Defense-in-depth: xAI's token endpoint occasionally re-validates the
+      // PKCE challenge here as well, per Hermes #26990.  Sending the
+      // (re-derived) challenge is harmless and avoids "code_challenge is
+      // required" failures on the token step.
+      const challenge = computePkceS256Challenge(codeVerifier);
+      if (challenge) {
+        body.set("code_challenge", challenge);
+        body.set("code_challenge_method", "S256");
+      }
+
+      const response = await fetch(config.tokenUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Accept: "application/json",
+        },
+        body: body.toString(),
+      });
+
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`xAI token exchange failed (HTTP ${response.status}): ${error}`);
+      }
+
+      return await response.json();
+    },
+    postExchange: async (tokens) => {
+      // OIDC userinfo for display name / email
+      let userInfo = {};
+      try {
+        const userRes = await fetch("https://auth.x.ai/oauth2/userinfo", {
+          headers: {
+            Authorization: `Bearer ${tokens.access_token}`,
+            Accept: "application/json",
+          },
+        });
+        if (userRes.ok) userInfo = await userRes.json();
+      } catch (err) {
+        // userinfo is optional — fallback to JWT email below
+      }
+      return { userInfo };
+    },
+    mapTokens: (tokens, extra) => ({
+      accessToken: tokens.access_token,
+      refreshToken: tokens.refresh_token,
+      expiresIn: tokens.expires_in,
+      scope: tokens.scope,
+      idToken: tokens.id_token,
+      tokenType: tokens.token_type || "Bearer",
+      email:
+        extra?.userInfo?.email ||
+        extractEmailFromAccessToken(tokens.access_token) ||
+        extractEmailFromAccessToken(tokens.id_token),
+      displayName:
+        extra?.userInfo?.name ||
+        extra?.userInfo?.preferred_username ||
+        undefined,
+      providerSpecificData: {
+        baseUrl: XAI_OAUTH_CONFIG.apiBaseUrl,
+        tokenUrl: XAI_OAUTH_CONFIG.tokenUrl,
+        authMode: "oauth_pkce",
+      },
     }),
   },
 };
