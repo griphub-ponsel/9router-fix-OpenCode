@@ -477,6 +477,8 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
     setModels(newModels);
   };
 
+  const isEdit = !!combo;
+
   const getSuggestions = () => {
     if (models.length === 0) return [];
     
@@ -602,8 +604,6 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
     await onSave({ name: name.trim(), models });
     setSaving(false);
   };
-
-  const isEdit = !!combo;
 
   return (
     <>
