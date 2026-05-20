@@ -64,6 +64,7 @@ export const PROVIDER_MODELS = {
     { id: "gpt-5.2-image", name: "GPT 5.2 Image", type: "image", capabilities: ["text2img", "edit"], params: ["size", "quality", "background", "image_detail", "output_format"] },
   ]),
   gc: [  // Gemini CLI
+    { id: "gemini-3.5-flash", name: "Gemini 3.5 Flash" },
     { id: "gemini-3-flash-preview", name: "Gemini 3 Flash Preview" },
     { id: "gemini-3-pro-preview", name: "Gemini 3 Pro Preview" },
   ],
@@ -94,7 +95,8 @@ export const PROVIDER_MODELS = {
   ag: [  // Antigravity - special case: models call different backends
     { id: "gemini-3.1-pro-high", name: "Gemini 3 Pro High" },
     { id: "gemini-3.1-pro-low", name: "Gemini 3 Pro Low" },
-    { id: "gemini-3-flash", name: "Gemini 3 Flash", thinking: false }, // AG strips thinking for this model
+    { id: "gemini-3.5-flash", name: "Gemini 3.5 Flash", thinking: false }, // AG strips thinking for this model
+    { id: "gemini-3-flash", name: "Gemini 3 Flash", thinking: false }, // Legacy AG flash alias
     { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
     { id: "claude-opus-4-6-thinking", name: "Claude Opus 4.6 Thinking" },
     { id: "gpt-oss-120b-medium", name: "GPT OSS 120B Medium" },
@@ -121,6 +123,7 @@ export const PROVIDER_MODELS = {
     { id: "claude-opus-4.7", name: "Claude Opus 4.7" },
     // GitHub Copilot - Google models
     { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro" },
+    { id: "gemini-3.5-flash", name: "Gemini 3.5 Flash" },
     { id: "gemini-3-flash-preview", name: "Gemini 3 Flash" },
     { id: "gemini-3.1-pro-preview", name: "Gemini 3.1 Pro" },
     // GitHub Copilot - Other models
@@ -261,6 +264,8 @@ export const PROVIDER_MODELS = {
     { id: "claude-3-5-sonnet-20241022", name: "Claude 3.5 Sonnet" },
   ],
   gemini: [
+    // Gemini 3.5 series
+    { id: "gemini-3.5-flash", name: "Gemini 3.5 Flash" },
     // Gemini 3.1 series
     { id: "gemini-3.1-pro-preview", name: "Gemini 3.1 Pro Preview" },
     { id: "gemini-3.1-flash-lite-preview", name: "Gemini 3.1 Flash Lite Preview" },
@@ -866,6 +871,7 @@ const OAUTH_ALIASES = {
   qwen: "qw",
   iflow: "if",
   antigravity: "ag",
+  "antigravity-cli": "agc",
   github: "gh",
   kiro: "kr",
   cursor: "cu",
@@ -885,7 +891,7 @@ export const PROVIDER_ID_TO_ALIAS = Object.fromEntries(
 
 export function getModelsByProviderId(providerId) {
   const alias = PROVIDER_ID_TO_ALIAS[providerId] || providerId;
-  return PROVIDER_MODELS[alias] || [];
+  return PROVIDER_MODELS[alias] || PROVIDER_MODELS[providerId] || [];
 }
 
 // Get strip list for a model entry (explicit opt-in only)

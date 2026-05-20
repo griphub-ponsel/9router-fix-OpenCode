@@ -3,6 +3,7 @@ const ALIAS_TO_PROVIDER_ID = {
   cc: "claude",
   cx: "codex",
   gc: "gemini-cli",
+  agc: "antigravity-cli",
   qw: "qwen",
   if: "iflow",
   ag: "antigravity",

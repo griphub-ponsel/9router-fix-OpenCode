@@ -99,7 +99,7 @@ function toExpiresAt(expiresIn) {
  * @returns {boolean}
  */
 function needsProjectId(provider) {
-  return provider === "antigravity" || provider === "gemini-cli";
+  return provider === "antigravity" || provider === "antigravity-cli" || provider === "gemini-cli";
 }
 
 /**

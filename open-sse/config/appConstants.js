@@ -160,6 +160,7 @@ export const REFRESH_LEAD_MS = {
   qwen:        20 * 60 * 1000,          // 20 minutes
   "kimi-coding": 5 * 60 * 1000,         // 5 minutes
   antigravity:  5 * 60 * 1000,          // 5 minutes
+  "antigravity-cli": 5 * 60 * 1000,     // 5 minutes
 };
 
 // OAuth endpoints

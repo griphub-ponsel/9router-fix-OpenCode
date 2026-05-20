@@ -265,6 +265,7 @@ export function getProvidersByKind(kind) {
 export const USAGE_SUPPORTED_PROVIDERS = [
   "claude",
   "antigravity",
+  "antigravity-cli",
   "kiro",
   "github",
   "codex",

@@ -6,6 +6,7 @@ import Image from "next/image";
 import BaseUrlSelect from "./BaseUrlSelect";
 import ApiKeySelect from "./ApiKeySelect";
 import { matchKnownEndpoint } from "./cliEndpointMatch";
+import { findModelName } from "@/shared/constants/models";
 
 export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, apiKeys, activeProviders, cloudEnabled, initialStatus, tunnelEnabled, tunnelPublicUrl, tailscaleEnabled, tailscaleUrl }) {
   const [status, setStatus] = useState(initialStatus || null);
@@ -74,7 +75,16 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
 
   const getDefaultModelName = (model) => {
     const aliasName = modelAliases?.[model];
-    return typeof aliasName === "string" && aliasName.trim() ? aliasName : model;
+    if (typeof aliasName === "string" && aliasName.trim()) return aliasName;
+    // Resolve from PROVIDER_MODELS registry (e.g. "kr/claude-opus-4.7" → "Claude Opus 4.7")
+    if (typeof model === "string" && model.includes("/")) {
+      const slash = model.indexOf("/");
+      const alias = model.slice(0, slash);
+      const modelId = model.slice(slash + 1);
+      const name = findModelName(alias, modelId);
+      if (name && name !== modelId) return name;
+    }
+    return model;
   };
 
   const getModelDisplayName = (model) => {
@@ -535,7 +545,7 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
             setSelectedModels([...selectedModels, model.value]);
             setModelDisplayNames((prev) => ({
               ...prev,
-              [model.value]: prev[model.value] || getDefaultModelName(model.value),
+              [model.value]: prev[model.value] || model.name || getDefaultModelName(model.value),
             }));
             if (!activeModel) setActiveModel(model.value);
           }

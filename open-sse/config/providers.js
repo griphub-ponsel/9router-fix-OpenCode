@@ -112,6 +112,12 @@ export const PROVIDERS = {
     clientId: "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com",
     clientSecret: "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"
   },
+  "antigravity-cli": {
+    baseUrl: "https://cloudcode-pa.googleapis.com/v1internal",
+    format: "gemini-cli",
+    clientId: "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com",
+    clientSecret: "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"
+  },
   openrouter: {
     baseUrl: "https://openrouter.ai/api/v1/chat/completions",
     format: "openai",
