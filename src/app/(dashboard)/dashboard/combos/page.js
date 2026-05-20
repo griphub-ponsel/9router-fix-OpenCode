@@ -7,7 +7,8 @@ import { CSS } from "@dnd-kit/utilities";
 import { restrictToVerticalAxis, restrictToParentElement } from "@dnd-kit/modifiers";
 import { Card, Button, Modal, Input, CardSkeleton, ModelSelectModal, Toggle, ConfirmModal } from "@/shared/components";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
-import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
+import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider, getProviderAlias } from "@/shared/constants/providers";
+import { getModelsByProviderId } from "@/shared/constants/models";
 
 // Validate combo name: only a-z, A-Z, 0-9, -, _
 const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
@@ -476,6 +477,63 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
     setModels(newModels);
   };
 
+  const getSuggestions = () => {
+    if (models.length === 0) return [];
+    
+    // Get the base model IDs currently in the combo (e.g., "gemini-3.5-flash", "claude-sonnet-4-6")
+    const currentModelIds = models.map(m => m.includes("/") ? m.split("/")[1] : m);
+    
+    const suggestions = [];
+    
+    activeProviders.forEach(conn => {
+      const isCustom = isOpenAICompatibleProvider(conn.provider) || isAnthropicCompatibleProvider(conn.provider);
+      const prefix = isCustom ? (conn.providerSpecificData?.prefix || conn.id) : getProviderAlias(conn.provider);
+      
+      // If it's a custom provider, we can check aliases
+      if (isCustom) {
+        Object.entries(modelAliases).forEach(([aliasName, fullModel]) => {
+          if (fullModel.startsWith(`${conn.provider}/`)) {
+            const modelId = fullModel.replace(`${conn.provider}/`, "");
+            currentModelIds.forEach(currId => {
+              if (modelId.toLowerCase() === currId.toLowerCase() || aliasName.toLowerCase() === currId.toLowerCase()) {
+                const suggestValue = `${prefix}/${modelId}`;
+                if (!models.includes(suggestValue) && !suggestions.some(s => s.value === suggestValue)) {
+                  suggestions.push({
+                    value: suggestValue,
+                    name: `${conn.name} (${aliasName})`,
+                    providerName: conn.name,
+                    modelId
+                  });
+                }
+              }
+            });
+          }
+        });
+      } else {
+        const providerModels = getModelsByProviderId(conn.provider) || [];
+        providerModels.forEach(m => {
+          currentModelIds.forEach(currId => {
+            if (m.id.toLowerCase() === currId.toLowerCase()) {
+              const suggestValue = `${prefix}/${m.id}`;
+              if (!models.includes(suggestValue) && !suggestions.some(s => s.value === suggestValue)) {
+                suggestions.push({
+                  value: suggestValue,
+                  name: `${conn.name} (${m.name || m.id})`,
+                  providerName: conn.name,
+                  modelId: m.id
+                });
+              }
+            }
+          });
+        });
+      }
+    });
+    
+    return suggestions;
+  };
+
+  const suggestions = getSuggestions();
+
   const handleSave = async () => {
     if (!validateName(name)) return;
     setSaving(true);
@@ -551,6 +609,28 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
               <span className="material-symbols-outlined text-[16px]">add</span>
               Add Model
             </button>
+
+            {/* Suggestions */}
+            {suggestions.length > 0 && (
+              <div className="mt-3 rounded-lg border border-primary/20 bg-primary/5 p-3">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-primary mb-2">
+                  <span className="material-symbols-outlined text-[16px] text-primary">lightbulb</span>
+                  Suggested alternative providers for fallback:
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {suggestions.map((s) => (
+                    <button
+                      key={s.value}
+                      onClick={() => handleAddModel({ value: s.value })}
+                      className="inline-flex items-center gap-1 rounded bg-white px-2 py-1 text-xs border border-primary/20 hover:border-primary hover:bg-primary/10 transition-colors text-text-main dark:bg-black/20"
+                    >
+                      <span className="material-symbols-outlined text-[12px] text-primary">add</span>
+                      {s.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Actions */}
