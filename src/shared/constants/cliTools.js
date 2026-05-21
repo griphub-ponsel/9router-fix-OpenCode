@@ -345,6 +345,24 @@ amp --model "{{model}}"
       { id: "gemini-3.1-pro", name: "Gemini 3.1 Pro", alias: "gemini", defaultValue: "gemini/gemini-3.1-pro" },
     ],
   },
+  codebuddy: {
+    id: "codebuddy",
+    name: "CodeBuddy",
+    image: "/providers/codebuddy.svg",
+    color: "#006EFF",
+    description: "CodeBuddy (Tencent Copilot) IDE with 9Router integration",
+    configType: "custom",
+    notes: [
+      {
+        type: "info",
+        text: "Configure 9Router models directly to CodeBuddy IDE."
+      },
+      {
+        type: "warning",
+        text: "Config path: Linux/macOS ~/.codebuddy/models.json • Windows %USERPROFILE%\\.codebuddy\\models.json"
+      }
+    ]
+  },
   // HIDDEN: gemini-cli
   // "gemini-cli": {
   //   id: "gemini-cli",

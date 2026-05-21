@@ -573,6 +573,81 @@ async function showHermesMenu(port, breadcrumb = []) {
   });
 }
 
+// ─── CodeBuddy ────────────────────────────────────────────────────────────────
+
+async function buildCodeBuddyHeader() {
+  const result = await api.getCliToolSettings("codebuddy");
+  if (!result.success) return `  ${COLORS.red}Failed to load settings${COLORS.reset}`;
+
+  const { installed, has9Router, codebuddy } = result.data;
+  if (!installed) return `Status:   ${COLORS.red}✗ CodeBuddy not installed${COLORS.reset}`;
+
+  if (!has9Router) {
+    return [
+      `Status:   ${COLORS.red}✗ Not configured${COLORS.reset}`,
+      `${COLORS.dim}Run "Quick Setup" to configure${COLORS.reset}`
+    ].join("\n");
+  }
+
+  const lines = [`Status:   ${COLORS.green}✓ Configured${COLORS.reset}`];
+  if (codebuddy?.baseURL) lines.push(`Endpoint: ${COLORS.cyan}${codebuddy.baseURL}${COLORS.reset}`);
+  if (Array.isArray(codebuddy?.models) && codebuddy.models.length > 0) {
+    lines.push(`Models:   ${COLORS.dim}${codebuddy.models.join(", ")}${COLORS.reset}`);
+  }
+  return lines.join("\n");
+}
+
+async function codeBuddyQuickSetup(port) {
+  const { endpoint } = await getEndpoint(port);
+  const apiKey = await getFirstApiKey();
+
+  if (!apiKey) {
+    showStatus("No API keys found. Create one in API Keys menu first.", "error");
+    await pause();
+    return;
+  }
+
+  const firstModel = await selectModelFromList("Select Model (CodeBuddy)", "", { excludeCombos: true });
+  if (!firstModel) return;
+
+  const models = [firstModel];
+
+  while (true) {
+    const more = await confirm(`Add another model? (current: ${models.length})`);
+    if (!more) break;
+    const next = await selectModelFromList(`Add Model #${models.length + 1}`, models.join(", "), { excludeCombos: true });
+    if (!next) break;
+    if (!models.includes(next)) models.push(next);
+  }
+
+  const result = await api.applyCliToolSettings("codebuddy", {
+    baseUrl: endpoint,
+    apiKey,
+    models,
+  });
+  showStatus(result.success ? "CodeBuddy setup completed!" : `Failed: ${result.error}`, result.success ? "success" : "error");
+  await pause();
+}
+
+async function codeBuddyReset() {
+  const result = await api.resetCliToolSettings("codebuddy");
+  showStatus(result.success ? "CodeBuddy settings reset!" : `Failed: ${result.error}`, result.success ? "success" : "error");
+  await pause();
+}
+
+async function showCodeBuddyMenu(port, breadcrumb = []) {
+  await showMenuWithBack({
+    title: "💻 CodeBuddy Settings",
+    breadcrumb,
+    headerContent: buildCodeBuddyHeader,
+    refresh: async () => ({}),
+    items: [
+      { label: "⚡ Quick Setup", action: async () => { await codeBuddyQuickSetup(port); return true; } },
+      { label: "Reset to Default", action: async () => { await codeBuddyReset(); return true; } }
+    ]
+  });
+}
+
 // ─── Main CLI Tools Menu ──────────────────────────────────────────────────────
 
 /**
@@ -610,6 +685,10 @@ async function showCliToolsMenu(port, breadcrumb = []) {
       {
         label: "Hermes",
         action: async () => { await showHermesMenu(port, [...breadcrumb, "Hermes"]); return true; }
+      },
+      {
+        label: "CodeBuddy",
+        action: async () => { await showCodeBuddyMenu(port, [...breadcrumb, "CodeBuddy"]); return true; }
       }
     ]
   });
