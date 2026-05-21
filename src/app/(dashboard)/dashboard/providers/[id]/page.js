@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
-import { Card, Button, Badge, Input, Modal, CardSkeleton, OAuthModal, KiroOAuthWrapper, CursorAuthModal, IFlowCookieModal, GitLabAuthModal, Toggle, Select, EditConnectionModal, NoAuthProxyCard, ConfirmModal } from "@/shared/components";
+import { Card, Button, Badge, Input, Modal, CardSkeleton, OAuthModal, KiroOAuthWrapper, CursorAuthModal, IFlowCookieModal, GitLabAuthModal, PioneerAuthModal, PioneerTrainingJobsModal, Toggle, Select, EditConnectionModal, NoAuthProxyCard, ConfirmModal } from "@/shared/components";
 import { OAUTH_PROVIDERS, APIKEY_PROVIDERS, FREE_PROVIDERS, FREE_TIER_PROVIDERS, WEB_COOKIE_PROVIDERS, getProviderAlias, isOpenAICompatibleProvider, isAnthropicCompatibleProvider, AI_PROVIDERS, THINKING_CONFIG } from "@/shared/constants/providers";
 import { getModelsByProviderId } from "@/shared/constants/models";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
@@ -62,6 +62,8 @@ export default function ProviderDetailPage() {
   const [oneByOneResults, setOneByOneResults] = useState({});
   const [oneByOneSummary, setOneByOneSummary] = useState(null);
   const stopOneByOneRef = useRef(false);
+  const [showPioneerJobsModal, setShowPioneerJobsModal] = useState(false);
+  const [pioneerJobsConn, setPioneerJobsConn] = useState(null);
   const { copied, copy } = useCopyToClipboard();
 
   const AG_RISK_STORAGE_KEY = "ag_risk_confirmed";
@@ -123,7 +125,7 @@ export default function ProviderDetailPage() {
       }
     : (OAUTH_PROVIDERS[providerId] || APIKEY_PROVIDERS[providerId] || FREE_PROVIDERS[providerId] || FREE_TIER_PROVIDERS[providerId] || WEB_COOKIE_PROVIDERS[providerId]);
   const authModes = providerInfo?.authModes || [];
-  const isOAuth = !!OAUTH_PROVIDERS[providerId] || !!FREE_PROVIDERS[providerId] || authModes.includes("oauth");
+  const isOAuth = !!OAUTH_PROVIDERS[providerId] || !!FREE_PROVIDERS[providerId] || authModes.includes("oauth") || providerId === "pioneer";
   const supportsApiKeyAuth = !!APIKEY_PROVIDERS[providerId] || authModes.includes("apikey");
   const isFreeNoAuth = !!FREE_PROVIDERS[providerId]?.noAuth;
   const models = getModelsByProviderId(providerId);
@@ -757,6 +759,19 @@ export default function ProviderDetailPage() {
                 oneByOneStatus={oneByOneResults[conn.id] || null}
               />
             </div>
+            {providerId === "pioneer" && (
+              <div className="flex items-center pl-2 pr-2">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  icon="model_training"
+                  onClick={() => { setPioneerJobsConn(conn); setShowPioneerJobsModal(true); }}
+                  title="Manage fine-tuning jobs for this account"
+                >
+                  Fine-Tune
+                </Button>
+              </div>
+            )}
           </div>
         ))}
     </div>
@@ -1405,6 +1420,12 @@ export default function ProviderDetailPage() {
           onSuccess={handleOAuthSuccess}
           onClose={() => setShowOAuthModal(false)}
         />
+      ) : providerId === "pioneer" ? (
+        <PioneerAuthModal
+          isOpen={showOAuthModal}
+          onSuccess={handleOAuthSuccess}
+          onClose={() => setShowOAuthModal(false)}
+        />
       ) : (
         <OAuthModal
           isOpen={showOAuthModal}
@@ -1467,6 +1488,15 @@ export default function ProviderDetailPage() {
             return saved;
           }}
           onClose={() => setShowAddCustomModel(false)}
+        />
+      )}
+
+      {providerId === "pioneer" && (
+        <PioneerTrainingJobsModal
+          isOpen={showPioneerJobsModal}
+          onClose={() => { setShowPioneerJobsModal(false); setPioneerJobsConn(null); }}
+          connectionId={pioneerJobsConn?.id}
+          connectionName={pioneerJobsConn?.name || pioneerJobsConn?.email}
         />
       )}
 
