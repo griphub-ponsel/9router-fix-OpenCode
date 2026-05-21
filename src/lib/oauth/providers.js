@@ -5,6 +5,7 @@
 
 // Ensure outbound fetch respects HTTP(S)_PROXY/ALL_PROXY in Node runtime
 import "open-sse/index.js";
+import crypto from "crypto";
 
 import { generatePKCE, generateState } from "./utils/pkce";
 import crypto from "crypto";
@@ -60,15 +61,15 @@ function extractEmailFromAccessToken(accessToken) {
   return payload.email || payload.preferred_username || payload.sub || undefined;
 }
 
-// Extract codex account info from id_token
+// Extract codex account info from id_token or access token
 export function extractCodexAccountInfo(idToken) {
   const payload = decodeJwtPayload(idToken);
   if (!payload) return {};
   const chatgpt = payload["https://api.openai.com/auth"] || {};
   return {
     email: payload.email,
-    chatgptAccountId: chatgpt.chatgpt_account_id,
-    chatgptPlanType: chatgpt.chatgpt_plan_type,
+    chatgptAccountId: chatgpt.chatgpt_account_id || payload.account_id,
+    chatgptPlanType: chatgpt.chatgpt_plan_type || payload.plan_type,
   };
 }
 
@@ -1282,18 +1283,21 @@ export function getProviderNames() {
  * Generate auth data for a provider
  * @param {object} [meta] - Provider-specific metadata (e.g. gitlab clientId/baseUrl)
  */
-export function generateAuthData(providerName, redirectUri, meta) {
+export async function generateAuthData(providerName, redirectUri, meta) {
   const provider = getProvider(providerName);
-  const { codeVerifier, codeChallenge, state } = generatePKCE();
+  const config = provider.prepareConfig
+    ? await provider.prepareConfig(provider.config, meta || {})
+    : provider.config;
+  const { codeVerifier, codeChallenge, state } = generatePKCE(provider.pkceVerifierBytes);
 
   let authUrl;
   if (provider.flowType === "device_code") {
     // Device code flow doesn't have auth URL upfront
     authUrl = null;
   } else if (provider.flowType === "authorization_code_pkce") {
-    authUrl = provider.buildAuthUrl(provider.config, redirectUri, state, codeChallenge, meta || {});
+    authUrl = provider.buildAuthUrl(config, redirectUri, state, codeChallenge, meta || {});
   } else {
-    authUrl = provider.buildAuthUrl(provider.config, redirectUri, state, undefined, meta || {});
+    authUrl = provider.buildAuthUrl(config, redirectUri, state, undefined, meta || {});
   }
 
   return {
@@ -1314,8 +1318,11 @@ export function generateAuthData(providerName, redirectUri, meta) {
  */
 export async function exchangeTokens(providerName, code, redirectUri, codeVerifier, state, meta) {
   const provider = getProvider(providerName);
+  const config = provider.prepareConfig
+    ? await provider.prepareConfig(provider.config, meta || {})
+    : provider.config;
 
-  const tokens = await provider.exchangeToken(provider.config, code, redirectUri, codeVerifier, state, meta || {});
+  const tokens = await provider.exchangeToken(config, code, redirectUri, codeVerifier, state, meta || {});
 
   let extra = null;
   if (provider.postExchange) {

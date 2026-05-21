@@ -876,4 +876,3 @@ export async function refreshWithRetry(refreshFn, maxRetries = 3, log = null) {
   log?.error?.("TOKEN_REFRESH", `All ${maxRetries} retry attempts failed`);
   return null;
 }
-
