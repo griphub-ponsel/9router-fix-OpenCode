@@ -49,6 +49,14 @@ function sortVisibleConnections(
 
   if (!expiringFirst) return connections;
 
+  const providerOrder = new Map();
+  connections.forEach((connection) => {
+    const provider = connection.provider || "";
+    if (!providerOrder.has(provider)) {
+      providerOrder.set(provider, providerOrder.size);
+    }
+  });
+
   const getEarliestResetTime = (connection) => {
     const resetTimes = (quotaData[connection.id]?.quotas || [])
       .map((quota) =>
@@ -63,6 +71,11 @@ function sortVisibleConnections(
   };
 
   return [...connections].sort((a, b) => {
+    const providerDiff =
+      (providerOrder.get(a.provider || "") ?? Number.MAX_SAFE_INTEGER) -
+      (providerOrder.get(b.provider || "") ?? Number.MAX_SAFE_INTEGER);
+    if (providerDiff !== 0) return providerDiff;
+
     const expiryDiff = getEarliestResetTime(a) - getEarliestResetTime(b);
     if (expiryDiff !== 0) return expiryDiff;
     return (
@@ -1004,8 +1017,8 @@ export default function ProviderLimits() {
       {/* Provider cards: 2 columns, compact */}
       {expiringFirst && (
         <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
-          Expiring-first currently reorders accounts inside the current page.
-          Cross-page ordering still follows backend pagination.
+          Expiring-first currently reorders accounts only inside each provider.
+          Provider order still follows backend pagination.
         </div>
       )}
 
