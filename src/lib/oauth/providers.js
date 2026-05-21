@@ -8,7 +8,6 @@ import "open-sse/index.js";
 import crypto from "crypto";
 
 import { generatePKCE, generateState } from "./utils/pkce";
-import crypto from "crypto";
 
 function computePkceS256Challenge(verifier) {
   if (!verifier || typeof verifier !== "string") return "";
