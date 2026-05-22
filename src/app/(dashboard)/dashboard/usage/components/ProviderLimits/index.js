@@ -24,6 +24,11 @@ function getConnectionQuotaRemaining(connection, quotaData) {
   return Number.POSITIVE_INFINITY;
 }
 
+function getProviderOrder(provider) {
+  const index = USAGE_SUPPORTED_PROVIDERS.indexOf(provider);
+  return index === -1 ? Number.MAX_SAFE_INTEGER : index;
+}
+
 function sortVisibleConnections(
   connections,
   quotaData,
@@ -47,7 +52,17 @@ function sortVisibleConnections(
     });
   }
 
-  if (!expiringFirst) return connections;
+  if (!expiringFirst) {
+    return [...connections].sort((a, b) => {
+      const providerDiff =
+        getProviderOrder(a.provider) - getProviderOrder(b.provider);
+      if (providerDiff !== 0) return providerDiff;
+      return (
+        (a.provider || "").localeCompare(b.provider || "") ||
+        (getConnectionLabel(a) || "").localeCompare(getConnectionLabel(b) || "")
+      );
+    });
+  }
 
   const providerOrder = new Map();
   connections.forEach((connection) => {
@@ -219,6 +234,7 @@ function setQuotaCache(connectionId, quotaEntry) {
 const REFRESH_INTERVAL_MS = 60000; // 60 seconds
 const DEPLETED_QUOTA_THRESHOLD = 5; // percent
 const AUTO_REFRESH_STORAGE_KEY = "quotaAutoRefresh";
+const EXPIRING_FIRST_STORAGE_KEY = "quotaExpiringFirst";
 const ACCOUNT_FILTER_OPTIONS = [
   { value: "all", label: "All accounts" },
   { value: "active", label: "Active" },
@@ -254,6 +270,7 @@ export default function ProviderLimits() {
   const [accountFilter, setAccountFilter] = useState("all");
   const [quotaSortMode, setQuotaSortMode] = useState("default");
   const [expiringFirst, setExpiringFirst] = useState(false);
+  const [hasHydratedExpiringFirst, setHasHydratedExpiringFirst] = useState(false);
   const [providerMenuOpen, setProviderMenuOpen] = useState(false);
   const [bulkToggling, setBulkToggling] = useState(false);
   const [page, setPage] = useState(1);
@@ -282,7 +299,7 @@ export default function ProviderLimits() {
           page: String(targetPage),
           pageSize: String(pageSize),
           accountStatus: accountFilter,
-          sort: "priority",
+          sort: "provider",
         });
 
         if (providerFilter !== "all") {
@@ -314,7 +331,7 @@ export default function ProviderLimits() {
         return [];
       }
     },
-    [accountFilter, expiringFirst, page, pageSize, providerFilter],
+    [accountFilter, page, pageSize, providerFilter],
   );
 
   // Fetch quota for a specific connection
@@ -626,6 +643,22 @@ export default function ProviderLimits() {
     if (typeof window === "undefined" || !hasHydratedAutoRefresh) return;
     window.localStorage.setItem(AUTO_REFRESH_STORAGE_KEY, String(autoRefresh));
   }, [autoRefresh, hasHydratedAutoRefresh]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const stored = window.localStorage.getItem(EXPIRING_FIRST_STORAGE_KEY);
+    setExpiringFirst(stored === "true");
+    setHasHydratedExpiringFirst(true);
+  }, []);
+
+  // Persist expiring-first preference
+  useEffect(() => {
+    if (typeof window === "undefined" || !hasHydratedExpiringFirst) return;
+    window.localStorage.setItem(
+      EXPIRING_FIRST_STORAGE_KEY,
+      String(expiringFirst),
+    );
+  }, [expiringFirst, hasHydratedExpiringFirst]);
 
   // Auto-refresh interval
   useEffect(() => {
