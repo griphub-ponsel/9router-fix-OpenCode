@@ -38,6 +38,7 @@ export default function CoworkToolCard({
   const [message, setMessage] = useState(null);
   const [selectedApiKey, setSelectedApiKey] = useState("");
   const [selectedModels, setSelectedModels] = useState([]);
+  const [newModelBadges, setNewModelBadges] = useState({});
   const [showManualConfigModal, setShowManualConfigModal] = useState(false);
   const [customBaseUrl, setCustomBaseUrl] = useState("");
   const [plugins, setPlugins] = useState([]);
@@ -49,6 +50,8 @@ export default function CoworkToolCard({
   const [marketplaceOpen, setMarketplaceOpen] = useState(false);
   const [addMcpOpen, setAddMcpOpen] = useState(false);
   const [addMcpForm, setAddMcpForm] = useState({ type: "url", name: "", url: "", command: "", args: "" });
+
+  const sortModels = (models) => ([...new Set(models)].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })));
 
   useEffect(() => {
     if (apiKeys?.length > 0 && !selectedApiKey) {
@@ -76,7 +79,7 @@ export default function CoworkToolCard({
 
   useEffect(() => {
     if (status?.cowork?.models?.length) {
-      setSelectedModels(status.cowork.models);
+      setSelectedModels(sortModels(status.cowork.models));
     }
     if (status?.cowork?.baseUrl && !customBaseUrl) {
       setCustomBaseUrl(stripV1(status.cowork.baseUrl));
@@ -173,7 +176,8 @@ export default function CoworkToolCard({
         return;
       }
       if (!selectedModels.includes(name)) {
-        setSelectedModels([...selectedModels, name]);
+        setSelectedModels((prev) => sortModels([...prev, name]));
+        setNewModelBadges((prev) => ({ ...prev, [name]: true }));
       }
       setComboModalOpen(false);
       setMessage({ type: "success", text: `Combo "${name}" created and added.` });
@@ -185,12 +189,18 @@ export default function CoworkToolCard({
   const handleAddModel = (model) => {
     const value = model?.value || model?.name || model;
     if (!value || selectedModels.includes(value)) return;
-    setSelectedModels((prev) => [...prev, value]);
+    setSelectedModels((prev) => sortModels([...prev, value]));
+    setNewModelBadges((prev) => ({ ...prev, [value]: true }));
   };
 
   const handleRemoveModel = (model) => {
     const value = model?.value || model?.name || model;
-    setSelectedModels((prev) => prev.filter((item) => item !== value));
+    setSelectedModels((prev) => sortModels(prev.filter((item) => item !== value)));
+    setNewModelBadges((prev) => {
+      const next = { ...prev };
+      delete next[value];
+      return next;
+    });
   };
 
   const handleReset = async () => {
@@ -202,6 +212,7 @@ export default function CoworkToolCard({
       if (res.ok) {
         setMessage({ type: "success", text: "Settings reset successfully" });
         setSelectedModels([]);
+        setNewModelBadges({});
         setPlugins(status?.defaultPlugins || []);
         setLocalPlugins([]);
         setCustomPlugins([]);
@@ -335,7 +346,14 @@ export default function CoworkToolCard({
                       ) : (
                         selectedModels.map((m) => (
                           <span key={m} className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-black/5 dark:bg-white/5 text-text-muted border border-transparent hover:border-border">
-                            {m}
+                            <span className="inline-flex items-center gap-1">
+                              <span>{m}</span>
+                              {newModelBadges[m] && (
+                                <span className="shrink-0 rounded bg-emerald-500/15 px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-500">
+                                  New
+                                </span>
+                              )}
+                            </span>
                             <button onClick={() => handleRemoveModel(m)} className="ml-0.5 hover:text-red-500">
                               <span className="material-symbols-outlined text-[12px]">close</span>
                             </button>

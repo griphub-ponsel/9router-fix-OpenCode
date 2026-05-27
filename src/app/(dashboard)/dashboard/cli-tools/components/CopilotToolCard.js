@@ -18,8 +18,11 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
   const [modelAliases, setModelAliases] = useState({});
   const [showManualConfigModal, setShowManualConfigModal] = useState(false);
   const [selectedModels, setSelectedModels] = useState([]);
+  const [newModelBadges, setNewModelBadges] = useState({});
   const [modalOpen, setModalOpen] = useState(false);
   const selectedModelsRef = useRef([]);
+
+  const sortModels = (models) => ([...new Set(models)].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })));
 
   useEffect(() => {
     selectedModelsRef.current = selectedModels;
@@ -48,7 +51,7 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
     if (status?.config && Array.isArray(status.config) && selectedModels.length === 0) {
       const entry = status.config.find((e) => e.name === "9Router");
       if (entry?.models?.length > 0) {
-        setSelectedModels(entry.models.map((m) => m.id));
+        setSelectedModels(sortModels(entry.models.map((m) => m.id)));
       }
     }
   }, [status]);
@@ -94,7 +97,14 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
 
   const getDisplayUrl = () => customBaseUrl || `${baseUrl}/v1`;
 
-  const removeModel = (id) => setSelectedModels((prev) => prev.filter((m) => m !== id));
+  const removeModel = (id) => {
+    setSelectedModels((prev) => sortModels(prev.filter((m) => m !== id)));
+    setNewModelBadges((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  };
 
   const checkStatus = async () => {
     setChecking(true);
@@ -145,6 +155,7 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
       if (res.ok) {
         setMessage({ type: "success", text: "Settings reset successfully!" });
         setSelectedModels([]);
+        setNewModelBadges({});
         checkStatus();
       } else {
         setMessage({ type: "error", text: data.error || "Failed to reset settings" });
@@ -252,7 +263,14 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
                       ) : (
                         selectedModels.map((model) => (
                           <span key={model} className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-black/5 dark:bg-white/5 text-text-muted border border-transparent hover:border-border">
-                            {model}
+                            <span className="inline-flex items-center gap-1">
+                              <span>{model}</span>
+                              {newModelBadges[model] && (
+                                <span className="shrink-0 rounded bg-emerald-500/15 px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-500">
+                                  New
+                                </span>
+                              )}
+                            </span>
                             <button onClick={(e) => { e.stopPropagation(); removeModel(model); }} className="ml-0.5 hover:text-red-500">
                               <span className="material-symbols-outlined text-[12px]">close</span>
                             </button>
@@ -298,11 +316,12 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
         }}
         onSelect={(model) => {
           if (!selectedModels.includes(model.value)) {
-            setSelectedModels([...selectedModels, model.value]);
+            setSelectedModels((prev) => sortModels([...prev, model.value]));
+            setNewModelBadges((prev) => ({ ...prev, [model.value]: true }));
           }
         }}
         onDeselect={(model) => {
-          setSelectedModels(selectedModels.filter(m => m !== model.value));
+          removeModel(model.value);
         }}
         selectedModel={null}
         activeProviders={activeProviders}

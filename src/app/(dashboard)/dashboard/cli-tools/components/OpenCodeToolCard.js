@@ -25,8 +25,11 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
   const [customBaseUrl, setCustomBaseUrl] = useState("");
   const [selectedModels, setSelectedModels] = useState([]);
   const [modelDisplayNames, setModelDisplayNames] = useState({});
+  const [newModelBadges, setNewModelBadges] = useState({});
   const [activeModel, setActiveModel] = useState("");
   const selectedModelsRef = useRef([]);
+
+  const sortModels = (models) => ([...new Set(models)].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })));
 
   useEffect(() => {
     selectedModelsRef.current = selectedModels;
@@ -53,10 +56,11 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
   // Sync models from existing config
   useEffect(() => {
     if (status?.opencode?.models) {
-      setSelectedModels(status.opencode.models);
+      const sortedModels = sortModels(status.opencode.models);
+      setSelectedModels(sortedModels);
       setModelDisplayNames((prev) => {
         const next = { ...prev };
-        status.opencode.models.forEach((model) => {
+        sortedModels.forEach((model) => {
           const configuredName = status.opencode.modelNames?.[model];
           next[model] = configuredName || next[model] || modelAliases?.[model] || model;
         });
@@ -209,6 +213,7 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
         setSubagentModel("");
         setSelectedModels([]);
         setModelDisplayNames({});
+        setNewModelBadges({});
         setActiveModel("");
         checkStatus();
       } else {
@@ -433,7 +438,14 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
                               </span>
                             </button>
                             {/* Model ID */}
-                            <span className="truncate text-xs text-text-main" title={model}>{model}</span>
+                            <span className="flex min-w-0 items-center gap-1.5" title={model}>
+                              <span className="truncate text-xs text-text-main">{model}</span>
+                              {newModelBadges[model] && (
+                                <span className="shrink-0 rounded bg-emerald-500/15 px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-500">
+                                  New
+                                </span>
+                              )}
+                            </span>
                             {/* Display name input */}
                             <input
                               type="text"
@@ -448,9 +460,14 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
                                 try {
                                   const res = await fetch(`/api/cli-tools/opencode-settings?model=${encodeURIComponent(model)}`, { method: "DELETE" });
                                   if (res.ok) {
-                                    const newModels = selectedModels.filter((m) => m !== model);
+                                    const newModels = sortModels(selectedModels.filter((m) => m !== model));
                                     setSelectedModels(newModels);
                                     setModelDisplayNames((prev) => {
+                                      const next = { ...prev };
+                                      delete next[model];
+                                      return next;
+                                    });
+                                    setNewModelBadges((prev) => {
                                       const next = { ...prev };
                                       delete next[model];
                                       return next;
@@ -549,18 +566,24 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
         }}
         onSelect={(model) => {
           if (!selectedModels.includes(model.value)) {
-            setSelectedModels([...selectedModels, model.value]);
+            setSelectedModels((prev) => sortModels([...prev, model.value]));
             setModelDisplayNames((prev) => ({
               ...prev,
               [model.value]: prev[model.value] || model.name || getDefaultModelName(model.value),
             }));
+            setNewModelBadges((prev) => ({ ...prev, [model.value]: true }));
             if (!activeModel) setActiveModel(model.value);
           }
         }}
         onDeselect={(model) => {
-          const remaining = selectedModels.filter(m => m !== model.value);
+          const remaining = sortModels(selectedModels.filter((m) => m !== model.value));
           setSelectedModels(remaining);
           setModelDisplayNames((prev) => {
+            const next = { ...prev };
+            delete next[model.value];
+            return next;
+          });
+          setNewModelBadges((prev) => {
             const next = { ...prev };
             delete next[model.value];
             return next;

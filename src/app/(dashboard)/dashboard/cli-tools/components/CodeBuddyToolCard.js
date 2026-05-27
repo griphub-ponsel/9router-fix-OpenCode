@@ -35,7 +35,10 @@ export default function CodeBuddyToolCard({
   const [customBaseUrl, setCustomBaseUrl] = useState("");
   const [selectedModels, setSelectedModels] = useState([]);
   const [modelDisplayNames, setModelDisplayNames] = useState({});
+  const [newModelBadges, setNewModelBadges] = useState({});
   const selectedModelsRef = useRef([]);
+
+  const sortModels = (models) => ([...new Set(models)].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })));
 
   useEffect(() => {
     selectedModelsRef.current = selectedModels;
@@ -62,10 +65,11 @@ export default function CodeBuddyToolCard({
   // Sync models from existing config
   useEffect(() => {
     if (status?.codebuddy?.models) {
-      setSelectedModels(status.codebuddy.models);
+      const sortedModels = sortModels(status.codebuddy.models);
+      setSelectedModels(sortedModels);
       setModelDisplayNames((prev) => {
         const next = { ...prev };
-        status.codebuddy.models.forEach((model) => {
+        sortedModels.forEach((model) => {
           const configuredName = status.codebuddy.modelNames?.[model];
           next[model] = configuredName || next[model] || modelAliases?.[model] || model;
         });
@@ -202,6 +206,7 @@ export default function CodeBuddyToolCard({
         setMessage({ type: "success", text: "Settings reset successfully!" });
         setSelectedModels([]);
         setModelDisplayNames({});
+        setNewModelBadges({});
         checkStatus();
       } else {
         setMessage({ type: "error", text: data.error || "Failed to reset settings" });
@@ -348,25 +353,50 @@ export default function CodeBuddyToolCard({
                   <span className="w-32 shrink-0 text-sm font-semibold text-text-main text-right pt-1">Models</span>
                   <span className="material-symbols-outlined text-text-muted text-[14px] mt-1.5">arrow_forward</span>
                   <div className="flex-1 flex flex-col gap-2">
-                    <div className="flex flex-wrap gap-1.5 min-h-[28px] px-2 py-1.5 bg-surface rounded border border-border">
-                      {selectedModels.length === 0 ? (
+                    {selectedModels.length === 0 ? (
+                      <div className="px-3 py-4 rounded border border-border bg-surface/40 text-center">
                         <span className="text-xs text-text-muted">No models selected</span>
-                      ) : (
-                        selectedModels.map((model) => (
-                          <span
+                      </div>
+                    ) : (
+                      <div className="rounded border border-border bg-surface/40 overflow-hidden">
+                        <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_2rem] gap-2 px-3 py-2 border-b border-border bg-surface/60">
+                          <span className="text-[11px] font-medium text-text-muted">Model</span>
+                          <span className="text-[11px] font-medium text-text-muted">Display Name</span>
+                          <span className="text-[11px] font-medium text-text-muted text-center"></span>
+                        </div>
+                        {selectedModels.map((model) => (
+                          <div
                             key={model}
-                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-black/5 dark:bg-white/5 text-text-muted border border-transparent hover:border-border"
+                            className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_2rem] gap-2 px-3 py-1.5 items-center border-b border-border last:border-b-0 hover:bg-surface/80 transition-colors"
                           >
-                            {model}
+                            <span className="flex min-w-0 items-center gap-1.5" title={model}>
+                              <span className="truncate text-xs text-text-main">{model}</span>
+                              {newModelBadges[model] && (
+                                <span className="shrink-0 rounded bg-emerald-500/15 px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-500">
+                                  New
+                                </span>
+                              )}
+                            </span>
+                            <input
+                              type="text"
+                              value={modelDisplayNames[model] ?? getDefaultModelName(model)}
+                              onChange={(e) => setModelDisplayName(model, e.target.value)}
+                              placeholder={getDefaultModelName(model)}
+                              className="w-full min-w-0 rounded border border-border bg-surface px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-primary/50"
+                            />
                             <button
-                              onClick={async (e) => {
-                                e.stopPropagation();
+                              onClick={async () => {
                                 try {
                                   const res = await fetch(`/api/cli-tools/codebuddy-settings?model=${encodeURIComponent(model)}`, { method: "DELETE" });
                                   if (res.ok) {
-                                    const newModels = selectedModels.filter((m) => m !== model);
+                                    const newModels = sortModels(selectedModels.filter((m) => m !== model));
                                     setSelectedModels(newModels);
                                     setModelDisplayNames((prev) => {
+                                      const next = { ...prev };
+                                      delete next[model];
+                                      return next;
+                                    });
+                                    setNewModelBadges((prev) => {
                                       const next = { ...prev };
                                       delete next[model];
                                       return next;
@@ -377,39 +407,21 @@ export default function CodeBuddyToolCard({
                                   console.log("Error removing model:", error);
                                 }
                               }}
-                              className="ml-0.5 hover:text-red-500"
+                              className="w-5 h-5 flex items-center justify-center rounded text-text-muted/50 hover:text-red-500 hover:bg-red-500/10 transition-colors"
+                              title="Remove model"
                             >
-                              <span className="material-symbols-outlined text-[12px]">close</span>
+                              <span className="material-symbols-outlined text-[14px]">close</span>
                             </button>
-                          </span>
-                        ))
-                      )}
-                    </div>
-                    <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr_auto] sm:items-center sm:gap-2">
-                      <button onClick={() => setModalOpen(true)} disabled={!activeProviders?.length} className={`px-2 py-1 rounded border text-xs transition-colors ${activeProviders?.length ? "bg-surface border-border text-text-main hover:border-primary cursor-pointer" : "opacity-50 cursor-not-allowed border-border"}`}>Add Model</button>
-                    </div>
-                    {selectedModels.length > 0 && (
-                      <div className="flex flex-col gap-2 rounded border border-border bg-surface/40 p-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-xs font-medium text-text-main">Display Names</span>
-                          <span className="text-[11px] text-text-muted">Shown in CodeBuddy</span>
-                        </div>
-                        <div className="flex flex-col gap-1.5">
-                          {selectedModels.map((model) => (
-                            <label key={`${model}-display-name`} className="grid grid-cols-1 gap-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)] sm:items-center">
-                              <span className="truncate text-[11px] text-text-muted" title={model}>{model}</span>
-                              <input
-                                type="text"
-                                value={modelDisplayNames[model] ?? getDefaultModelName(model)}
-                                onChange={(e) => setModelDisplayName(model, e.target.value)}
-                                placeholder={getDefaultModelName(model)}
-                                className="w-full min-w-0 rounded border border-border bg-surface px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-primary/50"
-                              />
-                            </label>
-                          ))}
-                        </div>
+                          </div>
+                        ))}
                       </div>
                     )}
+                    <div className="flex items-center gap-3">
+                      <button onClick={() => setModalOpen(true)} disabled={!activeProviders?.length} className={`px-2 py-1 rounded border text-xs transition-colors ${activeProviders?.length ? "bg-surface border-border text-text-main hover:border-primary cursor-pointer" : "opacity-50 cursor-not-allowed border-border"}`}>Add Model</button>
+                      <span className="text-xs text-text-muted">
+                        {selectedModels.length > 0 ? `${selectedModels.length} model selected` : "Select models to add"}
+                      </span>
+                    </div> 
                   </div>
                 </div>
               </div>
@@ -445,17 +457,23 @@ export default function CodeBuddyToolCard({
         }}
         onSelect={(model) => {
           if (!selectedModels.includes(model.value)) {
-            setSelectedModels([...selectedModels, model.value]);
+            setSelectedModels((prev) => sortModels([...prev, model.value]));
             setModelDisplayNames((prev) => ({
               ...prev,
               [model.value]: prev[model.value] || model.name || getDefaultModelName(model.value),
             }));
+            setNewModelBadges((prev) => ({ ...prev, [model.value]: true }));
           }
         }}
         onDeselect={(model) => {
-          const remaining = selectedModels.filter(m => m !== model.value);
+          const remaining = sortModels(selectedModels.filter((m) => m !== model.value));
           setSelectedModels(remaining);
           setModelDisplayNames((prev) => {
+            const next = { ...prev };
+            delete next[model.value];
+            return next;
+          });
+          setNewModelBadges((prev) => {
             const next = { ...prev };
             delete next[model.value];
             return next;
