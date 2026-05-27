@@ -431,6 +431,22 @@ async function getAvailableModels() {
 }
 
 // ============================================================================
+// DISABLED MODELS API
+// ============================================================================
+
+async function getDisabledModels() {
+  return makeRequest("GET", "/api/models/disabled");
+}
+
+async function disableModel(providerAlias, ids) {
+  return makeRequest("POST", "/api/models/disabled", { providerAlias, ids });
+}
+
+async function enableModel(providerAlias, id) {
+  return makeRequest("DELETE", `/api/models/disabled?providerAlias=${encodeURIComponent(providerAlias)}&id=${encodeURIComponent(id)}`);
+}
+
+// ============================================================================
 // PROVIDER NODES API (custom providers)
 // ============================================================================
 
@@ -537,6 +553,11 @@ module.exports = {
   // Models
   getModels,
   getAvailableModels,
+
+  // Disabled Models
+  getDisabledModels,
+  disableModel,
+  enableModel,
 
   // Provider Nodes (custom providers)
   getProviderNodes,

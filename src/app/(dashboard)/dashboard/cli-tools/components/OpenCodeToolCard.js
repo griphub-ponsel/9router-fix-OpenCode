@@ -379,44 +379,72 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
                   <span className="w-32 shrink-0 text-sm font-semibold text-text-main text-right pt-1">Models</span>
                   <span className="material-symbols-outlined text-text-muted text-[14px] mt-1.5">arrow_forward</span>
                   <div className="flex-1 flex flex-col gap-2">
-                    <div className="flex flex-wrap gap-1.5 min-h-[28px] px-2 py-1.5 bg-surface rounded border border-border">
-                      {selectedModels.length === 0 ? (
+                    {selectedModels.length === 0 ? (
+                      <div className="px-3 py-4 rounded border border-border bg-surface/40 text-center">
                         <span className="text-xs text-text-muted">No models selected</span>
-                      ) : (
-                        selectedModels.map((model) => (
-                          <span
+                      </div>
+                    ) : (
+                      <div className="rounded border border-border bg-surface/40 overflow-hidden">
+                        {/* Table header */}
+                        <div className="grid grid-cols-[auto_minmax(0,1fr)_minmax(0,1.2fr)_2rem] gap-2 px-3 py-2 border-b border-border bg-surface/60">
+                          <span className="text-[11px] font-medium text-text-muted w-5"></span>
+                          <span className="text-[11px] font-medium text-text-muted">Model</span>
+                          <span className="text-[11px] font-medium text-text-muted">Display Name</span>
+                          <span className="text-[11px] font-medium text-text-muted text-center"></span>
+                        </div>
+                        {/* Table rows */}
+                        {selectedModels.map((model) => (
+                          <div
                             key={model}
-                            onClick={async () => {
-                              if (model === activeModel) {
-                                try {
-                                  const res = await fetch("/api/cli-tools/opencode-settings", {
-                                    method: "PATCH",
-                                    headers: { "Content-Type": "application/json" },
-                                    body: JSON.stringify({ clearActiveModel: true }),
-                                  });
-                                  if (res.ok) {
-                                    setActiveModel("");
-                                    checkStatus();
-                                  }
-                                } catch (error) {
-                                  console.log("Error clearing active model:", error);
-                                }
-                              } else {
-                                setActiveModel(model);
-                              }
-                            }}
-                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs cursor-pointer transition-colors ${
-                              model === activeModel
-                                ? "bg-primary/10 text-primary border border-primary"
-                                : "bg-black/5 dark:bg-white/5 text-text-muted border border-transparent hover:border-border"
+                            className={`grid grid-cols-[auto_minmax(0,1fr)_minmax(0,1.2fr)_2rem] gap-2 px-3 py-1.5 items-center border-b border-border last:border-b-0 transition-colors ${
+                              model === activeModel ? "bg-primary/5" : "hover:bg-surface/80"
                             }`}
-                            title={model === activeModel ? "Click to clear active model" : "Click to set as active"}
                           >
-                            {model === activeModel && <span className="material-symbols-outlined text-[10px]">star</span>}
-                            {model}
+                            {/* Star / set active */}
                             <button
-                              onClick={async (e) => {
-                                e.stopPropagation();
+                              onClick={async () => {
+                                if (model === activeModel) {
+                                  try {
+                                    const res = await fetch("/api/cli-tools/opencode-settings", {
+                                      method: "PATCH",
+                                      headers: { "Content-Type": "application/json" },
+                                      body: JSON.stringify({ clearActiveModel: true }),
+                                    });
+                                    if (res.ok) {
+                                      setActiveModel("");
+                                      checkStatus();
+                                    }
+                                  } catch (error) {
+                                    console.log("Error clearing active model:", error);
+                                  }
+                                } else {
+                                  setActiveModel(model);
+                                }
+                              }}
+                              className={`w-5 h-5 flex items-center justify-center rounded transition-colors ${
+                                model === activeModel
+                                  ? "text-primary"
+                                  : "text-text-muted/40 hover:text-primary/60"
+                              }`}
+                              title={model === activeModel ? "Click to clear active" : "Click to set as active"}
+                            >
+                              <span className="material-symbols-outlined text-[14px]">
+                                {model === activeModel ? "star" : "star_outline"}
+                              </span>
+                            </button>
+                            {/* Model ID */}
+                            <span className="truncate text-xs text-text-main" title={model}>{model}</span>
+                            {/* Display name input */}
+                            <input
+                              type="text"
+                              value={modelDisplayNames[model] ?? getDefaultModelName(model)}
+                              onChange={(e) => setModelDisplayName(model, e.target.value)}
+                              placeholder={getDefaultModelName(model)}
+                              className="w-full min-w-0 rounded border border-border bg-surface px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-primary/50"
+                            />
+                            {/* Remove button */}
+                            <button
+                              onClick={async () => {
                                 try {
                                   const res = await fetch(`/api/cli-tools/opencode-settings?model=${encodeURIComponent(model)}`, { method: "DELETE" });
                                   if (res.ok) {
@@ -436,48 +464,27 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
                                   console.log("Error removing model:", error);
                                 }
                               }}
-                              className="ml-0.5 hover:text-red-500"
+                              className="w-5 h-5 flex items-center justify-center rounded text-text-muted/50 hover:text-red-500 hover:bg-red-500/10 transition-colors"
+                              title="Remove model"
                             >
-                              <span className="material-symbols-outlined text-[12px]">close</span>
+                              <span className="material-symbols-outlined text-[14px]">close</span>
                             </button>
-                          </span>
-                        ))
-                      )}
-                    </div>
-                    <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr_auto] sm:items-center sm:gap-2">
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <div className="flex items-center gap-3">
                       <button onClick={() => setModalOpen(true)} disabled={!activeProviders?.length} className={`px-2 py-1 rounded border text-xs transition-colors ${activeProviders?.length ? "bg-surface border-border text-text-main hover:border-primary cursor-pointer" : "opacity-50 cursor-not-allowed border-border"}`}>Add Model</button>
                       <span className="text-xs text-text-muted">
                         {selectedModels.length > 0 && activeModel ? (
                           <>Active: <span className="text-primary">{activeModel}</span></>
                         ) : selectedModels.length > 0 ? (
-                          <span className="text-yellow-500">Click a model to set/clear active</span>
+                          <span className="text-yellow-500">Click star to set active model</span>
                         ) : (
                           "Select models to add"
                         )}
                       </span>
                     </div>
-                    {selectedModels.length > 0 && (
-                      <div className="flex flex-col gap-2 rounded border border-border bg-surface/40 p-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-xs font-medium text-text-main">Display Names</span>
-                          <span className="text-[11px] text-text-muted">Shown in OpenCode</span>
-                        </div>
-                        <div className="flex flex-col gap-1.5">
-                          {selectedModels.map((model) => (
-                            <label key={`${model}-display-name`} className="grid grid-cols-1 gap-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)] sm:items-center">
-                              <span className="truncate text-[11px] text-text-muted" title={model}>{model}</span>
-                              <input
-                                type="text"
-                                value={modelDisplayNames[model] ?? getDefaultModelName(model)}
-                                onChange={(e) => setModelDisplayName(model, e.target.value)}
-                                placeholder={getDefaultModelName(model)}
-                                className="w-full min-w-0 rounded border border-border bg-surface px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-primary/50"
-                              />
-                            </label>
-                          ))}
-                        </div>
-                      </div>
-                    )}
                   </div>
                 </div>
 
