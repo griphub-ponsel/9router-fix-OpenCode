@@ -49,6 +49,7 @@ data/
 logs/*
 source/*
 .cursor/*
+.codegraph/
 docs/*
 !docs/ARCHITECTURE.md
 test/*

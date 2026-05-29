@@ -119,7 +119,7 @@ export const PROVIDER_MODELS = {
     { id: "claude-haiku-4.5", name: "Claude Haiku 4.5" },
     { id: "claude-opus-4.5", name: "Claude Opus 4.5" },
     { id: "claude-sonnet-4", name: "Claude Sonnet 4" },
-    { id: "claude-sonnet-4.5", name: "Claude Sonnet 4.5" },
+    { id: "claude-sonnet-4.5", name: "Claude Sonnet 4.5", contextTokens: 1000000, maxOutputTokens: 32000 },
     { id: "claude-sonnet-4.6", name: "Claude Sonnet 4.6" },
     { id: "claude-opus-4.6", name: "Claude Opus 4.6" },
     { id: "claude-opus-4.7", name: "Claude Opus 4.7" },
@@ -168,14 +168,14 @@ export const PROVIDER_MODELS = {
     { id: "MiniMax-M2.5", name: "MiniMax M2.5" },
     // --- Thinking variants (alias to base; thinking is enabled at request time
     //     via <thinking_mode>enabled</thinking_mode> system-prompt injection) ---
-    { id: "claude-sonnet-4.5-thinking", name: "Claude Sonnet 4.5 (Thinking)" },
-    { id: "claude-haiku-4.5-thinking", name: "Claude Haiku 4.5 (Thinking)" },
+    { id: "claude-sonnet-4.5-thinking", name: "Claude Sonnet 4.5 (Thinking)", contextTokens: 1000000, maxOutputTokens: 32000 },
+    { id: "claude-haiku-4.5-thinking", name: "Claude Haiku 4.5 (Thinking)", contextTokens: 200000, maxOutputTokens: 32000 },
     // --- Agentic variants (synthetic; same upstream model + chunked-write
     //     system prompt to dodge Kiro's 2-3 min server timeout on big writes) ---
-    { id: "claude-sonnet-4.5-agentic", name: "Claude Sonnet 4.5 (Agentic)" },
-    { id: "claude-haiku-4.5-agentic", name: "Claude Haiku 4.5 (Agentic)" },
-    { id: "claude-sonnet-4.5-thinking-agentic", name: "Claude Sonnet 4.5 (Thinking + Agentic)" },
-    { id: "claude-haiku-4.5-thinking-agentic", name: "Claude Haiku 4.5 (Thinking + Agentic)" },
+    { id: "claude-sonnet-4.5-agentic", name: "Claude Sonnet 4.5 (Agentic)", contextTokens: 1000000, maxOutputTokens: 32000 },
+    { id: "claude-haiku-4.5-agentic", name: "Claude Haiku 4.5 (Agentic)", contextTokens: 200000, maxOutputTokens: 32000 },
+    { id: "claude-sonnet-4.5-thinking-agentic", name: "Claude Sonnet 4.5 (Thinking + Agentic)", contextTokens: 1000000, maxOutputTokens: 32000 },
+    { id: "claude-haiku-4.5-thinking-agentic", name: "Claude Haiku 4.5 (Thinking + Agentic)", contextTokens: 200000, maxOutputTokens: 32000 },
   ],
   cu: [  // Cursor IDE
     { id: "default", name: "Auto (Server Picks)" },
@@ -210,19 +210,19 @@ export const PROVIDER_MODELS = {
     { id: "deepseek/deepseek-reasoner", name: "DeepSeek Reasoner" },
   ],
   "opencode-go": [  // OpenCode Go subscription (API key)
-    { id: "kimi-k2.6", name: "Kimi K2.6" },
-    { id: "kimi-k2.5", name: "Kimi K2.5" },
-    { id: "glm-5.1", name: "GLM 5.1" },
+    { id: "kimi-k2.6", name: "Kimi K2.6", contextTokens: 262144, maxOutputTokens: 65536 },
+    { id: "kimi-k2.5", name: "Kimi K2.5", contextTokens: 262144, maxOutputTokens: 65536 },
+    { id: "glm-5.1", name: "GLM 5.1", contextTokens: 1000000, maxOutputTokens: 65536 },
     { id: "glm-5", name: "GLM 5" },
-    { id: "qwen3.5-plus", name: "Qwen 3.5 Plus", targetFormat: "claude" },
-    { id: "qwen3.6-plus", name: "Qwen 3.6 Plus", targetFormat: "claude" },
-    { id: "qwen3.7-max", name: "Qwen 3.7 Max", targetFormat: "claude" },
-    { id: "mimo-v2-pro", name: "MiMo V2 Pro" },
-    { id: "mimo-v2-omni", name: "MiMo V2 Omni" },
-    { id: "minimax-m2.7", name: "MiniMax M2.7", targetFormat: "claude" },
-    { id: "minimax-m2.5", name: "MiniMax M2.5", targetFormat: "claude" },
-    { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro" },
-    { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash" },
+    { id: "qwen3.5-plus", name: "Qwen 3.5 Plus", targetFormat: "claude", contextTokens: 1000000, maxOutputTokens: 32768 },
+    { id: "qwen3.6-plus", name: "Qwen 3.6 Plus", targetFormat: "claude", contextTokens: 1000000, maxOutputTokens: 32768 },
+    { id: "qwen3.7-max", name: "Qwen 3.7 Max", targetFormat: "claude", contextTokens: 1000000, maxOutputTokens: 65536 },
+    { id: "mimo-v2-pro", name: "MiMo V2 Pro", contextTokens: 1048576, maxOutputTokens: 65536 },
+    { id: "mimo-v2-omni", name: "MiMo V2 Omni", contextTokens: 1048576, maxOutputTokens: 65536 },
+    { id: "minimax-m2.7", name: "MiniMax M2.7", targetFormat: "claude", contextTokens: 204800, maxOutputTokens: 131072 },
+    { id: "minimax-m2.5", name: "MiniMax M2.5", targetFormat: "claude", contextTokens: 204800, maxOutputTokens: 131072 },
+    { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro", contextTokens: 262144, maxOutputTokens: 65536 },
+    { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash", contextTokens: 262144, maxOutputTokens: 65536 },
   ],
   oc: [  // OpenCode
     // { id: "nemotron-3-super-free", name: "Nemotron 3 Super" },
@@ -873,6 +873,16 @@ export function getModelTargetFormat(aliasOrId, modelId) {
   return found?.targetFormat || null;
 }
 
+export function getModelLimits(aliasOrId, modelId) {
+  const providerId = Object.entries(PROVIDER_ID_TO_ALIAS).find(([, alias]) => alias === aliasOrId)?.[0];
+  const models = PROVIDER_MODELS[aliasOrId] || PROVIDER_MODELS[providerId];
+  const found = models?.find(m => m.id === modelId);
+  return found?.contextTokens ? {
+    contextTokens: found.contextTokens,
+    maxOutputTokens: found.maxOutputTokens || 16000,
+  } : null;
+}
+
 export function getModelUpstreamId(aliasOrId, modelId) {
   const models = PROVIDER_MODELS[aliasOrId];
   const found = models?.find(m => m.id === modelId);
@@ -905,6 +915,7 @@ const OAUTH_ALIASES = {
   kilocode: "kc",
   cline: "cl",
   "xai-oauth": "xog",
+  "opencode-go": "ocg",
   opencode: "oc",
   vertex: "vertex",
   "vertex-partner": "vertex-partner",

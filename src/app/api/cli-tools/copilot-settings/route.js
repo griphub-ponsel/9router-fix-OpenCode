@@ -5,6 +5,7 @@ import fs from "fs/promises";
 import path from "path";
 import os from "os";
 import { findModelName, getModelStrip } from "open-sse/config/providerModels.js";
+import { getCopilotModelLimits } from "@/shared/utils/copilotModelLimits.js";
 
 // Resolve chatLanguageModels.json path per OS
 const getConfigPath = () => {
@@ -122,8 +123,7 @@ export async function POST(request) {
         apiType: "chat-completions",
         toolCalling: true,
         vision: supportsVision(id),
-        maxInputTokens: 128000,
-        maxOutputTokens: 16000,
+        ...getCopilotModelLimits(id),
       })),
     };
 

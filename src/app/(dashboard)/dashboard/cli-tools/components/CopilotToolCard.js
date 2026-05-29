@@ -7,6 +7,7 @@ import BaseUrlSelect from "./BaseUrlSelect";
 import ApiKeySelect from "./ApiKeySelect";
 import { matchKnownEndpoint } from "./cliEndpointMatch";
 import { findModelName } from "@/shared/constants/models";
+import { getCopilotModelLimits } from "@/shared/utils/copilotModelLimits";
 
 export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, apiKeys, activeProviders, cloudEnabled, initialStatus, tunnelEnabled, tunnelPublicUrl, tailscaleEnabled, tailscaleUrl }) {
   const [status, setStatus] = useState(initialStatus || null);
@@ -234,7 +235,7 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
           url: `${effectiveBaseUrl}/chat/completions`,
           apiType: "chat-completions",
           toolCalling: true, vision: supportsVision(id),
-          maxInputTokens: 128000, maxOutputTokens: 16000,
+          ...getCopilotModelLimits(id),
         })),
       }], null, 2),
     }];
