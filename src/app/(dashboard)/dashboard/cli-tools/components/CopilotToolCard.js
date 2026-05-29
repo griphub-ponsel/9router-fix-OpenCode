@@ -6,6 +6,7 @@ import Image from "next/image";
 import BaseUrlSelect from "./BaseUrlSelect";
 import ApiKeySelect from "./ApiKeySelect";
 import { matchKnownEndpoint } from "./cliEndpointMatch";
+import { findModelName } from "@/shared/constants/models";
 
 export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, apiKeys, activeProviders, cloudEnabled, initialStatus, tunnelEnabled, tunnelPublicUrl, tailscaleEnabled, tailscaleUrl }) {
   const [status, setStatus] = useState(initialStatus || null);
@@ -18,11 +19,44 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
   const [modelAliases, setModelAliases] = useState({});
   const [showManualConfigModal, setShowManualConfigModal] = useState(false);
   const [selectedModels, setSelectedModels] = useState([]);
+  const [modelDisplayNames, setModelDisplayNames] = useState({});
   const [newModelBadges, setNewModelBadges] = useState({});
   const [modalOpen, setModalOpen] = useState(false);
   const selectedModelsRef = useRef([]);
 
   const sortModels = (models) => ([...new Set(models)].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })));
+
+  const supportsVision = (id) => {
+    const normalized = String(id || "").toLowerCase();
+    if (/embedding|coder|deepseek|kimi-k2|mimo-v2-pro/.test(normalized)) return false;
+    return /claude|gemini|gpt-4o|\bvl\b|vision|omni|grok-4/.test(normalized);
+  };
+
+  const getDefaultModelName = (model) => {
+    const aliasName = modelAliases?.[model];
+    if (typeof aliasName === "string" && aliasName.trim()) return aliasName;
+    if (typeof model === "string" && model.includes("/")) {
+      const slash = model.indexOf("/");
+      const alias = model.slice(0, slash);
+      const modelId = model.slice(slash + 1);
+      const name = findModelName(alias, modelId);
+      if (name && name !== modelId) return name;
+    }
+    return model;
+  };
+
+  const getModelDisplayName = (model) => {
+    const displayName = modelDisplayNames?.[model];
+    return typeof displayName === "string" && displayName.trim() ? displayName.trim() : getDefaultModelName(model);
+  };
+
+  const getSelectedModelNames = (models = selectedModels) => (
+    Object.fromEntries(models.map((model) => [model, getModelDisplayName(model)]))
+  );
+
+  const setModelDisplayName = (model, value) => {
+    setModelDisplayNames((prev) => ({ ...prev, [model]: value }));
+  };
 
   useEffect(() => {
     selectedModelsRef.current = selectedModels;
@@ -48,13 +82,21 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
 
   // Pre-fill from existing config
   useEffect(() => {
-    if (status?.config && Array.isArray(status.config) && selectedModels.length === 0) {
+    if (status?.config && Array.isArray(status.config)) {
       const entry = status.config.find((e) => e.name === "9Router");
       if (entry?.models?.length > 0) {
-        setSelectedModels(sortModels(entry.models.map((m) => m.id)));
+        const sortedModels = sortModels(entry.models.map((m) => m.id));
+        setSelectedModels(sortedModels);
+        setModelDisplayNames((prev) => {
+          const next = { ...prev };
+          entry.models.forEach((model) => {
+            next[model.id] = model.name || next[model.id] || getDefaultModelName(model.id);
+          });
+          return next;
+        });
       }
     }
-  }, [status]);
+  }, [status, modelAliases]);
 
   const fetchModelAliases = async () => {
     try {
@@ -74,7 +116,7 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
       await fetch("/api/cli-tools/copilot-settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ baseUrl: getEffectiveBaseUrl(), apiKey: keyToUse, models }),
+        body: JSON.stringify({ baseUrl: getEffectiveBaseUrl(), apiKey: keyToUse, models, modelNames: getSelectedModelNames(models) }),
       });
     } catch (error) {
       console.log("Error saving models:", error);
@@ -99,6 +141,11 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
 
   const removeModel = (id) => {
     setSelectedModels((prev) => sortModels(prev.filter((m) => m !== id)));
+    setModelDisplayNames((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
     setNewModelBadges((prev) => {
       const next = { ...prev };
       delete next[id];
@@ -130,7 +177,7 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
       const res = await fetch("/api/cli-tools/copilot-settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ baseUrl: getEffectiveBaseUrl(), apiKey: keyToUse, models: selectedModels }),
+        body: JSON.stringify({ baseUrl: getEffectiveBaseUrl(), apiKey: keyToUse, models: selectedModels, modelNames: getSelectedModelNames() }),
       });
       const data = await res.json();
       if (res.ok) {
@@ -155,6 +202,7 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
       if (res.ok) {
         setMessage({ type: "success", text: "Settings reset successfully!" });
         setSelectedModels([]);
+        setModelDisplayNames({});
         setNewModelBadges({});
         checkStatus();
       } else {
@@ -175,15 +223,17 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
     const modelsToShow = selectedModels.length > 0 ? selectedModels : ["provider/model-id"];
 
     return [{
-      filename: "~/Library/Application Support/Code/User/chatLanguageModels.json",
+      filename: status?.configPath || "VS Code User/chatLanguageModels.json",
       content: JSON.stringify([{
         name: "9Router",
-        vendor: "azure",
+        vendor: "customendpoint",
         apiKey: keyToUse,
+        apiType: "chat-completions",
         models: modelsToShow.map((id) => ({
-          id, name: id,
-          url: `${effectiveBaseUrl}/chat/completions#models.ai.azure.com`,
-          toolCalling: true, vision: false,
+          id, name: getModelDisplayName(id),
+          url: `${effectiveBaseUrl}/chat/completions`,
+          apiType: "chat-completions",
+          toolCalling: true, vision: supportsVision(id),
           maxInputTokens: 128000, maxOutputTokens: 16000,
         })),
       }], null, 2),
@@ -224,8 +274,9 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
               <div className="flex items-start gap-3 p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg">
                 <span className="material-symbols-outlined text-blue-500 text-lg">info</span>
                 <div className="text-xs text-blue-700 dark:text-blue-300">
-                  <p className="font-medium">Writes to <code className="px-1 bg-black/5 dark:bg-white/10 rounded">chatLanguageModels.json</code></p>
-                  <p className="mt-0.5 opacity-80">Reload VS Code after applying for changes to take effect.</p>
+                  <p className="font-medium">Generates <code className="px-1 bg-black/5 dark:bg-white/10 rounded">chatLanguageModels.json</code> using VS Code Custom Endpoint</p>
+                  <p className="mt-0.5 opacity-80">This is the Copilot BYOK custom endpoint flow, not MITM. It uses <code className="px-1 bg-black/5 dark:bg-white/10 rounded">vendor: "customendpoint"</code>, <code className="px-1 bg-black/5 dark:bg-white/10 rounded">apiType: "chat-completions"</code>, and per-model <code className="px-1 bg-black/5 dark:bg-white/10 rounded">vision</code> flags.</p>
+                  <p className="mt-0.5 opacity-80">Use Apply to write it automatically, or Manual Config to copy the JSON yourself. Reload VS Code after applying.</p>
                 </div>
               </div>
 
@@ -257,29 +308,54 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
                   <span className="w-32 shrink-0 text-sm font-semibold text-text-main text-right pt-1">Models</span>
                   <span className="material-symbols-outlined text-text-muted text-[14px] mt-1.5">arrow_forward</span>
                   <div className="flex-1 flex flex-col gap-2">
-                    <div className="flex flex-wrap gap-1.5 min-h-[28px] px-2 py-1.5 bg-surface rounded border border-border">
-                      {selectedModels.length === 0 ? (
+                    {selectedModels.length === 0 ? (
+                      <div className="px-3 py-4 rounded border border-border bg-surface/40 text-center">
                         <span className="text-xs text-text-muted">No models selected</span>
-                      ) : (
-                        selectedModels.map((model) => (
-                          <span key={model} className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-black/5 dark:bg-white/5 text-text-muted border border-transparent hover:border-border">
-                            <span className="inline-flex items-center gap-1">
-                              <span>{model}</span>
+                      </div>
+                    ) : (
+                      <div className="rounded border border-border bg-surface/40 overflow-hidden">
+                        <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_4rem_2rem] gap-2 px-3 py-2 border-b border-border bg-surface/60">
+                          <span className="text-[11px] font-medium text-text-muted">Model</span>
+                          <span className="text-[11px] font-medium text-text-muted">Display Name</span>
+                          <span className="text-[11px] font-medium text-text-muted text-center">Vision</span>
+                          <span className="text-[11px] font-medium text-text-muted text-center"></span>
+                        </div>
+                        {selectedModels.map((model) => (
+                          <div key={model} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_4rem_2rem] gap-2 px-3 py-1.5 items-center border-b border-border last:border-b-0 hover:bg-surface/80 transition-colors">
+                            <span className="flex min-w-0 items-center gap-1.5" title={model}>
+                              <span className="truncate text-xs text-text-main">{model}</span>
                               {newModelBadges[model] && (
                                 <span className="shrink-0 rounded bg-emerald-500/15 px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-500">
                                   New
                                 </span>
                               )}
                             </span>
-                            <button onClick={(e) => { e.stopPropagation(); removeModel(model); }} className="ml-0.5 hover:text-red-500">
-                              <span className="material-symbols-outlined text-[12px]">close</span>
+                            <input
+                              type="text"
+                              value={modelDisplayNames[model] ?? getDefaultModelName(model)}
+                              onChange={(e) => setModelDisplayName(model, e.target.value)}
+                              placeholder={getDefaultModelName(model)}
+                              className="w-full min-w-0 rounded border border-border bg-surface px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-primary/50"
+                            />
+                            <span className={`justify-self-center rounded px-1.5 py-0.5 text-[10px] font-medium ${supportsVision(model) ? "bg-green-500/10 text-green-600 dark:text-green-400" : "bg-gray-500/10 text-text-muted"}`}>
+                              {supportsVision(model) ? "Yes" : "No"}
+                            </span>
+                            <button
+                              onClick={() => removeModel(model)}
+                              className="w-5 h-5 flex items-center justify-center rounded text-text-muted/50 hover:text-red-500 hover:bg-red-500/10 transition-colors"
+                              title="Remove model"
+                            >
+                              <span className="material-symbols-outlined text-[14px]">close</span>
                             </button>
-                          </span>
-                        ))
-                      )}
-                    </div>
-                    <div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <div className="flex items-center gap-3">
                       <button onClick={() => setModalOpen(true)} disabled={!activeProviders?.length} className={`px-2 py-1 rounded border text-xs transition-colors ${activeProviders?.length ? "bg-surface border-border text-text-main hover:border-primary cursor-pointer" : "opacity-50 cursor-not-allowed border-border"}`}>Add Model</button>
+                      <span className="text-xs text-text-muted">
+                        {selectedModels.length > 0 ? `${selectedModels.length} model${selectedModels.length === 1 ? "" : "s"} selected` : "Select models to add"}
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -317,6 +393,10 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
         onSelect={(model) => {
           if (!selectedModels.includes(model.value)) {
             setSelectedModels((prev) => sortModels([...prev, model.value]));
+            setModelDisplayNames((prev) => ({
+              ...prev,
+              [model.value]: prev[model.value] || model.name || getDefaultModelName(model.value),
+            }));
             setNewModelBadges((prev) => ({ ...prev, [model.value]: true }));
           }
         }}
