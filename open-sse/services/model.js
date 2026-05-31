@@ -17,6 +17,8 @@ const ALIAS_TO_PROVIDER_ID = {
   "xai-oauth": "xai-oauth",
   oc: "opencode",
   ocg: "opencode-go",
+  qd: "qoder",
+  qoder: "qoder",
   // TTS providers
   el: "elevenlabs",
   // API Key providers
