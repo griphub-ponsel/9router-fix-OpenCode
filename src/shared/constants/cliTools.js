@@ -117,6 +117,14 @@ export const CLI_TOOLS = {
     description: "OpenCode AI Terminal Assistant",
     configType: "custom",
   },
+  copilot: {
+    id: "copilot",
+    name: "GitHub Copilot Config Generator",
+    image: "/providers/copilot.png",
+    color: "#1F6FEB",
+    description: "VS Code Copilot chatLanguageModels.json via Custom Endpoint",
+    configType: "custom",
+  },
   // Cowork disabled: spawns arbitrary processes (RCE risk). Hidden from CLI tools UI.
   // cowork: {
   //   id: "cowork",

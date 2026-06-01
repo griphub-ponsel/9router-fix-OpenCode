@@ -4,6 +4,8 @@ import { NextResponse } from "next/server";
 import fs from "fs/promises";
 import path from "path";
 import os from "os";
+import { findModelName, getModelStrip } from "open-sse/config/providerModels.js";
+import { getCopilotModelLimits } from "@/shared/utils/copilotModelLimits.js";
 
 // Resolve chatLanguageModels.json path per OS
 const getConfigPath = () => {
@@ -38,6 +40,34 @@ const get9RouterEntry = (config) => {
   return config.find((entry) => entry.name === "9Router") || null;
 };
 
+const getModelParts = (id) => {
+  if (typeof id !== "string") return { alias: "", modelId: "" };
+  const slash = id.indexOf("/");
+  if (slash <= 0) return { alias: "", modelId: id };
+  return { alias: id.slice(0, slash), modelId: id.slice(slash + 1) };
+};
+
+const supportsVision = (id) => {
+  const { alias, modelId } = getModelParts(id);
+  if (alias && getModelStrip(alias, modelId).includes("image")) return false;
+
+  const normalized = `${alias}/${modelId}`.toLowerCase();
+  if (/embedding|coder|deepseek|kimi-k2|mimo-v2-pro/.test(normalized)) return false;
+  return /claude|gemini|gpt-4o|\bvl\b|vision|omni|grok-4/.test(normalized);
+};
+
+const resolveModelDisplayName = (id, modelNames = {}) => {
+  const requested = typeof modelNames?.[id] === "string" ? modelNames[id].trim() : "";
+  if (requested) return requested;
+
+  const { alias, modelId } = getModelParts(id);
+  if (alias && modelId) {
+    const name = findModelName(alias, modelId);
+    if (name && name !== modelId) return name;
+  }
+  return id;
+};
+
 // GET - Read current copilot config
 export async function GET() {
   try {
@@ -61,7 +91,7 @@ export async function GET() {
 // POST - Apply 9Router config to chatLanguageModels.json
 export async function POST(request) {
   try {
-    const { baseUrl, apiKey, models } = await request.json();
+    const { baseUrl, apiKey, models, modelNames = {} } = await request.json();
 
     if (!baseUrl || !models?.length) {
       return NextResponse.json({ error: "baseUrl and models are required" }, { status: 400 });
@@ -78,21 +108,22 @@ export async function POST(request) {
       config = Array.isArray(parsed) ? parsed : [];
     } catch { /* No existing config */ }
 
-    const endpointUrl = `${baseUrl}/chat/completions#models.ai.azure.com`;
+    const endpointUrl = `${baseUrl}/chat/completions`;
     const keyToUse = apiKey || "sk_9router";
 
     const newEntry = {
       name: "9Router",
-      vendor: "azure",
+      vendor: "customendpoint",
       apiKey: keyToUse,
+      apiType: "chat-completions",
       models: models.map((id) => ({
         id,
-        name: id,
+        name: resolveModelDisplayName(id, modelNames),
         url: endpointUrl,
+        apiType: "chat-completions",
         toolCalling: true,
-        vision: false,
-        maxInputTokens: 128000,
-        maxOutputTokens: 16000,
+        vision: supportsVision(id),
+        ...getCopilotModelLimits(id),
       })),
     };
 
@@ -108,7 +139,7 @@ export async function POST(request) {
 
     return NextResponse.json({
       success: true,
-      message: "Copilot settings applied! Reload VS Code to take effect.",
+      message: "Copilot Custom Endpoint config applied. Reload VS Code to take effect.",
       configPath,
     });
   } catch (error) {
