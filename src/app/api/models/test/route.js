@@ -52,16 +52,20 @@ export async function POST(request) {
     }
 
     // Default: chat completions
+    // NOTE: keep max_tokens small but > 1. Some models (esp. thinking-capable
+    // ones via GitHub Copilot) return HTTP 200 with an empty completion when
+    // max_tokens=1, which made this probe a false-negative even though the
+    // model works fine in real chats.
     const res = await fetch(`${baseUrl}/api/v1/chat/completions`, {
       method: "POST",
       headers,
       body: JSON.stringify({
         model,
-        max_tokens: 1,
+        max_tokens: 16,
         stream: false,
         messages: [{ role: "user", content: "hi" }],
       }),
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(20000),
     });
     const latencyMs = Date.now() - start;
 
@@ -104,7 +108,18 @@ export async function POST(request) {
     }
 
     const hasChoices = Array.isArray(parsed?.choices) && parsed.choices.length > 0;
-    if (!hasChoices) {
+    // Treat any of these as proof the model responded: a choice, message content,
+    // reasoning content (thinking models can spend the whole budget on reasoning),
+    // tool calls, or usage accounting. Requiring non-empty `choices` text alone
+    // produced false-negatives for thinking models with a tiny max_tokens.
+    const choice = hasChoices ? parsed.choices[0] : null;
+    const message = choice?.message || choice?.delta || null;
+    const hasContent = typeof message?.content === "string" && message.content.length > 0;
+    const hasReasoning = typeof message?.reasoning_content === "string" && message.reasoning_content.length > 0;
+    const hasToolCalls = Array.isArray(message?.tool_calls) && message.tool_calls.length > 0;
+    const hasUsage = parsed?.usage && typeof parsed.usage === "object";
+    const looksValid = hasChoices || hasContent || hasReasoning || hasToolCalls || hasUsage;
+    if (!looksValid) {
       return NextResponse.json({
         ok: false,
         latencyMs,

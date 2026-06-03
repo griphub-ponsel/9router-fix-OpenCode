@@ -242,18 +242,25 @@ export default function ModelSelectModal({
         const hardcodedModels = getModelsByProviderId(providerId);
         const hardcodedIds = new Set(hardcodedModels.map((m) => m.id));
 
-        // Custom models: if no hardcoded models (e.g. openrouter), show all aliases for this provider
-        // Otherwise only show aliases where aliasName === modelId ("Add Model" button pattern)
+        // Custom models: if no hardcoded models (e.g. openrouter), show all aliases for this provider.
+        // Otherwise only show aliases created by the provider "Add Model" flow.
         const hasHardcoded = hardcodedModels.length > 0;
         const customAliasModels = Object.entries(modelAliases)
-          .filter(([aliasName, fullModel]) =>
-            fullModel.startsWith(`${alias}/`) &&
-            (hasHardcoded ? aliasName === fullModel.replace(`${alias}/`, "") : true) &&
-            !hardcodedIds.has(fullModel.replace(`${alias}/`, ""))
-          )
+          .filter(([aliasName, fullModel]) => {
+            if (!fullModel.startsWith(`${alias}/`)) return false;
+            const modelId = fullModel.replace(`${alias}/`, "");
+            if (hardcodedIds.has(modelId)) return false;
+            if (!hasHardcoded) return true;
+            // Accept "Add Model" aliases, including AddCustomModelModal collision fallbacks
+            return (
+              aliasName === modelId ||
+              aliasName === `${alias}-${modelId}` ||
+              aliasName === `${alias}/${modelId}`
+            );
+          })
           .map(([aliasName, fullModel]) => {
             const modelId = fullModel.replace(`${alias}/`, "");
-            return { id: modelId, name: aliasName, value: fullModel, isCustom: true };
+            return { id: modelId, name: modelId, value: fullModel, isCustom: true };
           });
 
         // Custom models registered via /api/models/custom (provider "Add Model" button)

@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from "uuid";
 import { refreshKiroToken } from "../services/tokenRefresh.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { HTTP_STATUS, RETRY_CONFIG, DEFAULT_RETRY_CONFIG, resolveRetryEntry } from "../config/runtimeConfig.js";
+import { stringifyToolArguments } from "../utils/toolCallArguments.js";
 
 /**
  * KiroExecutor - Executor for Kiro AI (AWS CodeWhisperer)
@@ -244,15 +245,8 @@ export class KiroExecutor extends BaseExecutor {
               }
 
               if (toolInput !== undefined) {
-                let argumentsStr;
-
-                if (typeof toolInput === 'string') {
-                  argumentsStr = toolInput;
-                } else if (typeof toolInput === 'object') {
-                  argumentsStr = JSON.stringify(toolInput);
-                } else {
-                  continue;
-                }
+                const argumentsStr = stringifyToolArguments(toolName, toolInput);
+                if (argumentsStr === null) continue;
 
                 const argsChunk = {
                   id: responseId,

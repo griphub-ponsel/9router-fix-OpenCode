@@ -4,9 +4,9 @@ import { useState } from "react";
 import PropTypes from "prop-types";
 import { Button, Modal } from "@/shared/components";
 
-export default function AddCustomModelModal({ isOpen, providerAlias, providerDisplayAlias, modelAliases, onSave, onClose }) {
+export default function AddCustomModelModal({ isOpen, providerAlias, existingModelIds, onSave, onClose }) {
   const [modelId, setModelId] = useState("");
-  const [customAlias, setCustomAlias] = useState("");
+  const [displayName, setDisplayName] = useState("");
   const [aliasError, setAliasError] = useState("");
   const [testStatus, setTestStatus] = useState(null); // null | "testing" | "ok" | "error"
   const [testError, setTestError] = useState("");
@@ -14,7 +14,7 @@ export default function AddCustomModelModal({ isOpen, providerAlias, providerDis
 
   const resetForm = () => {
     setModelId("");
-    setCustomAlias("");
+    setDisplayName("");
     setAliasError("");
     setTestStatus(null);
     setTestError("");
@@ -32,17 +32,6 @@ export default function AddCustomModelModal({ isOpen, providerAlias, providerDis
   };
 
   const defaultAliasFor = (id) => id.split("/").pop();
-
-  const getAliasCandidates = (cleanId) => {
-    const baseAlias = defaultAliasFor(cleanId);
-    return [baseAlias, `${providerDisplayAlias}-${baseAlias}`, `${providerDisplayAlias}/${cleanId}`];
-  };
-
-  const getAliasToSave = (cleanId) => {
-    const manual = customAlias.trim();
-    if (manual) return manual;
-    return getAliasCandidates(cleanId).find((alias) => !modelAliases[alias]) || defaultAliasFor(cleanId);
-  };
 
   const handleTest = async () => {
     const cleanId = stripAlias(modelId.trim());
@@ -67,15 +56,14 @@ export default function AddCustomModelModal({ isOpen, providerAlias, providerDis
   const handleSave = async () => {
     const cleanId = stripAlias(modelId.trim());
     if (!cleanId || saving) return;
-    const alias = getAliasToSave(cleanId);
-    if (modelAliases[alias] && modelAliases[alias] !== `${providerAlias}/${cleanId}`) {
-      setAliasError(`"${alias}" is already used by ${modelAliases[alias]}`);
+    if (existingModelIds.includes(cleanId)) {
+      setAliasError(`"${cleanId}" is already added to this provider.`);
       return;
     }
     setSaving(true);
     setAliasError("");
     try {
-      const saved = await onSave(cleanId, alias);
+      const saved = await onSave(cleanId, displayName.trim());
       if (!saved) setAliasError("Failed to add model. Check the alert for details.");
       else resetForm();
     } finally {
@@ -118,16 +106,16 @@ export default function AddCustomModelModal({ isOpen, providerAlias, providerDis
         </div>
 
         <div>
-          <label className="text-sm font-medium mb-1.5 block">Alias</label>
+          <label className="text-sm font-medium mb-1.5 block">Display Name</label>
           <input
             type="text"
-            value={customAlias}
-            onChange={(e) => { setCustomAlias(e.target.value); setAliasError(""); }}
+            value={displayName}
+            onChange={(e) => { setDisplayName(e.target.value); setAliasError(""); }}
             placeholder={defaultAliasFor(stripAlias(modelId.trim()) || "model-id")}
             className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary"
           />
           <p className="text-xs text-text-muted mt-1">
-            Leave empty to use the first available alias, usually <code className="font-mono bg-sidebar px-1 rounded">{getAliasToSave(stripAlias(modelId.trim()) || "model-id")}</code>.
+            Optional label for this model. Leave empty to show the model ID.
           </p>
           {aliasError && <p className="text-xs text-red-500 mt-1">{aliasError}</p>}
         </div>
@@ -165,12 +153,11 @@ export default function AddCustomModelModal({ isOpen, providerAlias, providerDis
 AddCustomModelModal.propTypes = {
   isOpen: PropTypes.bool.isRequired,
   providerAlias: PropTypes.string.isRequired,
-  providerDisplayAlias: PropTypes.string.isRequired,
-  modelAliases: PropTypes.object,
+  existingModelIds: PropTypes.arrayOf(PropTypes.string),
   onSave: PropTypes.func.isRequired,
   onClose: PropTypes.func.isRequired,
 };
 
 AddCustomModelModal.defaultProps = {
-  modelAliases: {},
+  existingModelIds: [],
 };
