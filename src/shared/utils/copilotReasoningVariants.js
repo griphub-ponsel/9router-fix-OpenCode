@@ -1,12 +1,6 @@
 import { getCopilotReasoningEfforts } from "./copilotModelLimits.js";
 
-const REASONING_VARIANTS = [
-  { suffix: "none", label: "None" },
-  { suffix: "low", label: "Low" },
-  { suffix: "medium", label: "Medium" },
-  { suffix: "high", label: "High" },
-  { suffix: "xhigh", label: "xHigh" },
-];
+const DEFAULT_EFFORTS = ["low", "medium", "high"];
 
 function supportsReasoningVariants(id) {
   const model = String(id || "").toLowerCase();
@@ -14,25 +8,26 @@ function supportsReasoningVariants(id) {
   return /claude|deepseek|gpt-|grok|kimi|mimo|qwen|glm|minimax|gemini/.test(model);
 }
 
-function reasoningVariantsForModel(id) {
+function reasoningEffortsForModel(id) {
   const allowed = getCopilotReasoningEfforts(id);
-  if (!allowed) return REASONING_VARIANTS;
-  const allowedSet = new Set(allowed);
-  return REASONING_VARIANTS.filter((v) => allowedSet.has(v.suffix));
+  return allowed || DEFAULT_EFFORTS;
 }
 
+/**
+ * Adds native thinking capability fields to models that support reasoning.
+ * VS Code Copilot shows a Thinking Effort picker when `supportsReasoningEffort` is set.
+ * This replaces the old approach of expanding models into separate -high/-low/-medium entries.
+ */
 export function expandCopilotReasoningVariants(models) {
-  return models.flatMap((model) => {
-    if (!supportsReasoningVariants(model.id)) return [model];
-    const variants = reasoningVariantsForModel(model.id);
-    if (variants.length === 0) return [model];
-    return [
-      model,
-      ...variants.map((variant) => ({
-        ...model,
-        id: `${model.id}-${variant.suffix}`,
-        name: `${model.name} (${variant.label})`,
-      })),
-    ];
+  return models.map((model) => {
+    if (!supportsReasoningVariants(model.id)) return model;
+    const efforts = reasoningEffortsForModel(model.id);
+    if (efforts.length === 0) return model;
+    return {
+      ...model,
+      thinking: true,
+      supportsReasoningEffort: efforts,
+      reasoningEffortFormat: "chat-completions",
+    };
   });
 }
