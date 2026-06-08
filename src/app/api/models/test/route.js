@@ -12,6 +12,9 @@ function testMaxTokens(model) {
   if (/^(gh|github)\/claude/.test(m)) return 64;
   // xAI Grok Composer (Responses API) needs output budget; max_tokens=1 → empty choices
   if (/^(xog|xai-oauth)\/grok-composer/.test(m) || /^grok-composer/.test(m)) return 256;
+  // Thinking models (Qwen, MiniMax, GLM, DeepSeek) spend max_tokens on reasoning first;
+  // max_tokens=1 produces empty text content. Give enough budget for a visible reply.
+  if (/qwen|minimax|glm|deepseek|kimi|mimo/.test(m)) return 64;
   return 1;
 }
 
