@@ -136,8 +136,10 @@ export default function ProviderDetailPage() {
   const isAnthropicCompatible = isAnthropicCompatibleProvider(providerId);
   const isCompatible = isOpenAICompatible || isAnthropicCompatible;
   const hasDualAuthModes = !isCompatible && isOAuth && supportsApiKeyAuth;
+  const isToolOnlyProvider = providerInfo?.toolOnly || !(providerInfo?.serviceKinds ?? ["llm"]).includes("llm");
+  const showModelsSection = !isToolOnlyProvider || providerInfo?.allowCustomModels;
   const oauthConnectionLabel = providerId === "xai" ? "Grok Build OAuth" : "OAuth";
-  const apiKeyConnectionLabel = providerId === "xai" ? "xAI API Key" : "API Key";
+  const apiKeyConnectionLabel = providerId === "notion" ? "Notion AI Session" : (providerId === "xai" ? "xAI API Key" : "API Key");
   const thinkingConfig = AI_PROVIDERS[providerId]?.thinkingConfig || THINKING_CONFIG.extended;
   
   const providerStorageAlias = isCompatible ? providerId : providerAlias;
@@ -883,7 +885,8 @@ export default function ProviderDetailPage() {
         // Only show if not already in hardcoded list
         // For passthroughModels, include all aliases (model IDs may contain slashes like "anthropic/claude-3")
         if (providerInfo.passthroughModels) return !models.some((m) => m.id === modelId);
-        return !models.some((m) => m.id === modelId) && alias === modelId;
+        // Alias may differ from modelId when the default alias is taken (e.g. gh-claude-opus-4.8 vs claude-opus-4.8 for Kiro)
+        return !models.some((m) => m.id === modelId);
       })
       .map(([alias, fullModel]) => ({
         id: fullModel.slice(`${providerStorageAlias}/`.length),
@@ -1109,6 +1112,28 @@ export default function ProviderDetailPage() {
         </div>
       )}
 
+      {isToolOnlyProvider && providerInfo.mcpConfig && (
+        <Card>
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-1">
+              <h2 className="text-lg font-semibold">MCP Provider</h2>
+              <p className="break-all text-sm text-text-muted">
+                {providerInfo.mcpConfig.transport?.toUpperCase?.() || "HTTP"} · {providerInfo.mcpConfig.url}
+              </p>
+            </div>
+            {Array.isArray(providerInfo.mcpConfig.tools) && providerInfo.mcpConfig.tools.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {providerInfo.mcpConfig.tools.map((tool) => (
+                  <span key={tool} className="rounded bg-black/5 px-2 py-1 text-xs text-text-muted dark:bg-white/5">
+                    {tool}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        </Card>
+      )}
+
       {isCompatible && providerNode && (
         <Card>
           <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -1280,7 +1305,7 @@ export default function ProviderDetailPage() {
                   <>
                     {!isCompatible && providerId === "codex" && (
                       <Button size="sm" variant="secondary" onClick={() => setShowSessionImportModal(true)}>
-                        Import Session
+                        Import Accounts
                       </Button>
                     )}
                     {!isCompatible && providerId === "iflow" && (
@@ -1325,10 +1350,10 @@ export default function ProviderDetailPage() {
                       size="sm"
                       variant="secondary"
                       onClick={() => setShowSessionImportModal(true)}
-                      title="Import from ChatGPT session"
+                      title="Import Codex accounts from token or session JSON"
                       className="w-full sm:w-auto"
                     >
-                      Import Session
+                      Import Accounts
                     </Button>
                   )}
                   {providerId === "iflow" && (
@@ -1381,10 +1406,11 @@ export default function ProviderDetailPage() {
       )}
 
       {/* Models */}
+      {showModelsSection && (
       <Card>
         <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <h2 className="text-lg font-semibold">
-            {"Available Models"}
+            {isToolOnlyProvider && models.length === 0 ? "Custom Model IDs" : "Available Models"}
           </h2>
           {!isCompatible && (() => {
             const allIds = [
@@ -1413,6 +1439,7 @@ export default function ProviderDetailPage() {
         )}
         {renderModelsSection()}
       </Card>
+      )}
 
       {bulkActionModal}
 

@@ -18,6 +18,29 @@ const DEFAULT_PLUGINS = [
     oauth: true,
     toolNames: ["tavily_search", "tavily_extract", "tavily_crawl", "tavily_map"],
   },
+  {
+    name: "notion",
+    title: "Notion",
+    description: "Search, create, edit, and organize Notion workspace content",
+    url: "https://mcp.notion.com/mcp",
+    transport: "http",
+    oauth: true,
+    toolNames: [
+      "search",
+      "fetch",
+      "create-pages",
+      "update-page",
+      "move-pages",
+      "duplicate-page",
+      "create-database",
+      "update-database",
+      "create-comment",
+      "get-comments",
+      "get-users",
+      "get-self",
+      "get-user",
+    ],
+  },
 ];
 
 // Local stdio plugins bridged via inline SSE endpoint on the app's port.

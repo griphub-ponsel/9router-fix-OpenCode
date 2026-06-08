@@ -10,9 +10,10 @@ const BULK_PLACEHOLDER = `name1|sk-key1\nname2|sk-key2\nsk-key-only-auto-named`;
 export default function AddApiKeyModal({ isOpen, provider, providerName, isCompatible, isAnthropic, authType, authHint, website, proxyPools, error, onSave, onBulkDone, onClose }) {
   const NONE_PROXY_POOL_VALUE = "__none__";
   const isOllamaLocal = provider === "ollama-local";
+  const isNotion = provider === "notion";
   const isCookie = authType === "cookie";
-  const credentialLabel = isCookie ? "Cookie Value" : "API Key";
-  const credentialPlaceholder = isCookie ? "eyJhbGciOi..." : "";
+  const credentialLabel = isNotion ? "Notion token_v2" : (isCookie ? "Cookie Value" : "API Key");
+  const credentialPlaceholder = isNotion ? "token_v2 value" : (isCookie ? "eyJhbGciOi..." : "");
 
   const isAzure = provider === "azure";
   const isCloudflareAi = provider === "cloudflare-ai";
@@ -34,13 +35,23 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
     organization: "",
   });
   const [cloudflareData, setCloudflareData] = useState({ accountId: "" });
+  const [notionData, setNotionData] = useState({
+    spaceId: "",
+    userId: "",
+    spaceViewId: "",
+    fullCookie: "",
+    clientVersion: "",
+  });
   const [region, setRegion] = useState(defaultRegion);
   const [validating, setValidating] = useState(false);
   const [validationResult, setValidationResult] = useState(null);
+  const [validationError, setValidationError] = useState("");
   const [saving, setSaving] = useState(false);
   const [mode, setMode] = useState("single"); // "single" | "bulk"
   const [bulkText, setBulkText] = useState("");
   const [bulkResult, setBulkResult] = useState(null); // { success, failed }
+  const notionFullCookieInput = notionData.fullCookie.trim() || (formData.apiKey.includes("token_v2=") && formData.apiKey.includes(";") ? formData.apiKey.trim() : "");
+  const notionCredentialInput = formData.apiKey.trim() || notionFullCookieInput;
 
   const buildProviderSpecificData = () => {
     if (isOllamaLocal && formData.ollamaHostUrl.trim()) {
@@ -57,6 +68,15 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
     if (isCloudflareAi) {
       return { accountId: cloudflareData.accountId };
     }
+    if (isNotion) {
+      return {
+        spaceId: notionData.spaceId.trim(),
+        userId: notionData.userId.trim(),
+        spaceViewId: notionData.spaceViewId.trim() || undefined,
+        fullCookie: notionFullCookieInput || undefined,
+        clientVersion: notionData.clientVersion.trim() || undefined,
+      };
+    }
     if (providerRegions && region) {
       return { region };
     }
@@ -65,16 +85,22 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
 
   const handleValidate = async () => {
     setValidating(true);
+    setValidationError("");
     try {
       const res = await fetch("/api/providers/validate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider, apiKey: formData.apiKey, providerSpecificData: buildProviderSpecificData() }),
+        body: JSON.stringify({ provider, apiKey: notionCredentialInput || formData.apiKey, providerSpecificData: buildProviderSpecificData() }),
       });
       const data = await res.json();
+      if (isNotion && data.providerSpecificData) {
+        setNotionData((current) => ({ ...current, ...data.providerSpecificData, fullCookie: current.fullCookie }));
+      }
       setValidationResult(data.valid ? "success" : "failed");
+      setValidationError(data.valid ? "" : (data.error || "Invalid credentials"));
     } catch {
       setValidationResult("failed");
+      setValidationError("Validation request failed");
     } finally {
       setValidating(false);
     }
@@ -82,41 +108,50 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
 
   const handleSubmit = async () => {
     if (!provider) return;
-    if (!isOllamaLocal && !formData.apiKey) return;
+    if (!isOllamaLocal && !formData.apiKey && !(isNotion && notionCredentialInput)) return;
     if (!isOllamaLocal) {
       // Non-ollama providers require a name
       if (!formData.name) return;
     }
+    if (isNotion && !notionFullCookieInput) return;
     if (isCompatible && !formData.defaultModel.trim()) return;
 
     setSaving(true);
     try {
       let isValid = false;
+      let providerSpecificDataToSave = buildProviderSpecificData();
       try {
         setValidating(true);
         setValidationResult(null);
+        setValidationError("");
         const res = await fetch("/api/providers/validate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ provider, apiKey: formData.apiKey, providerSpecificData: buildProviderSpecificData() }),
+          body: JSON.stringify({ provider, apiKey: notionCredentialInput || formData.apiKey, providerSpecificData: providerSpecificDataToSave }),
         });
         const data = await res.json();
+        if (isNotion && data.providerSpecificData) {
+          providerSpecificDataToSave = { ...providerSpecificDataToSave, ...data.providerSpecificData, fullCookie: notionFullCookieInput || data.providerSpecificData.fullCookie };
+          setNotionData((current) => ({ ...current, ...data.providerSpecificData, fullCookie: current.fullCookie }));
+        }
         isValid = !!data.valid;
         setValidationResult(isValid ? "success" : "failed");
+        setValidationError(isValid ? "" : (data.error || "Invalid credentials"));
       } catch {
         setValidationResult("failed");
+        setValidationError("Validation request failed");
       } finally {
         setValidating(false);
       }
 
       await onSave({
         name: formData.name || (isOllamaLocal ? "Ollama Local" : ""),
-        apiKey: formData.apiKey,
+        apiKey: notionCredentialInput || formData.apiKey,
         defaultModel: isCompatible ? formData.defaultModel.trim() : undefined,
         priority: formData.priority,
         proxyPoolId: formData.proxyPoolId === NONE_PROXY_POOL_VALUE ? null : formData.proxyPoolId,
         testStatus: isValid ? "active" : "unknown",
-        providerSpecificData: buildProviderSpecificData()
+        providerSpecificData: providerSpecificDataToSave
       });
     } finally {
       setSaving(false);
@@ -160,10 +195,10 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
         {/* Mode switcher */}
         <div className="flex gap-2">
           <Button size="sm" variant={mode === "single" ? "primary" : "ghost"} onClick={() => { setMode("single"); setBulkResult(null); }}>Single</Button>
-          <Button size="sm" variant={mode === "bulk" ? "primary" : "ghost"} onClick={() => { setMode("bulk"); setBulkResult(null); }}>Bulk Add</Button>
+          {!isNotion && <Button size="sm" variant={mode === "bulk" ? "primary" : "ghost"} onClick={() => { setMode("bulk"); setBulkResult(null); }}>Bulk Add</Button>}
         </div>
 
-        {mode === "bulk" && (
+        {mode === "bulk" && !isNotion && (
           <div className="flex flex-col gap-3">
             <p className="text-xs text-text-muted">One key per line. Format: <code>name|apiKey</code> or just <code>apiKey</code> (auto-named by index).</p>
             <textarea
@@ -213,14 +248,14 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
           <div className="flex gap-2">
             <Input
               label={credentialLabel}
-              type={isCookie ? "text" : "password"}
+              type={isCookie || isNotion ? "text" : "password"}
               value={formData.apiKey}
               onChange={(e) => setFormData({ ...formData, apiKey: e.target.value })}
               placeholder={credentialPlaceholder}
               className="flex-1"
             />
             <div className="pt-6">
-              <Button onClick={handleValidate} disabled={!formData.apiKey || validating || saving} variant="secondary">
+              <Button onClick={handleValidate} disabled={(!formData.apiKey && !(isNotion && notionCredentialInput)) || validating || saving} variant="secondary">
                 {validating ? "Checking..." : "Check"}
               </Button>
             </div>
@@ -238,6 +273,46 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
               </>
             )}
           </p>
+        )}
+        {isNotion && (
+          <div className="bg-sidebar/50 p-4 rounded-lg border border-accent/20">
+            <h3 className="font-semibold mb-3 text-sm">Notion AI Session</h3>
+            <div className="flex flex-col gap-3">
+              <Input
+                label="Space ID (Optional)"
+                value={notionData.spaceId}
+                onChange={(e) => setNotionData({ ...notionData, spaceId: e.target.value })}
+                placeholder="Leave blank to auto-discover"
+              />
+              <Input
+                label="User ID (Optional)"
+                value={notionData.userId}
+                onChange={(e) => setNotionData({ ...notionData, userId: e.target.value })}
+                placeholder="Auto-read from notion_user_id cookie"
+              />
+              <Input
+                label="Space View ID (Optional)"
+                value={notionData.spaceViewId}
+                onChange={(e) => setNotionData({ ...notionData, spaceViewId: e.target.value })}
+                placeholder="Leave blank unless your session needs it"
+              />
+              <Input
+                label="Notion Client Version (Optional)"
+                value={notionData.clientVersion}
+                onChange={(e) => setNotionData({ ...notionData, clientVersion: e.target.value })}
+                placeholder="23.13.20260228.0625"
+              />
+              <textarea
+                className="w-full rounded border border-accent/30 bg-sidebar p-2 text-xs font-mono resize-y min-h-[90px] focus:outline-none focus:ring-1 focus:ring-primary"
+                value={notionData.fullCookie}
+                onChange={(e) => setNotionData({ ...notionData, fullCookie: e.target.value })}
+                placeholder="Full Cookie header from notion.so"
+              />
+            </div>
+            <p className="text-xs text-text-muted mt-2">
+              OAuth Notion is for MCP tools. For Notion AI chat, paste the full Cookie header; userId and spaceId can be auto-filled from the session.
+            </p>
+          </div>
         )}
         {providerRegions && (
           <Select
@@ -264,6 +339,9 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
           <Badge variant={validationResult === "success" ? "success" : "error"}>
             {validationResult === "success" ? "Valid" : "Invalid"}
           </Badge>
+        )}
+        {validationError && (
+          <p className="text-xs text-red-500 break-words">{validationError}</p>
         )}
         {error && (
           <p className="text-xs text-red-500 break-words">{error}</p>
@@ -348,7 +426,7 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
         </p>
 
         <div className="flex gap-2">
-          <Button onClick={handleSubmit} fullWidth disabled={saving || (!isOllamaLocal && (!formData.name || !formData.apiKey)) || (isCompatible && !formData.defaultModel.trim()) || (isAzure && (!azureData.azureEndpoint || !azureData.deployment || !azureData.organization)) || (isCloudflareAi && !cloudflareData.accountId)}>
+          <Button onClick={handleSubmit} fullWidth disabled={saving || (!isOllamaLocal && (!formData.name || (!formData.apiKey && !(isNotion && notionCredentialInput)))) || (isNotion && !notionFullCookieInput) || (isCompatible && !formData.defaultModel.trim()) || (isAzure && (!azureData.azureEndpoint || !azureData.deployment || !azureData.organization)) || (isCloudflareAi && !cloudflareData.accountId)}>
             {saving ? "Saving..." : "Save"}
           </Button>
           <Button onClick={onClose} variant="ghost" fullWidth>

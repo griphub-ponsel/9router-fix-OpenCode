@@ -5,6 +5,43 @@ import { getConsistentMachineId } from "@/shared/utils/machineId";
 
 const CLI_TOKEN_SALT = "9r-cli-auth";
 
+/** GitHub Claude thinking models need enough output budget or Copilot returns choices:[]. */
+function testMaxTokens(model) {
+  const m = String(model || "").toLowerCase();
+  if (/^(gh|github)\/claude.*opus.*4\.[68]/.test(m)) return 256;
+  if (/^(gh|github)\/claude/.test(m)) return 64;
+  // xAI Grok Composer (Responses API) needs output budget; max_tokens=1 → empty choices
+  if (/^(xog|xai-oauth)\/grok-composer/.test(m) || /^grok-composer/.test(m)) return 256;
+  return 1;
+}
+
+function testChatBody(model) {
+  const body = {
+    model,
+    max_tokens: testMaxTokens(model),
+    stream: false,
+    messages: [{ role: "user", content: "hi" }],
+  };
+  if (/^(gh|github)\/claude.*opus.*4\.8/i.test(model) && !body.reasoning_effort) {
+    body.reasoning_effort = "medium";
+  } else if (/^(gh|github)\/claude.*opus.*4\.6/i.test(model) && !body.reasoning_effort) {
+    body.reasoning_effort = "low";
+  }
+  return body;
+}
+
+function textFromResponsesOutput(output) {
+  if (!Array.isArray(output)) return "";
+  for (let i = output.length - 1; i >= 0; i--) {
+    const item = output[i];
+    if (!Array.isArray(item?.content)) continue;
+    for (const part of item.content) {
+      if (typeof part?.text === "string" && part.text.trim()) return part.text;
+    }
+  }
+  return "";
+}
+
 // POST /api/models/test - Ping a single model via internal completions or embeddings
 export async function POST(request) {
   try {
@@ -55,12 +92,7 @@ export async function POST(request) {
     const res = await fetch(`${baseUrl}/api/v1/chat/completions`, {
       method: "POST",
       headers,
-      body: JSON.stringify({
-        model,
-        max_tokens: 1,
-        stream: false,
-        messages: [{ role: "user", content: "hi" }],
-      }),
+      body: JSON.stringify(testChatBody(model)),
       signal: AbortSignal.timeout(15000),
     });
     const latencyMs = Date.now() - start;
@@ -103,13 +135,39 @@ export async function POST(request) {
       });
     }
 
+    const responsesText = typeof parsed?.output_text === "string"
+      ? parsed.output_text
+      : textFromResponsesOutput(parsed?.output);
+    if (responsesText.trim().length > 0 || Array.isArray(parsed?.output)) {
+      return NextResponse.json({ ok: true, latencyMs, error: null, status: res.status });
+    }
+
     const hasChoices = Array.isArray(parsed?.choices) && parsed.choices.length > 0;
+    const choiceContent = parsed?.choices?.[0]?.message?.content;
+    const hasVisibleContent = typeof choiceContent === "string" && choiceContent.trim().length > 0;
+    const hasToolCalls = Array.isArray(parsed?.choices?.[0]?.message?.tool_calls)
+      && parsed.choices[0].message.tool_calls.length > 0;
     if (!hasChoices) {
+      const out = parsed?.usage?.completion_tokens ?? parsed?.usage?.output_tokens ?? 0;
+      if (out > 0 || parsed?.status === "completed") {
+        return NextResponse.json({ ok: true, latencyMs, error: null, status: res.status });
+      }
       return NextResponse.json({
         ok: false,
         latencyMs,
         status: res.status,
         error: "Provider returned no completion choices for this model",
+      });
+    }
+    if (!hasVisibleContent && !hasToolCalls) {
+      const out = parsed?.usage?.completion_tokens ?? 0;
+      return NextResponse.json({
+        ok: false,
+        latencyMs,
+        status: res.status,
+        error: out > 0
+          ? "Model responded but returned empty text (try higher max_tokens or enable reasoning_effort)"
+          : "Provider returned no completion choices for this model",
       });
     }
 

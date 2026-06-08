@@ -99,6 +99,16 @@ export const QODER_CONFIG = {
   loginUrl: "https://qoder.com/device/selectAccounts",
 };
 
+// Notion MCP OAuth Configuration (Dynamic Client Registration + PKCE)
+export const NOTION_CONFIG = {
+  issuer: "https://mcp.notion.com",
+  resource: "https://mcp.notion.com/mcp",
+  authorizeUrl: "https://mcp.notion.com/authorize",
+  tokenUrl: "https://mcp.notion.com/token",
+  registrationUrl: "https://mcp.notion.com/register",
+  codeChallengeMethod: "S256",
+};
+
 // iFlow OAuth Configuration (Authorization Code)
 export const IFLOW_CONFIG = {
   clientId: "10009311001",
@@ -314,6 +324,7 @@ export const PROVIDERS = {
   GEMINI: "gemini-cli",
   QWEN: "qwen",
   QODER: "qoder",
+  NOTION: "notion",
   IFLOW: "iflow",
   ANTIGRAVITY: "antigravity",
   OPENAI: "openai",

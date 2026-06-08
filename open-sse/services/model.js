@@ -13,6 +13,8 @@ const ALIAS_TO_PROVIDER_ID = {
   kc: "kilocode",
   kmc: "kimi-coding",
   cl: "cline",
+  nt: "notion",
+  notion: "notion",
   xog: "xai-oauth",
   "xai-oauth": "xai-oauth",
   oc: "opencode",

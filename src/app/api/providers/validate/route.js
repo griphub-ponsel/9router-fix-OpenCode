@@ -5,7 +5,110 @@ import { getDefaultModel } from "open-sse/config/providerModels.js";
 import { resolveOllamaLocalHost, resolveXiaomiTokenplanBaseUrl, PROVIDERS } from "open-sse/config/providers.js";
 import { openaiToCommandCode } from "open-sse/translator/request/openai-to-commandcode.js";
 import { PROVIDER_ENDPOINTS } from "@/shared/constants/config";
-import { normalizeProviderId } from "@/lib/providerNormalization";
+import { extractNotionToken, normalizeProviderId, normalizeProviderSpecificData } from "@/lib/providerNormalization";
+
+const NOTION_CLIENT_VERSION = "23.13.20260605.0836";
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isUuid(value) {
+  return UUID_RE.test(String(value || ""));
+}
+
+function parseCookieString(cookieString) {
+  const out = {};
+  for (const part of String(cookieString || "").split(";")) {
+    const idx = part.indexOf("=");
+    if (idx <= 0) continue;
+    const key = part.slice(0, idx).trim();
+    const value = part.slice(idx + 1).trim();
+    if (key && value) out[key] = value;
+  }
+  return out;
+}
+
+function resolveNotionFullCookie(apiKey, data = {}) {
+  const storedCookie = data.fullCookie || data.cookie || "";
+  if (storedCookie) return storedCookie;
+  const rawApiKey = String(apiKey || "").trim();
+  return rawApiKey.includes("token_v2=") && rawApiKey.includes(";") ? rawApiKey : "";
+}
+
+function buildNotionCookie(apiKey, data = {}) {
+  const fullCookie = resolveNotionFullCookie(apiKey, data);
+  const token = extractNotionToken(apiKey, fullCookie);
+  const cookieUserId = parseCookieString(fullCookie).notion_user_id;
+  const cookies = {
+    ...parseCookieString(fullCookie),
+    token_v2: token,
+    notion_user_id: data.userId || cookieUserId,
+  };
+  return Object.entries(cookies).filter(([, value]) => value).map(([key, value]) => `${key}=${value}`).join("; ");
+}
+
+function extractSpaceIdFromUserContent(payload) {
+  const spaces = payload?.recordMap?.space;
+  if (!spaces || typeof spaces !== "object") return "";
+  return Object.keys(spaces).find(isUuid) || "";
+}
+
+async function probeNotionSession(apiKey, providerSpecificData = {}) {
+  const data = normalizeProviderSpecificData("notion", {}, providerSpecificData) || {};
+  const fullCookie = resolveNotionFullCookie(apiKey, data);
+  const cookieUserId = parseCookieString(fullCookie).notion_user_id;
+  const userId = data.userId || cookieUserId;
+  const token = extractNotionToken(apiKey, fullCookie);
+  if (!token || !userId) {
+    return { valid: false, error: "token_v2 and notion_user_id are required. Paste the full Cookie header from notion.so." };
+  }
+  if (!fullCookie) {
+    return { valid: false, error: "Full Cookie header from notion.so is required for Notion AI chat. token_v2 alone can list models but Notion blocks inference." };
+  }
+  if (data.spaceId && !isUuid(data.spaceId)) {
+    return { valid: false, error: "spaceId must be the Notion workspace UUID, not a cookie or sync_session value. Leave it blank to auto-discover." };
+  }
+  if (!isUuid(userId)) {
+    return { valid: false, error: "userId must be the Notion user UUID." };
+  }
+
+  data.userId = userId;
+
+  const res = await fetch("https://www.notion.so/api/v3/loadUserContent", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Accept": "application/json",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
+      ...(data.spaceId ? { "x-notion-space-id": data.spaceId } : {}),
+      "x-notion-active-user-header": data.userId,
+      "notion-client-version": data.clientVersion || NOTION_CLIENT_VERSION,
+      "origin": "https://www.notion.so",
+      "referer": "https://www.notion.so/",
+      "cookie": buildNotionCookie(apiKey, data),
+    },
+    body: "{}",
+    signal: AbortSignal.timeout(10000),
+  });
+
+  if (res.status === 401 || res.status === 403) {
+    return { valid: false, error: "Invalid Notion session. Re-check token_v2, full cookie, spaceId, and userId." };
+  }
+  if (!res.ok) {
+    return { valid: false, error: `Notion session probe returned HTTP ${res.status}` };
+  }
+  const payload = await res.json().catch(() => null);
+  if (!payload?.recordMap || typeof payload.recordMap !== "object") {
+    return { valid: false, error: "Notion session probe returned an unexpected response" };
+  }
+  return {
+    valid: true,
+    error: null,
+    providerSpecificData: {
+      ...data,
+      spaceId: data.spaceId || extractSpaceIdFromUserContent(payload) || undefined,
+      userId,
+    },
+  };
+}
 
 // Probe a webSearch/webFetch provider using its searchConfig/fetchConfig.
 // Returns true if API key is accepted (status !== 401 && !== 403).
@@ -223,6 +326,11 @@ export async function POST(request) {
           valid: isValid,
           error: isValid ? null : "Invalid API key or Azure configuration",
         });
+      }
+
+      if (provider === "notion") {
+        const result = await probeNotionSession(apiKey, providerSpecificData);
+        return NextResponse.json(result);
       }
 
       // Generic probe for webSearch/webFetch providers (config-driven)

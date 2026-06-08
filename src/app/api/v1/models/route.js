@@ -191,6 +191,13 @@ export async function buildModelsList(kindFilter) {
 
   const activeConnectionByProvider = new Map();
   for (const conn of connections) {
+    if (
+      conn.provider === "notion" &&
+      kindFilter.includes(LLM_KIND) &&
+      (conn.authType !== "apikey" || !conn.apiKey || !conn.providerSpecificData?.fullCookie)
+    ) {
+      continue;
+    }
     if (!activeConnectionByProvider.has(conn.provider)) {
       activeConnectionByProvider.set(conn.provider, conn);
     }

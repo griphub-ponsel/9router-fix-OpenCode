@@ -242,15 +242,12 @@ export default function ModelSelectModal({
         const hardcodedModels = getModelsByProviderId(providerId);
         const hardcodedIds = new Set(hardcodedModels.map((m) => m.id));
 
-        // Custom models: if no hardcoded models (e.g. openrouter), show all aliases for this provider
-        // Otherwise only show aliases where aliasName === modelId ("Add Model" button pattern)
-        const hasHardcoded = hardcodedModels.length > 0;
         const customAliasModels = Object.entries(modelAliases)
-          .filter(([aliasName, fullModel]) =>
-            fullModel.startsWith(`${alias}/`) &&
-            (hasHardcoded ? aliasName === fullModel.replace(`${alias}/`, "") : true) &&
-            !hardcodedIds.has(fullModel.replace(`${alias}/`, ""))
-          )
+          .filter(([aliasName, fullModel]) => {
+            if (!fullModel.startsWith(`${alias}/`)) return false;
+            const modelId = fullModel.replace(`${alias}/`, "");
+            return !hardcodedIds.has(modelId);
+          })
           .map(([aliasName, fullModel]) => {
             const modelId = fullModel.replace(`${alias}/`, "");
             return { id: modelId, name: aliasName, value: fullModel, isCustom: true };

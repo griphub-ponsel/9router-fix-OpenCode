@@ -51,7 +51,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
           redirectUri: authData.redirectUri,
           codeVerifier: authData.codeVerifier,
           state,
-          ...(oauthMeta ? { meta: oauthMeta } : {}),
+          ...((oauthMeta || authData.authMeta) ? { meta: { ...(oauthMeta || {}), ...(authData.authMeta || {}) } } : {}),
         }),
       });
 
@@ -66,7 +66,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
       setError(err.message);
       setStep("error");
     }
-  }, [authData, provider, onSuccess]);
+  }, [authData, provider, onSuccess, oauthMeta]);
 
   // Poll for device code token
   const startPolling = useCallback(async (deviceCode, codeVerifier, interval, extraData, deadlineMs) => {

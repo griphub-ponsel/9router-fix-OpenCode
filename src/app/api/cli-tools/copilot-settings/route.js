@@ -6,6 +6,7 @@ import path from "path";
 import os from "os";
 import { findModelName, getModelStrip } from "open-sse/config/providerModels.js";
 import { getCopilotModelLimits } from "@/shared/utils/copilotModelLimits.js";
+import { expandCopilotReasoningVariants } from "@/shared/utils/copilotReasoningVariants.js";
 
 // Resolve chatLanguageModels.json path per OS
 const getConfigPath = () => {
@@ -111,20 +112,22 @@ export async function POST(request) {
     const endpointUrl = `${baseUrl}/chat/completions`;
     const keyToUse = apiKey || "sk_9router";
 
+    const baseModels = models.map((id) => ({
+      id,
+      name: resolveModelDisplayName(id, modelNames),
+      url: endpointUrl,
+      apiType: "chat-completions",
+      toolCalling: true,
+      vision: supportsVision(id),
+      ...getCopilotModelLimits(id),
+    }));
+
     const newEntry = {
       name: "9Router",
       vendor: "customendpoint",
       apiKey: keyToUse,
       apiType: "chat-completions",
-      models: models.map((id) => ({
-        id,
-        name: resolveModelDisplayName(id, modelNames),
-        url: endpointUrl,
-        apiType: "chat-completions",
-        toolCalling: true,
-        vision: supportsVision(id),
-        ...getCopilotModelLimits(id),
-      })),
+      models: expandCopilotReasoningVariants(baseModels),
     };
 
     // Replace existing 9Router entry or append

@@ -2,6 +2,7 @@
 
 ## Features
 - Add Qoder provider: device-flow OAuth, COSY signing, WAF-bypass body encoding, live model catalog, dashboard quota tracker, 11 models (#1372)
+- Add Notion provider with OAuth MCP workspace tools plus Notion AI session routing for `nt/claude-opus-4-8` and related Notion subscription models
 - Add new models: Claude Opus 4.8 (Claude Code), GPT 5.4 Mini (Codex)
 
 ## Fixes

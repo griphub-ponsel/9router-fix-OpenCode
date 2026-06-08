@@ -8,7 +8,7 @@ const EXACT_LIMITS = {
   "claude-haiku-4.5": { contextTokens: 200000, maxOutputTokens: 32000 },
   "claude-opus-4.6": { contextTokens: 1000000, maxOutputTokens: 32000 },
   "claude-opus-4.7": { contextTokens: 1000000, maxOutputTokens: 32000 },
-  "claude-opus-4.8": { contextTokens: 1000000, maxOutputTokens: 32000 },
+  "claude-opus-4.8": { contextTokens: 1000000, maxOutputTokens: 32000, reasoningEfforts: ["medium"] },
   "claude-sonnet-4.6": { contextTokens: 1000000, maxOutputTokens: 32000 },
   "deepseek-v4-flash": { contextTokens: 262144, maxOutputTokens: 65536 },
   "deepseek-v4-pro": { contextTokens: 262144, maxOutputTokens: 65536 },
@@ -55,6 +55,13 @@ function normalizeLimits(limits) {
     maxInputTokens: Math.max(1024, limits.contextTokens - maxOutputTokens),
     maxOutputTokens,
   };
+}
+
+/** GitHub Copilot–allowed reasoning_effort values per model id (when restricted). */
+export function getCopilotReasoningEfforts(modelId) {
+  const model = normalizeModelId(modelId);
+  const exact = EXACT_LIMITS[model];
+  return exact?.reasoningEfforts ?? null;
 }
 
 export function getCopilotModelLimits(id) {

@@ -14,8 +14,83 @@ import {
   CLAUDE_CONFIG,
   CLINE_CONFIG,
   KILOCODE_CONFIG,
+  NOTION_CONFIG,
 } from "@/lib/oauth/constants/oauth";
 import { buildClineHeaders } from "@/shared/utils/clineAuth";
+import { extractNotionToken } from "@/lib/providerNormalization";
+
+const NOTION_CLIENT_VERSION = "23.13.20260605.0836";
+
+function parseCookieString(cookieString) {
+  const out = {};
+  for (const part of String(cookieString || "").split(";")) {
+    const idx = part.indexOf("=");
+    if (idx <= 0) continue;
+    const key = part.slice(0, idx).trim();
+    const value = part.slice(idx + 1).trim();
+    if (key && value) out[key] = value;
+  }
+  return out;
+}
+
+function resolveNotionFullCookie(apiKey, data = {}) {
+  const storedCookie = data.fullCookie || data.cookie || "";
+  if (storedCookie) return storedCookie;
+  const rawApiKey = String(apiKey || "").trim();
+  return rawApiKey.includes("token_v2=") && rawApiKey.includes(";") ? rawApiKey : "";
+}
+
+function buildNotionCookie(apiKey, data = {}) {
+  const fullCookie = resolveNotionFullCookie(apiKey, data);
+  const token = extractNotionToken(apiKey, fullCookie);
+  const cookieUserId = parseCookieString(fullCookie).notion_user_id;
+  const cookies = {
+    ...parseCookieString(fullCookie),
+    token_v2: token,
+    notion_user_id: data.userId || data.user_id || cookieUserId,
+  };
+  return Object.entries(cookies).filter(([, value]) => value).map(([key, value]) => `${key}=${value}`).join("; ");
+}
+
+async function testNotionSessionConnection(connection, effectiveProxy = null) {
+  const psd = connection.providerSpecificData || {};
+  const spaceId = psd.spaceId || psd.space_id;
+  const fullCookie = resolveNotionFullCookie(connection.apiKey, psd);
+  const userId = psd.userId || psd.user_id || parseCookieString(fullCookie).notion_user_id;
+  const token = extractNotionToken(connection.apiKey, fullCookie);
+  if (!token || !userId) {
+    return { valid: false, error: "Missing token_v2 or notion_user_id" };
+  }
+  if (!fullCookie) {
+    return { valid: false, error: "Full Cookie header from notion.so is required for Notion AI chat" };
+  }
+
+  const res = await fetchWithConnectionProxy("https://www.notion.so/api/v3/loadUserContent", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Accept": "application/json",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
+      ...(spaceId ? { "x-notion-space-id": spaceId } : {}),
+      "x-notion-active-user-header": userId,
+      "notion-client-version": psd.clientVersion || NOTION_CLIENT_VERSION,
+      "origin": "https://www.notion.so",
+      "referer": "https://www.notion.so/",
+      "cookie": buildNotionCookie(connection.apiKey, psd),
+    },
+    body: "{}",
+  }, effectiveProxy);
+
+  if (res.status === 401 || res.status === 403) {
+    return { valid: false, error: "Invalid Notion session" };
+  }
+  if (!res.ok) {
+    return { valid: false, error: `Notion session probe returned HTTP ${res.status}` };
+  }
+  const payload = await res.json().catch(() => null);
+  const valid = !!payload?.recordMap && typeof payload.recordMap === "object";
+  return { valid, error: valid ? null : "Notion session probe returned an unexpected response" };
+}
 
 // OAuth provider test endpoints
 const OAUTH_TEST_CONFIG = {
@@ -89,6 +164,24 @@ const OAUTH_TEST_CONFIG = {
     authPrefix: "Bearer ",
   },
   codebuddy: { tokenExists: true },
+  notion: {
+    url: NOTION_CONFIG.resource,
+    method: "POST",
+    authHeader: "Authorization",
+    authPrefix: "Bearer ",
+    extraHeaders: {
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+      "MCP-Protocol-Version": "2025-06-18",
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "9router", version: "1" } },
+    }),
+    refreshable: true,
+  },
 };
 
 async function probeClineAccessToken(accessToken) {
@@ -189,6 +282,24 @@ async function refreshOAuthToken(connection) {
           grant_type: "refresh_token",
           refresh_token: refreshToken,
           client_id: QWEN_CONFIG.clientId,
+        }),
+      });
+      if (!response.ok) return null;
+      const data = await response.json();
+      return { accessToken: data.access_token, expiresIn: data.expires_in, refreshToken: data.refresh_token || refreshToken };
+    }
+
+    if (provider === "notion") {
+      const clientId = connection.providerSpecificData?.clientId;
+      if (!clientId) return null;
+      const response = await fetch(NOTION_CONFIG.tokenUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+        body: new URLSearchParams({
+          grant_type: "refresh_token",
+          refresh_token: refreshToken,
+          client_id: clientId,
+          resource: NOTION_CONFIG.resource,
         }),
       });
       if (!response.ok) return null;
@@ -405,6 +516,9 @@ async function testApiKeyConnection(connection, effectiveProxy = null) {
         }, effectiveProxy);
         const valid = res.status !== 401 && res.status !== 403;
         return { valid, error: valid ? null : "Invalid API key or Azure configuration" };
+      }
+      case "notion": {
+        return await testNotionSessionConnection(connection, effectiveProxy);
       }
       case "openai": {
         const res = await fetchWithConnectionProxy("https://api.openai.com/v1/models", { headers: { Authorization: `Bearer ${connection.apiKey}` } }, effectiveProxy);

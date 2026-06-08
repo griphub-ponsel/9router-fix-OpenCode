@@ -6,8 +6,9 @@ import { Modal, Button } from "@/shared/components";
 
 /**
  * Codex Session Import Modal
- * Paste ChatGPT session JSON to import Codex accounts without OAuth/phone verification.
- * Accepts: single object { accessToken, user, expires } or array [{...}, {...}]
+ * Paste Codex token/session JSON to import accounts without OAuth/phone verification.
+ * Accepts: { accessToken, refreshToken, idToken }, { accounts: [...] }, or legacy
+ * chatgpt.com/api/auth/session JSON.
  */
 export default function CodexSessionImportModal({ isOpen, onSuccess, onClose }) {
   const [sessionText, setSessionText] = useState("");
@@ -29,12 +30,13 @@ export default function CodexSessionImportModal({ isOpen, onSuccess, onClose }) 
     try {
       parsed = JSON.parse(trimmed);
     } catch {
-      setError("Invalid JSON. Make sure you paste the content from chatgpt.com/api/auth/session");
+      setError("Invalid JSON. Paste Codex token JSON or the content from chatgpt.com/api/auth/session.");
       return;
     }
 
-    // Validate: must have accessToken somewhere
-    const sessions = Array.isArray(parsed) ? parsed : [parsed];
+    const sessions = Array.isArray(parsed)
+      ? parsed
+      : (parsed?.accounts || parsed?.sessions || [parsed]);
     const hasToken = sessions.some((s) => s.accessToken || s.access_token);
     if (!hasToken) {
       setError("No accessToken found in JSON. Please check again.");
@@ -43,10 +45,10 @@ export default function CodexSessionImportModal({ isOpen, onSuccess, onClose }) 
 
     setImporting(true);
     try {
-      const res = await fetch("/api/oauth/codex/import-session", {
+      const res = await fetch("/api/oauth/codex/bulk-import", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(parsed),
+        body: JSON.stringify({ accounts: sessions }),
       });
 
       const data = await res.json();
@@ -55,7 +57,7 @@ export default function CodexSessionImportModal({ isOpen, onSuccess, onClose }) 
       }
 
       setResults(data);
-      if (data.success) {
+      if (data.success > 0) {
         onSuccess?.();
       }
     } catch (err) {
@@ -73,28 +75,28 @@ export default function CodexSessionImportModal({ isOpen, onSuccess, onClose }) 
   };
 
   return (
-    <Modal isOpen={isOpen} title="Import Codex from ChatGPT Session" onClose={handleClose} size="lg">
+    <Modal isOpen={isOpen} title="Import Codex Accounts" onClose={handleClose} size="lg">
       <div className="flex flex-col gap-4">
         {/* Instructions */}
         <div className="text-sm text-gray-600 dark:text-gray-400 space-y-2">
-          <p>Import Codex accounts by pasting a ChatGPT session (no phone verification needed).</p>
+          <p>Import Codex accounts by pasting token JSON from Codex/ChatGPT session tooling.</p>
           <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3">
-            <p className="font-medium text-blue-800 dark:text-blue-200 mb-1">How to get the session:</p>
+            <p className="font-medium text-blue-800 dark:text-blue-200 mb-1">Supported JSON:</p>
             <ol className="list-decimal list-inside space-y-1 text-blue-700 dark:text-blue-300 text-xs">
-              <li>Log in to ChatGPT in your browser</li>
-              <li>Open a new tab, go to: <code className="bg-blue-100 dark:bg-blue-800 px-1 rounded">chatgpt.com/api/auth/session</code></li>
-              <li>Copy the entire JSON and paste it below</li>
+              <li>Preferred: <code className="bg-blue-100 dark:bg-blue-800 px-1 rounded">accessToken</code>, <code className="bg-blue-100 dark:bg-blue-800 px-1 rounded">refreshToken</code>, and <code className="bg-blue-100 dark:bg-blue-800 px-1 rounded">idToken</code></li>
+              <li>Bulk: paste an array or <code className="bg-blue-100 dark:bg-blue-800 px-1 rounded">&#123; &quot;accounts&quot;: [...] &#125;</code></li>
+              <li>Legacy fallback: <code className="bg-blue-100 dark:bg-blue-800 px-1 rounded">chatgpt.com/api/auth/session</code> JSON</li>
             </ol>
           </div>
           <p className="text-xs text-amber-600 dark:text-amber-400">
-            ⚠ Supports pasting multiple sessions as an array [&#123;…&#125;, &#123;…&#125;]
+            Legacy ChatGPT session imports usually have no refresh token, so they can expire. Token JSON with refreshToken is recommended.
           </p>
         </div>
 
         {/* Textarea */}
         <textarea
           className="w-full h-48 p-3 text-sm font-mono border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 resize-y focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-          placeholder='{"user":{"id":"...","email":"..."},"expires":"...","accessToken":"eyJ..."}'
+          placeholder='[{"accessToken":"eyJ...","refreshToken":"rt_...","idToken":"eyJ...","email":"user@example.com"}]'
           value={sessionText}
           onChange={(e) => setSessionText(e.target.value)}
           disabled={importing}
@@ -109,22 +111,18 @@ export default function CodexSessionImportModal({ isOpen, onSuccess, onClose }) 
 
         {/* Results */}
         {results && (
-          <div className={`text-sm rounded-lg p-3 border ${results.success ? "bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-300" : "bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-300"}`}>
+          <div className={`text-sm rounded-lg p-3 border ${results.success > 0 ? "bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-300" : "bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-300"}`}>
             <p className="font-medium mb-1">
-              {results.success ? "✓ Import successful!" : "Import failed"}
+              {results.success > 0 ? "Import completed" : "Import failed"}
             </p>
-            {results.imported > 0 && (
-              <p>Imported: {results.imported} account(s)</p>
+            {results.success > 0 && (
+              <p>Imported: {results.success} account(s)</p>
             )}
-            {results.connections?.map((c, i) => (
-              <p key={i} className="text-xs mt-1">
-                • {c.email || "Unknown"} {c.plan && `(${c.plan})`}
-              </p>
-            ))}
-            {results.errors?.map((e, i) => (
-              <p key={i} className="text-xs mt-1 text-red-600 dark:text-red-400">
-                ✗ #{e.index + 1}: {e.error}
-              </p>
+            {results.failed > 0 && <p>Failed: {results.failed} account(s)</p>}
+            {results.results?.map((item) => item.ok ? (
+              <p key={item.index} className="text-xs mt-1">#{item.index + 1}: {item.email || "Imported"}</p>
+            ) : (
+              <p key={item.index} className="text-xs mt-1 text-red-600 dark:text-red-400">#{item.index + 1}: {item.error}</p>
             ))}
           </div>
         )}
@@ -132,9 +130,9 @@ export default function CodexSessionImportModal({ isOpen, onSuccess, onClose }) 
         {/* Actions */}
         <div className="flex justify-end gap-3">
           <Button variant="secondary" onClick={handleClose} disabled={importing}>
-            {results?.success ? "Close" : "Cancel"}
+            {results?.success > 0 ? "Close" : "Cancel"}
           </Button>
-          {!results?.success && (
+          {!(results?.success > 0) && (
             <Button onClick={handleImport} disabled={importing || !sessionText.trim()}>
               {importing ? "Importing..." : "Import"}
             </Button>

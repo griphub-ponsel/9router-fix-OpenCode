@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createProviderConnection } from "@/models";
 import { extractCodexAccountInfo } from "@/lib/oauth/providers";
+import { POST as bulkImportCodex } from "../bulk-import/route";
 
 /**
  * Decode JWT payload without verification (we only need claims).
@@ -49,6 +50,20 @@ function extractSessionInfo(accessToken) {
  * - Direct accessToken string: { accessToken: "eyJ..." }
  */
 export async function POST(request) {
+  const contentType = request.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) {
+    try {
+      const body = await request.clone().json();
+      const accounts = Array.isArray(body) ? body : (body?.accounts || body?.sessions || [body]);
+      const hasNewTokenShape = accounts.some((item) => item?.refreshToken || item?.refresh_token || item?.idToken || item?.id_token);
+      if (hasNewTokenShape || body?.accounts) {
+        return bulkImportCodex(request);
+      }
+    } catch {
+      // Let the legacy handler return its existing error shape.
+    }
+  }
+
   try {
     const body = await request.json();
 

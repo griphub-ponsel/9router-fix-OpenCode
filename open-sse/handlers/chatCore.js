@@ -28,7 +28,8 @@ import { compressMessages, formatRtkLog } from "../rtk/index.js";
  * @param {string} options.sourceFormatOverride - Override detected source format (e.g. "openai-responses")
  */
 export async function handleChatCore({ body, modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, clientRawRequest, connectionId, userAgent, apiKey, ccFilterNaming, rtkEnabled, cavemanEnabled, cavemanLevel, sourceFormatOverride, providerThinking }) {
-  const { provider, model } = modelInfo;
+  const provider = modelInfo.provider;
+  let model = modelInfo.model;
   const requestStartTime = Date.now();
 
   const sourceFormat = sourceFormatOverride || detectFormat(body);
@@ -38,6 +39,17 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   if (bypassResponse) return bypassResponse;
 
   const alias = PROVIDER_ID_TO_ALIAS[provider] || provider;
+  const reasoningVariant = parseReasoningVariant(model);
+  if (reasoningVariant) {
+    model = reasoningVariant.model;
+    if (reasoningVariant.effort === "none") {
+      body = { ...body };
+      delete body.reasoning_effort;
+      if (!body.thinking) body.thinking = { type: "disabled" };
+    } else if (!body.reasoning_effort) {
+      body = { ...body, reasoning_effort: reasoningVariant.effort };
+    }
+  }
   const modelTargetFormat = getModelTargetFormat(alias, model);
   const targetFormat = modelTargetFormat || getTargetFormat(provider);
   const stripList = getModelStrip(alias, model);
@@ -268,6 +280,16 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   // Streaming response
   const { onStreamComplete } = buildOnStreamComplete({ ...sharedCtx });
   return handleStreamingResponse({ ...sharedCtx, providerResponse, sourceFormat, targetFormat, userAgent, reqLogger, toolNameMap, streamController, onStreamComplete });
+}
+
+function parseReasoningVariant(model) {
+  if (typeof model !== "string") return null;
+  const match = model.match(/^(.*)-(none|low|medium|high|xhigh)$/);
+  if (!match) return null;
+  return {
+    model: match[1],
+    effort: match[2] === "xhigh" ? "high" : match[2]
+  };
 }
 
 export function isTokenExpiringSoon(expiresAt, bufferMs = 5 * 60 * 1000) {

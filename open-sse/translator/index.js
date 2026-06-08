@@ -72,6 +72,17 @@ function stripContentTypes(body, stripList = []) {
   }
 }
 
+function modelLooksImageCapable(model) {
+  const m = String(model || "").toLowerCase();
+  return /(?:vision|\bvl\b|[-_.]vl[-_.]|image-to-text|image2text|multimodal|omni|gpt-4o|gemini|claude|grok-4|pixtral|llava|qwen[^/]*(?:vl|vision))/.test(m);
+}
+
+function effectiveStripList(model, stripList = []) {
+  const next = new Set(stripList);
+  if (!next.has("image") && !modelLooksImageCapable(model)) next.add("image");
+  return [...next];
+}
+
 function isGeminiImageLimitedModel(model) {
   const m = String(model || "").toLowerCase();
   return /gemini-3(?:\.1)?-pro/.test(m);
@@ -136,8 +147,9 @@ export function translateRequest(sourceFormat, targetFormat, model, body, stream
 
   limitImagesForGeminiPro(result, model);
 
-  // Strip explicit content types (opt-in via strip[] in PROVIDER_MODELS entry)
-  stripContentTypes(result, stripList);
+  // Strip image/audio blocks before target translation. Explicit strip[] still wins,
+  // and text-only models also drop stale images from long multimodal sessions.
+  stripContentTypes(result, effectiveStripList(model, stripList));
 
   // Normalize thinking config: remove if lastMessage is not user
   normalizeThinkingConfig(result);

@@ -158,6 +158,8 @@ export async function updateProviderCredentials(connectionId, newCredentials) {
 
     if (newCredentials.accessToken)         updates.accessToken  = newCredentials.accessToken;
     if (newCredentials.refreshToken)        updates.refreshToken = newCredentials.refreshToken;
+    if (newCredentials.idToken)             updates.idToken = newCredentials.idToken;
+    if (newCredentials.lastRefreshAt)       updates.lastRefreshAt = newCredentials.lastRefreshAt;
     if (newCredentials.expiresIn) {
       updates.expiresAt = toExpiresAt(newCredentials.expiresIn);
       updates.expiresIn = newCredentials.expiresIn;
@@ -232,6 +234,8 @@ export async function checkAndRefreshToken(provider, credentials) {
           ...creds,
           accessToken:  newCreds.accessToken,
           refreshToken: newCreds.refreshToken ?? creds.refreshToken,
+          idToken: newCreds.idToken ?? creds.idToken,
+          lastRefreshAt: newCreds.lastRefreshAt ?? creds.lastRefreshAt,
           providerSpecificData: newCreds.providerSpecificData
             ? { ...creds.providerSpecificData, ...newCreds.providerSpecificData }
             : creds.providerSpecificData,

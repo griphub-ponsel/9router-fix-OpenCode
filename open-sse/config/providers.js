@@ -103,6 +103,11 @@ export const PROVIDERS = {
     format: "openai",
     headers: {},
   },
+  notion: {
+    baseUrl: "https://www.notion.so/api/v3/runInferenceTranscript",
+    format: "openai",
+    headers: {},
+  },
   antigravity: {
     baseUrls: [
       "https://daily-cloudcode-pa.googleapis.com",

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { Card, Button, ModelSelectModal, ManualConfigModal } from "@/shared/components";
 import Image from "next/image";
 import BaseUrlSelect from "./BaseUrlSelect";
@@ -27,9 +27,20 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
   const [modelDisplayNames, setModelDisplayNames] = useState({});
   const [newModelBadges, setNewModelBadges] = useState({});
   const [activeModel, setActiveModel] = useState("");
+  const [sortKey, setSortKey] = useState("model"); // "model" | "displayName"
+  const [sortDir, setSortDir] = useState("asc"); // "asc" | "desc"
   const selectedModelsRef = useRef([]);
 
   const sortModels = (models) => ([...new Set(models)].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })));
+
+  const toggleSort = (key) => {
+    if (sortKey === key) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      setSortDir("asc");
+    }
+  };
 
   useEffect(() => {
     selectedModelsRef.current = selectedModels;
@@ -103,6 +114,30 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
   const setModelDisplayName = (model, value) => {
     setModelDisplayNames((prev) => ({ ...prev, [model]: value }));
   };
+
+  const sortedModels = useMemo(() => {
+    const arr = [...selectedModels];
+    const resolveDisplay = (m) => {
+      const dn = modelDisplayNames?.[m];
+      if (typeof dn === "string" && dn.trim()) return dn.trim();
+      const aliasName = modelAliases?.[m];
+      if (typeof aliasName === "string" && aliasName.trim()) return aliasName;
+      if (typeof m === "string" && m.includes("/")) {
+        const slash = m.indexOf("/");
+        const name = findModelName(m.slice(0, slash), m.slice(slash + 1));
+        if (name) return name;
+      }
+      return m;
+    };
+    const cmp = (a, b) => {
+      const av = sortKey === "displayName" ? resolveDisplay(a) : a;
+      const bv = sortKey === "displayName" ? resolveDisplay(b) : b;
+      return av.localeCompare(bv, undefined, { sensitivity: "base" });
+    };
+    arr.sort(cmp);
+    if (sortDir === "desc") arr.reverse();
+    return arr;
+  }, [selectedModels, sortKey, sortDir, modelDisplayNames, modelAliases]);
 
   const fetchModelAliases = async () => {
     try {
@@ -393,12 +428,32 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
                         {/* Table header */}
                         <div className="grid grid-cols-[auto_minmax(0,1fr)_minmax(0,1.2fr)_2rem] gap-2 px-3 py-2 border-b border-border bg-surface/60">
                           <span className="text-[11px] font-medium text-text-muted w-5"></span>
-                          <span className="text-[11px] font-medium text-text-muted">Model</span>
-                          <span className="text-[11px] font-medium text-text-muted">Display Name</span>
+                          <button
+                            type="button"
+                            onClick={() => toggleSort("model")}
+                            className="flex items-center gap-1 text-left text-[11px] font-medium text-text-muted hover:text-text-main transition-colors cursor-pointer"
+                            title={`Sort by Model ${sortKey === "model" && sortDir === "asc" ? "Z-A" : "A-Z"}`}
+                          >
+                            <span>Model</span>
+                            <span className="material-symbols-outlined text-[14px] leading-none">
+                              {sortKey === "model" ? (sortDir === "asc" ? "arrow_upward" : "arrow_downward") : "unfold_more"}
+                            </span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => toggleSort("displayName")}
+                            className="flex items-center gap-1 text-left text-[11px] font-medium text-text-muted hover:text-text-main transition-colors cursor-pointer"
+                            title={`Sort by Display Name ${sortKey === "displayName" && sortDir === "asc" ? "Z-A" : "A-Z"}`}
+                          >
+                            <span>Display Name</span>
+                            <span className="material-symbols-outlined text-[14px] leading-none">
+                              {sortKey === "displayName" ? (sortDir === "asc" ? "arrow_upward" : "arrow_downward") : "unfold_more"}
+                            </span>
+                          </button>
                           <span className="text-[11px] font-medium text-text-muted text-center"></span>
                         </div>
                         {/* Table rows */}
-                        {selectedModels.map((model) => (
+                        {sortedModels.map((model) => (
                           <div
                             key={model}
                             className={`grid grid-cols-[auto_minmax(0,1fr)_minmax(0,1.2fr)_2rem] gap-2 px-3 py-1.5 items-center border-b border-border last:border-b-0 transition-colors ${

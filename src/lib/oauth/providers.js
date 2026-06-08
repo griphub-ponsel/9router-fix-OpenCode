@@ -19,6 +19,7 @@ import {
   GEMINI_CONFIG,
   QWEN_CONFIG,
   QODER_CONFIG,
+  NOTION_CONFIG,
   IFLOW_CONFIG,
   ANTIGRAVITY_CONFIG,
   GITHUB_CONFIG,
@@ -65,8 +66,9 @@ export function extractCodexAccountInfo(idToken) {
   const payload = decodeJwtPayload(idToken);
   if (!payload) return {};
   const chatgpt = payload["https://api.openai.com/auth"] || {};
+  const profile = payload["https://api.openai.com/profile"] || {};
   return {
-    email: payload.email,
+    email: profile.email || payload.email || payload.preferred_username || undefined,
     chatgptAccountId: chatgpt.chatgpt_account_id || payload.account_id,
     chatgptPlanType: chatgpt.chatgpt_plan_type || payload.plan_type,
   };
@@ -180,7 +182,9 @@ const PROVIDERS = {
       const mapped = {
         accessToken: tokens.access_token,
         refreshToken: tokens.refresh_token,
+        idToken: tokens.id_token,
         expiresIn: tokens.expires_in,
+        lastRefreshAt: new Date().toISOString(),
       };
       if (info.email) mapped.email = info.email;
       if (info.chatgptAccountId || info.chatgptPlanType) {
@@ -631,6 +635,89 @@ const PROVIDERS = {
       refreshToken: tokens.refresh_token,
       expiresIn: tokens.expires_in,
       providerSpecificData: { resourceUrl: tokens.resource_url },
+    }),
+  },
+
+  notion: {
+    config: NOTION_CONFIG,
+    flowType: "authorization_code_pkce",
+    prepareConfig: async (config, meta = {}, redirectUri) => {
+      if (meta.clientId) return { ...config, clientId: meta.clientId };
+      if (!redirectUri) throw new Error("Missing redirect URI for Notion OAuth registration");
+
+      const response = await fetch(config.registrationUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({
+          redirect_uris: [redirectUri],
+          client_name: "9router",
+          grant_types: ["authorization_code", "refresh_token"],
+          response_types: ["code"],
+          token_endpoint_auth_method: "none",
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`Notion client registration failed: ${error}`);
+      }
+
+      const registration = await response.json();
+      if (!registration.client_id) throw new Error("Notion client registration did not return a client_id");
+      return { ...config, clientId: registration.client_id };
+    },
+    getAuthMeta: (config) => ({ clientId: config.clientId }),
+    buildAuthUrl: (config, redirectUri, state, codeChallenge) => {
+      const params = new URLSearchParams({
+        client_id: config.clientId,
+        response_type: "code",
+        redirect_uri: redirectUri,
+        code_challenge: codeChallenge,
+        code_challenge_method: config.codeChallengeMethod,
+        state,
+        resource: config.resource,
+      });
+      return `${config.authorizeUrl}?${params.toString()}`;
+    },
+    exchangeToken: async (config, code, redirectUri, codeVerifier) => {
+      const response = await fetch(config.tokenUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Accept: "application/json",
+        },
+        body: new URLSearchParams({
+          grant_type: "authorization_code",
+          client_id: config.clientId,
+          code,
+          redirect_uri: redirectUri,
+          code_verifier: codeVerifier,
+          resource: config.resource,
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`Notion token exchange failed: ${error}`);
+      }
+
+      return { ...(await response.json()), _clientId: config.clientId };
+    },
+    mapTokens: (tokens) => ({
+      accessToken: tokens.access_token,
+      refreshToken: tokens.refresh_token,
+      expiresIn: tokens.expires_in,
+      scope: tokens.scope,
+      displayName: "Notion Workspace",
+      providerSpecificData: {
+        authKind: "mcp-oauth",
+        clientId: tokens._clientId,
+        resource: NOTION_CONFIG.resource,
+        mcpUrl: NOTION_CONFIG.resource,
+      },
     }),
   },
 
@@ -1306,7 +1393,7 @@ export function getProviderNames() {
 export async function generateAuthData(providerName, redirectUri, meta) {
   const provider = getProvider(providerName);
   const config = provider.prepareConfig
-    ? await provider.prepareConfig(provider.config, meta || {})
+    ? await provider.prepareConfig(provider.config, meta || {}, redirectUri)
     : provider.config;
   const { codeVerifier, codeChallenge, state } = generatePKCE(provider.pkceVerifierBytes);
 
@@ -1326,6 +1413,7 @@ export async function generateAuthData(providerName, redirectUri, meta) {
     codeVerifier,
     codeChallenge,
     redirectUri,
+    authMeta: provider.getAuthMeta ? provider.getAuthMeta(config) : undefined,
     flowType: provider.flowType,
     fixedPort: provider.fixedPort,
     callbackPath: provider.callbackPath || "/callback",
@@ -1339,7 +1427,7 @@ export async function generateAuthData(providerName, redirectUri, meta) {
 export async function exchangeTokens(providerName, code, redirectUri, codeVerifier, state, meta) {
   const provider = getProvider(providerName);
   const config = provider.prepareConfig
-    ? await provider.prepareConfig(provider.config, meta || {})
+    ? await provider.prepareConfig(provider.config, meta || {}, redirectUri)
     : provider.config;
 
   const tokens = await provider.exchangeToken(config, code, redirectUri, codeVerifier, state, meta || {});

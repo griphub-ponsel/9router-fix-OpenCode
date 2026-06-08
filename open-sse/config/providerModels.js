@@ -113,6 +113,7 @@ export const PROVIDER_MODELS = {
     { id: "claude-sonnet-4.6", name: "Claude Sonnet 4.6" },
     { id: "claude-opus-4.6", name: "Claude Opus 4.6" },
     { id: "claude-opus-4.7", name: "Claude Opus 4.7" },
+    { id: "claude-opus-4.8", name: "Claude Opus 4.8", contextTokens: 1000000, maxOutputTokens: 32000 },
     // GitHub Copilot - Google models
     { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro" },
     { id: "gemini-3.5-flash", name: "Gemini 3.5 Flash" },
@@ -181,6 +182,18 @@ export const PROVIDER_MODELS = {
     { id: "gm51model", name: "GLM 5.1 (Qoder)" },
     { id: "kmodel", name: "Kimi K2.6 (Qoder)" },
     { id: "mmodel", name: "MiniMax M2.7 (Qoder)" },
+  ],
+  nt: [  // Notion AI subscription via Notion web session
+    { id: "claude-opus-4-8", name: "Claude Opus 4.8", upstreamModelId: "claude-opus4.8", contextTokens: 1000000, maxOutputTokens: 32000 },
+    { id: "claude-opus-4-7", name: "Claude Opus 4.7", upstreamModelId: "claude-opus4.7" },
+    { id: "claude-opus-4-6", name: "Claude Opus 4.6", upstreamModelId: "claude-opus4.6" },
+    { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", upstreamModelId: "claude-sonnet4.6" },
+    { id: "gpt-5.5", name: "GPT 5.5" },
+    { id: "gpt-5.4", name: "GPT 5.4" },
+    { id: "gpt-5.2", name: "GPT 5.2" },
+    { id: "gemini-3.1-pro", name: "Gemini 3.1 Pro", upstreamModelId: "gemini-3.1pro" },
+    { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash", upstreamModelId: "gemini-2.5flash" },
+    { id: "kimi-2.6", name: "Kimi 2.6" },
   ],
   cu: [  // Cursor IDE
     { id: "default", name: "Auto (Server Picks)" },
@@ -614,6 +627,7 @@ export const PROVIDER_MODELS = {
   ],
   // SuperGrok subscription via OAuth — official xAI Responses API
   "xai-oauth": [
+    { id: "grok-composer-2.5-fast", name: "Grok Composer 2.5 Fast" },
     { id: "grok-4.3", name: "Grok 4.3" },
     { id: "grok-4.20-0309-reasoning", name: "Grok 4.20 Reasoning" },
     { id: "grok-4.20-0309-non-reasoning", name: "Grok 4.20 (Non-reasoning)" },
@@ -924,6 +938,7 @@ const OAUTH_ALIASES = {
   vertex: "vertex",
   "vertex-partner": "vertex-partner",
   pioneer: "pn",
+  notion: "nt",
 };
 
 // Derived from PROVIDERS — no need to maintain manually
