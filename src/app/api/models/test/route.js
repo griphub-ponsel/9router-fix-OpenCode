@@ -89,11 +89,15 @@ export async function POST(request) {
     }
 
     // Default: chat completions
+    // NOTE: keep max_tokens small but > 1. Some models (esp. thinking-capable
+    // ones via GitHub Copilot) return HTTP 200 with an empty completion when
+    // max_tokens=1, which made this probe a false-negative even though the
+    // model works fine in real chats.
     const res = await fetch(`${baseUrl}/api/v1/chat/completions`, {
       method: "POST",
       headers,
       body: JSON.stringify(testChatBody(model)),
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(20000),
     });
     const latencyMs = Date.now() - start;
 
@@ -143,29 +147,24 @@ export async function POST(request) {
     }
 
     const hasChoices = Array.isArray(parsed?.choices) && parsed.choices.length > 0;
-    const choiceContent = parsed?.choices?.[0]?.message?.content;
-    const hasVisibleContent = typeof choiceContent === "string" && choiceContent.trim().length > 0;
-    const hasToolCalls = Array.isArray(parsed?.choices?.[0]?.message?.tool_calls)
-      && parsed.choices[0].message.tool_calls.length > 0;
-    if (!hasChoices) {
-      const out = parsed?.usage?.completion_tokens ?? parsed?.usage?.output_tokens ?? 0;
-      if (out > 0 || parsed?.status === "completed") {
-        return NextResponse.json({ ok: true, latencyMs, error: null, status: res.status });
-      }
+    // Treat any of these as proof the model responded: message content,
+    // reasoning content (thinking models can spend the whole budget on reasoning),
+    // tool calls, or usage accounting. Requiring non-empty `choices` text alone
+    // produced false-negatives for thinking models with a tiny max_tokens.
+    const choice = hasChoices ? parsed.choices[0] : null;
+    const message = choice?.message || choice?.delta || null;
+    const hasVisibleContent = typeof message?.content === "string" && message.content.trim().length > 0;
+    const hasReasoning = typeof message?.reasoning_content === "string" && message.reasoning_content.length > 0;
+    const hasToolCalls = Array.isArray(message?.tool_calls) && message.tool_calls.length > 0;
+    const completionTokens = parsed?.usage?.completion_tokens ?? parsed?.usage?.output_tokens ?? 0;
+    const hasUsage = completionTokens > 0 || parsed?.status === "completed";
+    const looksValid = hasVisibleContent || hasReasoning || hasToolCalls || hasUsage;
+    if (!looksValid) {
       return NextResponse.json({
         ok: false,
         latencyMs,
         status: res.status,
-        error: "Provider returned no completion choices for this model",
-      });
-    }
-    if (!hasVisibleContent && !hasToolCalls) {
-      const out = parsed?.usage?.completion_tokens ?? 0;
-      return NextResponse.json({
-        ok: false,
-        latencyMs,
-        status: res.status,
-        error: out > 0
+        error: completionTokens > 0
           ? "Model responded but returned empty text (try higher max_tokens or enable reasoning_effort)"
           : "Provider returned no completion choices for this model",
       });

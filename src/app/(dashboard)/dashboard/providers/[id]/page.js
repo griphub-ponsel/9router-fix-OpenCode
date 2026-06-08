@@ -46,6 +46,7 @@ export default function ProviderDetailPage() {
   const [modelsTestError, setModelsTestError] = useState("");
   const [testingModelId, setTestingModelId] = useState(null);
   const [showAddCustomModel, setShowAddCustomModel] = useState(false);
+  const [customRegisteredModels, setCustomRegisteredModels] = useState([]);
   const [selectedConnectionIds, setSelectedConnectionIds] = useState([]);
   const [bulkProxyPoolId, setBulkProxyPoolId] = useState("__none__");
   const [bulkUpdatingProxy, setBulkUpdatingProxy] = useState(false);
@@ -146,6 +147,12 @@ export default function ProviderDetailPage() {
   const providerDisplayAlias = isCompatible
     ? (providerNode?.prefix || providerId)
     : providerAlias;
+  const providerCustomModels = customRegisteredModels.filter((model) => (
+    model?.providerAlias === providerStorageAlias &&
+    model?.id &&
+    (!model.type || model.type === "llm")
+  ));
+  const providerCustomModelIds = new Set(providerCustomModels.map((model) => String(model.id)));
 
   const fetchDisabledModels = useCallback(async () => {
     try {
@@ -219,6 +226,16 @@ export default function ProviderDetailPage() {
       }
     } catch (error) {
       console.log("Error fetching aliases:", error);
+    }
+  }, []);
+
+  const fetchCustomModels = useCallback(async () => {
+    try {
+      const res = await fetch("/api/models/custom", { cache: "no-store" });
+      const data = await res.json();
+      if (res.ok) setCustomRegisteredModels(data.models || []);
+    } catch (error) {
+      console.log("Error fetching custom models:", error);
     }
   }, []);
 
@@ -372,8 +389,9 @@ export default function ProviderDetailPage() {
   useEffect(() => {
     fetchConnections();
     fetchAliases();
+    fetchCustomModels();
     fetchDisabledModels();
-  }, [fetchConnections, fetchAliases, fetchDisabledModels]);
+  }, [fetchConnections, fetchAliases, fetchCustomModels, fetchDisabledModels]);
 
   // Fetch suggested models from provider's public API (if configured)
   useEffect(() => {
@@ -415,6 +433,37 @@ export default function ProviderDetailPage() {
       }
     } catch (error) {
       console.log("Error deleting alias:", error);
+    }
+  };
+
+  const handleAddCustomModel = async (modelId, name) => {
+    try {
+      const res = await fetch("/api/models/custom", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ providerAlias: providerStorageAlias, id: modelId, type: "llm", name: name || undefined }),
+      });
+      if (res.ok) {
+        await fetchCustomModels();
+        return true;
+      }
+      const data = await res.json();
+      alert(data.error || "Failed to add custom model");
+      return false;
+    } catch (error) {
+      console.log("Error adding custom model:", error);
+      alert(error?.message || "Failed to add custom model");
+      return false;
+    }
+  };
+
+  const handleDeleteCustomModel = async (modelId) => {
+    try {
+      const params = new URLSearchParams({ providerAlias: providerStorageAlias, id: modelId, type: "llm" });
+      const res = await fetch(`/api/models/custom?${params.toString()}`, { method: "DELETE" });
+      if (res.ok) await fetchCustomModels();
+    } catch (error) {
+      console.log("Error deleting custom model:", error);
     }
   };
 
@@ -876,8 +925,15 @@ export default function ProviderDetailPage() {
     const disabledSet = new Set(disabledModelIds);
     const displayModels = allModels.filter((m) => !disabledSet.has(m.id));
     const disabledDisplayModels = allModels.filter((m) => disabledSet.has(m.id));
-    // Custom models added by user (stored as aliases: modelId → providerAlias/modelId)
-    const customModels = Object.entries(modelAliases)
+    const registeredCustomModels = providerCustomModels
+      .filter((model) => !allModels.some((m) => m.id === String(model.id)))
+      .map((model) => ({
+        id: String(model.id),
+        name: model.name,
+        source: "custom",
+      }));
+    // Legacy custom models added as aliases: alias -> providerAlias/modelId
+    const aliasCustomModels = Object.entries(modelAliases)
       .filter(([alias, fullModel]) => {
         const prefix = `${providerStorageAlias}/`;
         if (!fullModel.startsWith(prefix)) return false;
@@ -885,14 +941,24 @@ export default function ProviderDetailPage() {
         // Only show if not already in hardcoded list
         // For passthroughModels, include all aliases (model IDs may contain slashes like "anthropic/claude-3")
         if (providerInfo.passthroughModels) return !models.some((m) => m.id === modelId);
-        // Alias may differ from modelId when the default alias is taken (e.g. gh-claude-opus-4.8 vs claude-opus-4.8 for Kiro)
-        return !models.some((m) => m.id === modelId);
+        if (models.some((m) => m.id === modelId)) return false;
+        // Accept "Add Model" aliases, including AddCustomModelModal collision fallbacks
+        return (
+          alias === modelId ||
+          alias === `${providerStorageAlias}-${modelId}` ||
+          alias === `${providerStorageAlias}/${modelId}`
+        );
       })
       .map(([alias, fullModel]) => ({
         id: fullModel.slice(`${providerStorageAlias}/`.length),
         alias,
         fullModel,
-      }));
+        source: "alias",
+      }))
+      // Dedupe by model id (multiple aliases may map to same model and cause React key collision)
+      .filter((m, i, arr) => arr.findIndex((x) => x.id === m.id) === i);
+    const customModels = [...registeredCustomModels, ...aliasCustomModels]
+      .filter((m, i, arr) => arr.findIndex((x) => x.id === m.id) === i);
 
     return (
       <div className="flex flex-wrap gap-3">
@@ -900,13 +966,13 @@ export default function ProviderDetailPage() {
         {customModels.map((model) => (
           <ModelRow
             key={model.id}
-            model={{ id: model.id }}
+            model={{ id: model.id, name: model.name }}
             fullModel={`${providerDisplayAlias}/${model.id}`}
             alias={model.alias}
             copied={copied}
             onCopy={copy}
             onSetAlias={() => {}}
-            onDeleteAlias={() => handleDeleteAlias(model.alias)}
+            onDeleteAlias={() => model.source === "alias" ? handleDeleteAlias(model.alias) : handleDeleteCustomModel(model.id)}
             testStatus={modelTestResults[model.id]}
             onTest={connections.length > 0 || isFreeNoAuth ? () => handleTestModel(model.id) : undefined}
             isTesting={testingModelId === model.id}
@@ -953,8 +1019,9 @@ export default function ProviderDetailPage() {
         {suggestedModels.length > 0 && (() => {
           const addedFullModels = new Set(Object.values(modelAliases));
           const hardcodedIds = new Set(models.map((m) => m.id));
+          const registeredIds = providerCustomModelIds;
           const notAdded = suggestedModels.filter(
-            (m) => !addedFullModels.has(`${providerStorageAlias}/${m.id}`) && !hardcodedIds.has(m.id)
+            (m) => !addedFullModels.has(`${providerStorageAlias}/${m.id}`) && !hardcodedIds.has(m.id) && !registeredIds.has(m.id)
           );
           if (notAdded.length === 0) return null;
           return (
@@ -965,8 +1032,7 @@ export default function ProviderDetailPage() {
                   <button
                     key={m.id}
                     onClick={async () => {
-                      const alias = m.id.split("/").pop();
-                      await handleSetAlias(m.id, alias, providerStorageAlias);
+                      await handleAddCustomModel(m.id, m.name || m.id);
                     }}
                     className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-black/10 dark:border-white/10 text-xs text-text-muted hover:text-primary hover:border-primary/40 hover:bg-primary/5 transition-colors"
                     title={`${m.name} · ${(m.contextLength / 1000).toFixed(0)}k ctx`}
@@ -1531,10 +1597,15 @@ export default function ProviderDetailPage() {
         <AddCustomModelModal
           isOpen={showAddCustomModel}
           providerAlias={providerStorageAlias}
-          providerDisplayAlias={providerDisplayAlias}
-          modelAliases={modelAliases}
-          onSave={async (modelId, alias) => {
-            const saved = await handleSetAlias(modelId, alias, providerStorageAlias);
+          existingModelIds={[
+            ...models.map((model) => model.id),
+            ...providerCustomModelIds,
+            ...Object.values(modelAliases)
+              .filter((fullModel) => typeof fullModel === "string" && fullModel.startsWith(`${providerStorageAlias}/`))
+              .map((fullModel) => fullModel.slice(`${providerStorageAlias}/`.length)),
+          ]}
+          onSave={async (modelId, name) => {
+            const saved = await handleAddCustomModel(modelId, name);
             if (saved) setShowAddCustomModel(false);
             return saved;
           }}
