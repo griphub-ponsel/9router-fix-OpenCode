@@ -5,7 +5,9 @@ const DEFAULT_EFFORTS = ["low", "medium", "high"];
 function supportsReasoningVariants(id) {
   const model = String(id || "").toLowerCase();
   if (/embedding|image|tts|stt/.test(model)) return false;
-  return /claude|deepseek|gpt-|grok|kimi|mimo|qwen|glm|minimax|gemini/.test(model);
+  // Only models with configurable reasoning_effort support
+  // Qwen, GLM, Minimax, Kimi have always-on thinking (not configurable)
+  return /claude|deepseek|gpt-|grok|gemini/.test(model);
 }
 
 function reasoningEffortsForModel(id) {
