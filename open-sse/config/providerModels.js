@@ -26,6 +26,26 @@ function withCodexReviewModels(models) {
   });
 }
 
+const OPENCODE_GO_MODELS = [
+  { id: "kimi-k2.6", name: "Kimi K2.6", contextTokens: 262144, maxOutputTokens: 65536 },
+  { id: "kimi-k2.5", name: "Kimi K2.5", contextTokens: 262144, maxOutputTokens: 65536 },
+  { id: "glm-5.1", name: "GLM 5.1", contextTokens: 1000000, maxOutputTokens: 65536 },
+  { id: "glm-5", name: "GLM 5", contextTokens: 1000000, maxOutputTokens: 65536 },
+  { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro", contextTokens: 262144, maxOutputTokens: 65536 },
+  { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash", contextTokens: 262144, maxOutputTokens: 65536 },
+  { id: "mimo-v2.5-pro", name: "MiMo V2.5 Pro", contextTokens: 1048576, maxOutputTokens: 65536 },
+  { id: "mimo-v2.5", name: "MiMo V2.5", contextTokens: 1048576, maxOutputTokens: 65536 },
+  { id: "minimax-m3", name: "MiniMax M3", targetFormat: "claude", contextTokens: 262144, maxOutputTokens: 131072 },
+  { id: "minimax-m2.7", name: "MiniMax M2.7", targetFormat: "claude", contextTokens: 204800, maxOutputTokens: 131072 },
+  { id: "minimax-m2.5", name: "MiniMax M2.5", targetFormat: "claude", contextTokens: 204800, maxOutputTokens: 131072 },
+  { id: "qwen3.7-max", name: "Qwen 3.7 Max", targetFormat: "claude", contextTokens: 1000000, maxOutputTokens: 65536 },
+  { id: "qwen3.7-plus", name: "Qwen 3.7 Plus", targetFormat: "claude", contextTokens: 1000000, maxOutputTokens: 65536 },
+  { id: "qwen3.6-plus", name: "Qwen 3.6 Plus", targetFormat: "claude", contextTokens: 1000000, maxOutputTokens: 32768 },
+  { id: "qwen3.5-plus", name: "Qwen 3.5 Plus", targetFormat: "claude", contextTokens: 1000000, maxOutputTokens: 32768 },
+  { id: "mimo-v2-pro", name: "MiMo V2 Pro", contextTokens: 1048576, maxOutputTokens: 65536 },
+  { id: "mimo-v2-omni", name: "MiMo V2 Omni", contextTokens: 1048576, maxOutputTokens: 65536 },
+];
+
 export const PROVIDER_MODELS = {
   // OAuth Providers (using alias)
   cc: [  // Claude Code
@@ -228,21 +248,8 @@ export const PROVIDER_MODELS = {
     { id: "deepseek/deepseek-chat", name: "DeepSeek Chat" },
     { id: "deepseek/deepseek-reasoner", name: "DeepSeek Reasoner" },
   ],
-  "opencode-go": [  // OpenCode Go subscription (API key)
-    { id: "kimi-k2.6", name: "Kimi K2.6", contextTokens: 262144, maxOutputTokens: 65536 },
-    { id: "kimi-k2.5", name: "Kimi K2.5", contextTokens: 262144, maxOutputTokens: 65536 },
-    { id: "glm-5.1", name: "GLM 5.1", contextTokens: 1000000, maxOutputTokens: 65536 },
-    { id: "glm-5", name: "GLM 5" },
-    { id: "qwen3.5-plus", name: "Qwen 3.5 Plus", targetFormat: "claude", contextTokens: 1000000, maxOutputTokens: 32768 },
-    { id: "qwen3.6-plus", name: "Qwen 3.6 Plus", targetFormat: "claude", contextTokens: 1000000, maxOutputTokens: 32768 },
-    { id: "qwen3.7-max", name: "Qwen 3.7 Max", targetFormat: "claude", contextTokens: 1000000, maxOutputTokens: 65536 },
-    { id: "mimo-v2-pro", name: "MiMo V2 Pro", contextTokens: 1048576, maxOutputTokens: 65536 },
-    { id: "mimo-v2-omni", name: "MiMo V2 Omni", contextTokens: 1048576, maxOutputTokens: 65536 },
-    { id: "minimax-m2.7", name: "MiniMax M2.7", targetFormat: "claude", contextTokens: 204800, maxOutputTokens: 131072 },
-    { id: "minimax-m2.5", name: "MiniMax M2.5", targetFormat: "claude", contextTokens: 204800, maxOutputTokens: 131072 },
-    { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro", contextTokens: 262144, maxOutputTokens: 65536 },
-    { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash", contextTokens: 262144, maxOutputTokens: 65536 },
-  ],
+  ocg: OPENCODE_GO_MODELS,  // OpenCode Go subscription (API key)
+  "opencode-go": OPENCODE_GO_MODELS,
   oc: [  // OpenCode
     // { id: "nemotron-3-super-free", name: "Nemotron 3 Super" },
     // { id: "qwen3.6-plus-free", name: "Qwen 3.6 Plus" },

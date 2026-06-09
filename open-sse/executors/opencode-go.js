@@ -4,6 +4,9 @@ import { injectReasoningContent } from "../utils/reasoningContentInjector.js";
 
 // Models that use /zen/go/v1/messages (Anthropic/Claude format + x-api-key auth)
 const CLAUDE_FORMAT_MODELS = new Set([
+  "minimax-m3",
+  "minimax-m2.7",
+  "minimax-m2.5",
   "qwen3.5-plus",
   "qwen3.6-plus",
   "qwen3.7-max",

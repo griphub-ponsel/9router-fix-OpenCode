@@ -509,7 +509,7 @@ export async function POST(request) {
             method: "POST",
             headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
             body: JSON.stringify({
-              model: getDefaultModel("opencode-go"),
+              model: "deepseek-v4-flash",
               messages: [{ role: "user", content: "ping" }],
               max_tokens: 1,
               stream: false,
