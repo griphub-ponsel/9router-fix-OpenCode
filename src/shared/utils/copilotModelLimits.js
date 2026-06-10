@@ -7,9 +7,9 @@ const EXACT_LIMITS = {
   "gemini-3.1-pro": { contextTokens: 1048576, maxOutputTokens: 65536, reasoningEfforts: ["low", "medium", "high"] },
   "gemini-3.5-flash": { contextTokens: 1048576, maxOutputTokens: 65536, reasoningEfforts: ["low", "medium", "high"] },
   "claude-haiku-4.5": { contextTokens: 200000, maxOutputTokens: 32000, reasoningEfforts: ["low", "medium", "high"] },
-  "claude-opus-4.6": { contextTokens: 1000000, maxOutputTokens: 32000, reasoningEfforts: ["low", "medium", "high"] },
-  "claude-opus-4.7": { contextTokens: 1000000, maxOutputTokens: 32000, reasoningEfforts: ["low", "medium", "high"] },
-  "claude-opus-4.8": { contextTokens: 1000000, maxOutputTokens: 32000, reasoningEfforts: ["low", "medium", "high"] },
+  "claude-opus-4.6": { contextTokens: 1000000, maxOutputTokens: 32000, reasoningEfforts: ["low", "medium", "high", "xhigh"] },
+  "claude-opus-4.7": { contextTokens: 1000000, maxOutputTokens: 32000, reasoningEfforts: ["low", "medium", "high", "xhigh"] },
+  "claude-opus-4.8": { contextTokens: 1000000, maxOutputTokens: 32000, reasoningEfforts: ["low", "medium", "high", "xhigh"] },
   "claude-sonnet-4.6": { contextTokens: 1000000, maxOutputTokens: 32000, reasoningEfforts: ["low", "medium", "high"] },
   "deepseek-v4-flash": { contextTokens: 262144, maxOutputTokens: 65536, reasoningEfforts: ["low", "medium", "high"] },
   "deepseek-v4-pro": { contextTokens: 262144, maxOutputTokens: 65536, reasoningEfforts: ["low", "medium", "high"] },
@@ -39,7 +39,11 @@ const EXACT_LIMITS = {
 function normalizeModelId(id) {
   const raw = String(id || "").toLowerCase();
   const model = raw.includes("/") ? raw.slice(raw.indexOf("/") + 1) : raw;
-  return model
+  const normalizedVersionModel = model.replace(
+    /^(claude-(?:opus|sonnet|haiku)-\d)-(?=\d+$)(\d+)$/,
+    "$1.$2"
+  );
+  return normalizedVersionModel
     .replace(/-high-combo$/, "")
     .replace(/-combo$/, "")
     .replace(/-high$/, "")
