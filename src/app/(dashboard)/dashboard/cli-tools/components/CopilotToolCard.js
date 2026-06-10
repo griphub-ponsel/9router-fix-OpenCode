@@ -7,7 +7,8 @@ import BaseUrlSelect from "./BaseUrlSelect";
 import ApiKeySelect from "./ApiKeySelect";
 import { matchKnownEndpoint } from "./cliEndpointMatch";
 import { findModelName } from "@/shared/constants/models";
-import { getCopilotModelLimits } from "@/shared/utils/copilotModelLimits";
+import { formatCopilotContextSize, getCopilotContextSizeOptions, getCopilotContextTokens, getCopilotModelLimits } from "@/shared/utils/copilotModelLimits";
+import { supportsCopilotVision } from "@/shared/utils/copilotModelCapabilities";
 import { expandCopilotReasoningVariants } from "@/shared/utils/copilotReasoningVariants";
 
 export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, apiKeys, activeProviders, cloudEnabled, initialStatus, tunnelEnabled, tunnelPublicUrl, tailscaleEnabled, tailscaleUrl }) {
@@ -22,6 +23,7 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
   const [showManualConfigModal, setShowManualConfigModal] = useState(false);
   const [selectedModels, setSelectedModels] = useState([]);
   const [modelDisplayNames, setModelDisplayNames] = useState({});
+  const [modelContextSizes, setModelContextSizes] = useState({});
   const [newModelBadges, setNewModelBadges] = useState({});
   const [modalOpen, setModalOpen] = useState(false);
   const [sortKey, setSortKey] = useState("model"); // "model" | "displayName"
@@ -37,12 +39,6 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
       setSortKey(key);
       setSortDir("asc");
     }
-  };
-
-  const supportsVision = (id) => {
-    const normalized = String(id || "").toLowerCase();
-    if (/embedding|coder|deepseek|kimi-k2|mimo-v2-pro/.test(normalized)) return false;
-    return /claude|gemini|gpt-4o|\bvl\b|vision|omni|grok-4/.test(normalized);
   };
 
   const getDefaultModelName = (model) => {
@@ -67,8 +63,23 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
     Object.fromEntries(models.map((model) => [model, getModelDisplayName(model)]))
   );
 
+  const getSelectedModelContextSizes = (models = selectedModels) => (
+    Object.fromEntries(models
+      .filter((model) => Number(modelContextSizes[model]) > 0)
+      .map((model) => [model, Number(modelContextSizes[model])]))
+  );
+
   const setModelDisplayName = (model, value) => {
     setModelDisplayNames((prev) => ({ ...prev, [model]: value }));
+  };
+
+  const setModelContextSize = (model, value) => {
+    setModelContextSizes((prev) => {
+      const next = { ...prev };
+      if (value === "auto") delete next[model];
+      else next[model] = Number(value);
+      return next;
+    });
   };
 
   const sortedModels = useMemo(() => {
@@ -131,6 +142,16 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
           });
           return next;
         });
+        setModelContextSizes((prev) => {
+          const next = { ...prev };
+          entry.models.forEach((model) => {
+            const configured = Number(model.maxInputTokens) + Number(model.maxOutputTokens);
+            const defaultContext = getCopilotContextTokens(model.id);
+            if (configured > 0 && configured !== defaultContext) next[model.id] = configured;
+            else delete next[model.id];
+          });
+          return next;
+        });
       }
     }
   }, [status, modelAliases]);
@@ -153,7 +174,7 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
       await fetch("/api/cli-tools/copilot-settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ baseUrl: getEffectiveBaseUrl(), apiKey: keyToUse, models, modelNames: getSelectedModelNames(models) }),
+        body: JSON.stringify({ baseUrl: getEffectiveBaseUrl(), apiKey: keyToUse, models, modelNames: getSelectedModelNames(models), modelContextSizes: getSelectedModelContextSizes(models) }),
       });
     } catch (error) {
       console.log("Error saving models:", error);
@@ -179,6 +200,11 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
   const removeModel = (id) => {
     setSelectedModels((prev) => sortModels(prev.filter((m) => m !== id)));
     setModelDisplayNames((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    setModelContextSizes((prev) => {
       const next = { ...prev };
       delete next[id];
       return next;
@@ -214,7 +240,7 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
       const res = await fetch("/api/cli-tools/copilot-settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ baseUrl: getEffectiveBaseUrl(), apiKey: keyToUse, models: selectedModels, modelNames: getSelectedModelNames() }),
+        body: JSON.stringify({ baseUrl: getEffectiveBaseUrl(), apiKey: keyToUse, models: selectedModels, modelNames: getSelectedModelNames(), modelContextSizes: getSelectedModelContextSizes() }),
       });
       const data = await res.json();
       if (res.ok) {
@@ -240,6 +266,7 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
         setMessage({ type: "success", text: "Settings reset successfully!" });
         setSelectedModels([]);
         setModelDisplayNames({});
+        setModelContextSizes({});
         setNewModelBadges({});
         checkStatus();
       } else {
@@ -262,8 +289,8 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
       id, name: getModelDisplayName(id),
       url: `${effectiveBaseUrl}/chat/completions`,
       apiType: "chat-completions",
-      toolCalling: true, vision: supportsVision(id),
-      ...getCopilotModelLimits(id),
+      toolCalling: true, vision: supportsCopilotVision(id),
+      ...getCopilotModelLimits(id, modelContextSizes[id]),
     })));
 
     return [{
@@ -352,7 +379,7 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
                       </div>
                     ) : (
                       <div className="rounded border border-border bg-surface/40 overflow-hidden">
-                        <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_4rem_2rem] gap-2 px-3 py-2 border-b border-border bg-surface/60">
+                        <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_6rem_4rem_2rem] gap-2 px-3 py-2 border-b border-border bg-surface/60">
                           <button
                             type="button"
                             onClick={() => toggleSort("model")}
@@ -375,11 +402,12 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
                               {sortKey === "displayName" ? (sortDir === "asc" ? "arrow_upward" : "arrow_downward") : "unfold_more"}
                             </span>
                           </button>
+                          <span className="text-[11px] font-medium text-text-muted text-center">Context</span>
                           <span className="text-[11px] font-medium text-text-muted text-center">Vision</span>
                           <span className="text-[11px] font-medium text-text-muted text-center"></span>
                         </div>
                         {sortedModels.map((model) => (
-                          <div key={model} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_4rem_2rem] gap-2 px-3 py-1.5 items-center border-b border-border last:border-b-0 hover:bg-surface/80 transition-colors">
+                          <div key={model} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_6rem_4rem_2rem] gap-2 px-3 py-1.5 items-center border-b border-border last:border-b-0 hover:bg-surface/80 transition-colors">
                             <span className="flex min-w-0 items-center gap-1.5" title={model}>
                               <span className="truncate text-xs text-text-main">{model}</span>
                               {newModelBadges[model] && (
@@ -395,8 +423,19 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
                               placeholder={getDefaultModelName(model)}
                               className="w-full min-w-0 rounded border border-border bg-surface px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-primary/50"
                             />
-                            <span className={`justify-self-center rounded px-1.5 py-0.5 text-[10px] font-medium ${supportsVision(model) ? "bg-green-500/10 text-green-600 dark:text-green-400" : "bg-gray-500/10 text-text-muted"}`}>
-                              {supportsVision(model) ? "Yes" : "No"}
+                            <select
+                              value={modelContextSizes[model] || "auto"}
+                              onChange={(e) => setModelContextSize(model, e.target.value)}
+                              className="w-full rounded border border-border bg-surface px-1.5 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-primary/50"
+                              title="Advertised context size in Copilot"
+                            >
+                              <option value="auto">Auto ({formatCopilotContextSize(getCopilotContextTokens(model))})</option>
+                              {getCopilotContextSizeOptions(model, modelContextSizes[model])
+                                .filter((option) => option.value !== getCopilotContextTokens(model))
+                                .map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                            </select>
+                            <span className={`justify-self-center rounded px-1.5 py-0.5 text-[10px] font-medium ${supportsCopilotVision(model) ? "bg-green-500/10 text-green-600 dark:text-green-400" : "bg-gray-500/10 text-text-muted"}`}>
+                              {supportsCopilotVision(model) ? "Yes" : "No"}
                             </span>
                             <button
                               onClick={() => removeModel(model)}

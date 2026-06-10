@@ -4,8 +4,9 @@ import { NextResponse } from "next/server";
 import fs from "fs/promises";
 import path from "path";
 import os from "os";
-import { findModelName, getModelStrip } from "open-sse/config/providerModels.js";
+import { findModelName } from "open-sse/config/providerModels.js";
 import { getCopilotModelLimits } from "@/shared/utils/copilotModelLimits.js";
+import { supportsCopilotVision } from "@/shared/utils/copilotModelCapabilities.js";
 import { expandCopilotReasoningVariants } from "@/shared/utils/copilotReasoningVariants.js";
 
 // Resolve chatLanguageModels.json path per OS
@@ -48,15 +49,6 @@ const getModelParts = (id) => {
   return { alias: id.slice(0, slash), modelId: id.slice(slash + 1) };
 };
 
-const supportsVision = (id) => {
-  const { alias, modelId } = getModelParts(id);
-  if (alias && getModelStrip(alias, modelId).includes("image")) return false;
-
-  const normalized = `${alias}/${modelId}`.toLowerCase();
-  if (/embedding|coder|deepseek|kimi-k2|mimo-v2-pro/.test(normalized)) return false;
-  return /claude|gemini|gpt-4o|\bvl\b|vision|omni|grok-4/.test(normalized);
-};
-
 const resolveModelDisplayName = (id, modelNames = {}) => {
   const requested = typeof modelNames?.[id] === "string" ? modelNames[id].trim() : "";
   if (requested) return requested;
@@ -92,7 +84,7 @@ export async function GET() {
 // POST - Apply 9Router config to chatLanguageModels.json
 export async function POST(request) {
   try {
-    const { baseUrl, apiKey, models, modelNames = {} } = await request.json();
+    const { baseUrl, apiKey, models, modelNames = {}, modelContextSizes = {} } = await request.json();
 
     if (!baseUrl || !models?.length) {
       return NextResponse.json({ error: "baseUrl and models are required" }, { status: 400 });
@@ -118,8 +110,8 @@ export async function POST(request) {
       url: endpointUrl,
       apiType: "chat-completions",
       toolCalling: true,
-      vision: supportsVision(id),
-      ...getCopilotModelLimits(id),
+      vision: supportsCopilotVision(id),
+      ...getCopilotModelLimits(id, modelContextSizes?.[id]),
     }));
 
     const newEntry = {
