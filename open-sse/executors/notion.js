@@ -920,6 +920,22 @@ export class NotionExecutor extends BaseExecutor {
     super("notion", PROVIDERS.notion);
   }
 
+  parseError(response, bodyText) {
+    try {
+      const data = JSON.parse(bodyText || "{}");
+      const code = data?.error?.code || data?.error?.subType || data?.code;
+      if (code === "trust-rule-denied") {
+        return {
+          status: 403,
+          message: "Notion AI inference is not allowed for this workspace/account. Check Notion AI access, workspace trust rules, and whether the selected workspace has AI enabled.",
+        };
+      }
+      const message = data?.error?.message || data?.message;
+      if (message) return { status: response.status, message };
+    } catch { }
+    return { status: response.status, message: bodyText || `Notion AI returned HTTP ${response.status}` };
+  }
+
   async execute({ model, body, stream, credentials, signal, log, proxyOptions = null }) {
     let account;
     try {
