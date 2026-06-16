@@ -11,10 +11,13 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
   const NONE_PROXY_POOL_VALUE = "__none__";
   const isOllamaLocal = provider === "ollama-local";
   const isCookie = authType === "cookie";
+  const isNotionSession = provider === "notion";
   const isXaiApiKey = provider === "xai" && !isCookie;
-  const credentialLabel = isCookie ? "Cookie Value" : "API Key";
+  const credentialLabel = isNotionSession ? "Full Cookie Header" : isCookie ? "Cookie Value" : "API Key";
   const credentialPlaceholder = isCookie
     ? (provider === "grok-web" ? "sso=xxxxx... or just the raw value" : "eyJhbGciOi...")
+    : isNotionSession
+    ? "token_v2=...; notion_user_id=...; ..."
     : (isXaiApiKey ? "xai-..." : "");
 
   const isAzure = provider === "azure";
@@ -40,6 +43,7 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
   const [region, setRegion] = useState(defaultRegion);
   const [validating, setValidating] = useState(false);
   const [validationResult, setValidationResult] = useState(null);
+  const [validatedProviderData, setValidatedProviderData] = useState(null);
   const [saving, setSaving] = useState(false);
   const [mode, setMode] = useState("single"); // "single" | "bulk"
   const [bulkText, setBulkText] = useState("");
@@ -63,6 +67,12 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
     if (providerRegions && region) {
       return { region };
     }
+    if (isNotionSession && formData.apiKey.trim()) {
+      return {
+        ...(validatedProviderData || {}),
+        fullCookie: formData.apiKey.trim(),
+      };
+    }
     return undefined;
   };
 
@@ -76,8 +86,10 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
       });
       const data = await res.json();
       setValidationResult(data.valid ? "success" : "failed");
+      setValidatedProviderData(data.valid ? (data.providerSpecificData || null) : null);
     } catch {
       setValidationResult("failed");
+      setValidatedProviderData(null);
     } finally {
       setValidating(false);
     }
@@ -86,7 +98,7 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
   const handleSubmit = async () => {
     if (!provider) return;
     if (!isOllamaLocal && !formData.apiKey) return;
-    if (!isOllamaLocal) {
+    if (!isOllamaLocal && !isNotionSession) {
       // Non-ollama providers require a name
       if (!formData.name) return;
     }
@@ -95,31 +107,40 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
     setSaving(true);
     try {
       let isValid = false;
+      let providerSpecificDataForSave = buildProviderSpecificData();
       try {
         setValidating(true);
         setValidationResult(null);
         const res = await fetch("/api/providers/validate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ provider, apiKey: formData.apiKey, providerSpecificData: buildProviderSpecificData() }),
+          body: JSON.stringify({ provider, apiKey: formData.apiKey, providerSpecificData: providerSpecificDataForSave }),
         });
         const data = await res.json();
         isValid = !!data.valid;
         setValidationResult(isValid ? "success" : "failed");
+        setValidatedProviderData(isValid ? (data.providerSpecificData || null) : null);
+        if (isValid && data.providerSpecificData) {
+          providerSpecificDataForSave = {
+            ...data.providerSpecificData,
+            ...(isNotionSession ? { fullCookie: formData.apiKey.trim() } : {}),
+          };
+        }
       } catch {
         setValidationResult("failed");
+        setValidatedProviderData(null);
       } finally {
         setValidating(false);
       }
 
       await onSave({
-        name: formData.name || (isOllamaLocal ? "Ollama Local" : ""),
+        name: formData.name || (isOllamaLocal ? "Ollama Local" : isNotionSession ? "Notion AI Session" : ""),
         apiKey: formData.apiKey,
         defaultModel: isCompatible ? formData.defaultModel.trim() : undefined,
         priority: formData.priority,
         proxyPoolId: formData.proxyPoolId === NONE_PROXY_POOL_VALUE ? null : formData.proxyPoolId,
         testStatus: isValid ? "active" : "unknown",
-        providerSpecificData: buildProviderSpecificData()
+        providerSpecificData: providerSpecificDataForSave
       });
     } finally {
       setSaving(false);
@@ -233,6 +254,13 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
           <p className="text-xs text-text-muted">
             Use a direct xAI API key from console.x.ai. This is separate from Grok Build OAuth.
           </p>
+        )}
+        {isNotionSession && (
+          <div className="rounded-lg border border-accent/20 bg-sidebar/50 p-3 text-xs text-text-muted">
+            <p className="mb-2">Open notion.so, press F12, open Console, then run:</p>
+            <code className="block rounded bg-bg px-2 py-1 font-mono text-[11px] text-text-main">copy(document.cookie)</code>
+            <p className="mt-2">Paste the copied value here. If it does not contain token_v2, use Network, filter loadUserContent, open Request Headers, then copy the Cookie header.</p>
+          </div>
         )}
         {isCookie && authHint && (
           <p className="text-xs text-text-muted">
