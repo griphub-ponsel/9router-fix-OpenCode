@@ -44,6 +44,12 @@ export class OpenCodeGoExecutor extends BaseExecutor {
   }
 
   transformRequest(model, body) {
-    return injectReasoningContent({ provider: this.provider, model, body });
+    const transformed = injectReasoningContent({ provider: this.provider, model, body });
+    // Moonshot AI (Kimi) only allows temperature=1 and top_p=0.95 for kimi-k2.7-code
+    if (model === "kimi-k2.7-code" && transformed) {
+      transformed.temperature = 1;
+      transformed.top_p = 0.95;
+    }
+    return transformed;
   }
 }
