@@ -24,6 +24,11 @@ function getConnectionQuotaRemaining(connection, quotaData) {
   return Number.POSITIVE_INFINITY;
 }
 
+function getCodexResetCreditCount(quota) {
+  const value = quota?.raw?.resetCredits?.availableCount;
+  return Number.isFinite(Number(value)) ? Number(value) : 0;
+}
+
 function sortVisibleConnections(
   connections,
   quotaData,
@@ -243,6 +248,7 @@ export default function ProviderLimits() {
   const [expiringFirst, setExpiringFirst] = useState(false);
   const [providerMenuOpen, setProviderMenuOpen] = useState(false);
   const [bulkToggling, setBulkToggling] = useState(false);
+  const [resettingCodexId, setResettingCodexId] = useState(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(CONNECTIONS_PAGE_SIZE);
   const [customPageSizeInput, setCustomPageSizeInput] = useState(
@@ -389,6 +395,35 @@ export default function ProviderLimits() {
     },
     [fetchQuota],
   );
+
+  const handleCodexResetCredit = useCallback(async (connectionId) => {
+    if (resettingCodexId) return;
+    if (!confirm("Spend 1 Codex reset credit to reset the current rate limit window?")) return;
+
+    setResettingCodexId(connectionId);
+    setErrors((prev) => ({ ...prev, [connectionId]: null }));
+    try {
+      const response = await fetch(`/api/usage/${connectionId}/codex-reset-credit`, {
+        method: "POST",
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || (!data.ok && !data.noCredit)) {
+        throw new Error(data.error || data.message || "Failed to reset Codex quota");
+      }
+      if (data.noCredit) {
+        throw new Error("No Codex reset credits available");
+      }
+      await fetchQuota(connectionId, "codex");
+      setLastUpdated(new Date());
+    } catch (error) {
+      setErrors((prev) => ({
+        ...prev,
+        [connectionId]: error.message || "Failed to reset Codex quota",
+      }));
+    } finally {
+      setResettingCodexId(null);
+    }
+  }, [fetchQuota, resettingCodexId]);
 
   const handleDeleteConnection = useCallback(
     async (id) => {
@@ -971,10 +1006,12 @@ export default function ProviderLimits() {
           const quota = quotaData[conn.id];
           const isLoading = loading[conn.id];
           const error = errors[conn.id];
+          const resetCreditCount = getCodexResetCreditCount(quota);
 
           // Use table layout for all providers
           const isInactive = conn.isActive === false;
           const rowBusy = deletingId === conn.id || togglingId === conn.id;
+          const resetCreditBusy = resettingCodexId === conn.id;
 
           return (
             <Card
@@ -1023,6 +1060,23 @@ export default function ProviderLimits() {
                         refresh
                       </span>
                     </button>
+                    {conn.provider === "codex" && resetCreditCount > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => handleCodexResetCredit(conn.id)}
+                        disabled={isLoading || rowBusy || resetCreditBusy}
+                        aria-label="Reset Codex quota"
+                        className="flex items-center gap-1 rounded-lg border border-amber-500/30 px-1.5 py-1 text-[10px] text-amber-600 transition-colors hover:bg-amber-500/10 disabled:opacity-50 dark:text-amber-400"
+                        title={`Spend 1 Codex reset credit (${resetCreditCount} available)`}
+                      >
+                        <span
+                          className={`material-symbols-outlined text-[15px] ${resetCreditBusy ? "animate-spin" : ""}`}
+                        >
+                          {resetCreditBusy ? "progress_activity" : "restart_alt"}
+                        </span>
+                        <span>{resetCreditCount}</span>
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => {
