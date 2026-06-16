@@ -70,7 +70,7 @@ function getTextContent(content) {
   }).filter(Boolean).join("\n");
 }
 
-function buildTranscript(messages = [], model, account) {
+function buildTranscript(messages = [], model, account, tools = []) {
   const notionModel = normalizeModel(model);
   const threadType = getThreadType(notionModel);
   const now = new Date().toISOString();
@@ -98,6 +98,31 @@ function buildTranscript(messages = [], model, account) {
     },
   ];
 
+  // If tools are provided, inject them as system instructions so the model knows what's available.
+  // This is a soft approach — the model will see the tools and can request to call them.
+  if (Array.isArray(tools) && tools.length > 0) {
+    const toolDescriptions = tools.map((t) => {
+      const fn = t.function || t;
+      const name = fn.name || t.name || "unknown";
+      const desc = fn.description || "";
+      const params = fn.parameters || fn.input_schema || {};
+      const paramStr = Object.keys(params).length > 0 ? `\nParameters: ${JSON.stringify(params)}` : "";
+      return `- ${name}: ${desc}${paramStr}`;
+    }).join("\n");
+
+    const toolInstructions = [
+      "You have access to the following tools. When you need to use a tool, respond with a JSON block in the following format:",
+      "```tool_call",
+      '{"name": "<tool_name>", "arguments": {<arguments>}}',
+      "```",
+      "You may call multiple tools by emitting multiple tool_call blocks. Do NOT wrap tool calls in prose — emit them directly.",
+      "",
+      "Available tools:",
+      toolDescriptions,
+    ].join("\n");
+    systemInstructions.push(toolInstructions);
+  }
+
   for (const message of messages) {
     const role = message?.role;
     const text = getTextContent(message?.content);
@@ -115,9 +140,18 @@ function buildTranscript(messages = [], model, account) {
       continue;
     }
     if (role === "user" || role === "tool") {
+      let formattedText = text;
+      // Format tool results clearly so the model can understand the context
+      if (role === "tool") {
+        const toolCallId = message.tool_call_id || message.toolCallId || "";
+        const toolName = message.name || "";
+        const header = toolName ? `[Tool Result: ${toolName}]` : "[Tool Result]";
+        const idLine = toolCallId ? ` (id: ${toolCallId})` : "";
+        formattedText = `${header}${idLine}\n${text}`;
+      }
       const mergedText = systemInstructions.length > 0
-        ? `[System Instructions: ${systemInstructions.join("\n\n")}]\n\n${text}`
-        : text;
+        ? `[System Instructions: ${systemInstructions.join("\n\n")}]\n\n${formattedText}`
+        : formattedText;
       systemInstructions.length = 0;
       transcript.push({
         id: crypto.randomUUID(),
@@ -242,7 +276,7 @@ function buildHeaders(credentials, account) {
 }
 
 function buildPayload(body, model, account) {
-  const { transcript, threadType } = buildTranscript(body?.messages || [], model, account);
+  const { transcript, threadType } = buildTranscript(body?.messages || [], model, account, body?.tools || []);
   const notionModel = normalizeModel(model);
   const threadId = crypto.randomUUID();
   const isMarkdownChat = threadType === "markdown-chat";
@@ -324,6 +358,121 @@ function extractTextFromPatch(patch) {
   return "";
 }
 
+/**
+ * Extract tool_call blocks from text content that the model may emit
+ * when it was instructed to use ```tool_call``` code blocks.
+ * Returns { text, toolCalls } where text has the tool_call blocks removed.
+ */
+function extractInlineToolCalls(text) {
+  if (!text || typeof text !== "string") return { text: text || "", toolCalls: [] };
+
+  const toolCalls = [];
+  // Match ```tool_call\n{...}\n``` blocks (single-line or multi-line JSON)
+  const blockRegex = /```tool_call\s*\n([\s\S]*?)```/g;
+  let match;
+  let cleaned = text;
+
+  while ((match = blockRegex.exec(text)) !== null) {
+    const jsonStr = match[1].trim();
+    try {
+      // Could be a single JSON object or multiple concatenated objects
+      const parsed = JSON.parse(jsonStr);
+      const calls = Array.isArray(parsed) ? parsed : [parsed];
+      for (const call of calls) {
+        const name = call.name || call.tool_name || call.function?.name || "";
+        if (!name) continue;
+        const id = call.id || call.tool_call_id || call.tool_use_id || `call_${crypto.randomUUID().slice(0, 12)}`;
+        const input = call.arguments || call.input || call.function?.arguments || {};
+        toolCalls.push({
+          id,
+          name,
+          arguments: typeof input === "string" ? input : JSON.stringify(input || {}),
+        });
+      }
+      // Remove the parsed block from the text
+      cleaned = cleaned.replace(match[0], "").trim();
+    } catch {
+      // Not valid JSON — treat as regular text, skip
+    }
+  }
+
+  // Also try to match plain JSON tool_call blocks without code fences
+  // (e.g. {"name": "search", "arguments": {...}} on its own line)
+  if (toolCalls.length === 0) {
+    const jsonLineRegex = /\{[\s]*"name"\s*:\s*"[^"]+"[\s\S]*?"arguments"\s*:\s*\{[\s\S]*?\}[\s]*\}/g;
+    let jsonMatch;
+    while ((jsonMatch = jsonLineRegex.exec(text)) !== null) {
+      try {
+        const parsed = JSON.parse(jsonMatch[0]);
+        const name = parsed.name || "";
+        if (!name) continue;
+        const id = parsed.id || `call_${crypto.randomUUID().slice(0, 12)}`;
+        const input = parsed.arguments || parsed.input || {};
+        toolCalls.push({
+          id,
+          name,
+          arguments: typeof input === "string" ? input : JSON.stringify(input || {}),
+        });
+        cleaned = cleaned.replace(jsonMatch[0], "").trim();
+      } catch {
+        // Not valid JSON — skip
+      }
+    }
+  }
+
+  return { text: cleaned, toolCalls };
+}
+
+/**
+ * Extract a tool_call event from a SEG_TOOL patch.
+ * Returns null if the patch is a tool result, citation, or metadata (not a tool invocation).
+ */
+function extractToolCallFromPatch(patch) {
+  const value = patch?.v;
+  if (!value || typeof value !== "object") return null;
+
+  const patchType = extractPatchType(patch);
+
+  // Skip non-invocation tool types (citations, sources, retrievals are metadata)
+  if (["citation", "source", "retrieval"].some((t) => patchType.includes(t))) return null;
+
+  // Navigate to the actual tool data — Notion may nest it under .value
+  const toolData = value.value && typeof value.value === "object" && !Array.isArray(value.value)
+    ? value.value
+    : value;
+
+  // Also handle array-style value (pick first tool_use entry)
+  const toolArray = Array.isArray(value.value) ? value.value : (Array.isArray(value) ? value : null);
+  if (toolArray) {
+    for (const entry of toolArray) {
+      if (entry && typeof entry === "object" && (entry.type === "tool_use" || entry.type === "tool" || entry.name)) {
+        const name = entry.name || entry.tool_name || "";
+        if (!name) continue;
+        const id = entry.id || entry.tool_call_id || entry.tool_use_id || `call_${crypto.randomUUID().slice(0, 12)}`;
+        const input = entry.input || entry.arguments || {};
+        return { id, name, arguments: typeof input === "string" ? input : JSON.stringify(input || {}) };
+      }
+    }
+    return null;
+  }
+
+  // Single object: extract name, id, input
+  const name = toolData.name || toolData.tool_name || toolData.toolName || "";
+  if (!name) return null;
+
+  // If the patch has output/content but no input, it's a tool result — skip
+  if ((toolData.output || toolData.result || toolData.content) && !toolData.input && !toolData.arguments) return null;
+
+  const id = toolData.id || toolData.tool_call_id || toolData.toolCallId || toolData.tool_use_id || `call_${crypto.randomUUID().slice(0, 12)}`;
+  const input = toolData.input || toolData.arguments || toolData.tool_input || toolData.toolInput || {};
+
+  return {
+    id,
+    name,
+    arguments: typeof input === "string" ? input : JSON.stringify(input || {}),
+  };
+}
+
 function extractFinalContentFromRecordMap(data) {
   const threadMessages = data?.recordMap?.thread_message;
   if (!threadMessages || typeof threadMessages !== "object") return "";
@@ -375,6 +524,8 @@ class NotionPatchParser {
     this.valueTypes = new Map();
     this.nextValueIds = new Map();
     this.pendingSegments = [];
+    this.toolCalls = [];
+    this.seenToolIds = new Set();
   }
 
   key(segmentIndex, valueIndex) {
@@ -477,7 +628,18 @@ class NotionPatchParser {
     for (const patch of data.v) {
       if (!patch || typeof patch !== "object") continue;
       const role = this.getPatchRole(patch);
-      if (role === SEG_META || role === SEG_TOOL) continue;
+      if (role === SEG_META) continue;
+
+      // Extract tool calls from SEG_TOOL patches
+      if (role === SEG_TOOL) {
+        const tc = extractToolCallFromPatch(patch);
+        if (tc && !this.seenToolIds.has(tc.id)) {
+          this.seenToolIds.add(tc.id);
+          this.toolCalls.push(tc);
+        }
+        continue;
+      }
+
       const text = stripNotionMarkup(extractTextFromPatch(patch));
       if (!text) continue;
       events.push({ type: role === SEG_THINKING ? "thinking" : "content", text });
@@ -549,17 +711,52 @@ function extractCompleteJsonValues(buffer) {
   return { values, rest: start >= 0 ? buffer.slice(start) : buffer.slice(index) };
 }
 
-function createOpenAIChunk({ id, model, content = "", role = "", finishReason = null }) {
+function createOpenAIChunk({ id, model, content = "", role = "", finishReason = null, toolCalls = null }) {
   const delta = {};
   if (role) delta.role = role;
   if (content) delta.content = content;
+  if (toolCalls) delta.tool_calls = toolCalls;
+  const choice = { index: 0, delta, finish_reason: finishReason };
   return `data: ${JSON.stringify({
     id,
     object: "chat.completion.chunk",
     created: Math.floor(Date.now() / 1000),
     model,
-    choices: [{ index: 0, delta, finish_reason: finishReason }],
+    choices: [choice],
   })}\n\n`;
+}
+
+/**
+ * Emit accumulated tool_calls as OpenAI SSE chunks.
+ * Each tool_call emits a start chunk (name+id) followed by an arguments chunk.
+ */
+function emitToolCallChunks(encoder, controller, responseId, model, toolCalls) {
+  for (let i = 0; i < toolCalls.length; i++) {
+    const tc = toolCalls[i];
+    // Start chunk: tool call declaration
+    controller.enqueue(encoder.encode(createOpenAIChunk({
+      id: responseId,
+      model,
+      role: i === 0 ? "assistant" : "",
+      toolCalls: [{
+        index: i,
+        id: tc.id,
+        type: "function",
+        function: { name: tc.name, arguments: "" },
+      }],
+    })));
+    // Arguments chunk
+    if (tc.arguments && tc.arguments !== "{}") {
+      controller.enqueue(encoder.encode(createOpenAIChunk({
+        id: responseId,
+        model,
+        toolCalls: [{
+          index: i,
+          function: { arguments: tc.arguments },
+        }],
+      })));
+    }
+  }
 }
 
 function buildStreamingResponse(upstreamBody, model, signal) {
@@ -620,7 +817,20 @@ function buildStreamingResponse(upstreamBody, model, signal) {
           const suffix = finalContent.slice(emittedContent.length);
           if (suffix) controller.enqueue(encoder.encode(createOpenAIChunk({ id: responseId, model, role: emittedRole ? "" : "assistant", content: suffix })));
         }
-        controller.enqueue(encoder.encode(createOpenAIChunk({ id: responseId, model, finishReason: "stop" })));
+        // Emit tool calls if Notion returned any (from native patches or inline text blocks)
+        const allToolCalls = [...(parser.toolCalls || [])];
+        // Also check if the model emitted tool_call blocks in the text content
+        if (allToolCalls.length === 0) {
+          const fullText = finalContent || emittedContent;
+          const { toolCalls: inlineCalls } = extractInlineToolCalls(fullText);
+          if (inlineCalls.length > 0) allToolCalls.push(...inlineCalls);
+        }
+        if (allToolCalls.length > 0) {
+          emitToolCallChunks(encoder, controller, responseId, model, allToolCalls);
+          controller.enqueue(encoder.encode(createOpenAIChunk({ id: responseId, model, finishReason: "tool_calls" })));
+        } else {
+          controller.enqueue(encoder.encode(createOpenAIChunk({ id: responseId, model, finishReason: "stop" })));
+        }
         controller.enqueue(encoder.encode("data: [DONE]\n\n"));
         controller.close();
       } catch (error) {
@@ -678,12 +888,32 @@ async function buildJsonResponse(upstreamBody, model, signal) {
   const finalText = finalContent || content;
   const promptTokens = 0;
   const completionTokens = Math.ceil(finalText.length / 4);
+
+  // Collect tool calls from both native Notion patches and inline text blocks
+  let toolCalls = [...(parser.toolCalls || [])];
+  let displayText = finalText;
+  if (toolCalls.length === 0) {
+    const { text: cleanedText, toolCalls: inlineCalls } = extractInlineToolCalls(finalText);
+    if (inlineCalls.length > 0) {
+      toolCalls = inlineCalls;
+      displayText = cleanedText;
+    }
+  }
+
+  const message = { role: "assistant", content: displayText || "" };
+  if (toolCalls.length > 0) {
+    message.tool_calls = toolCalls.map((tc) => ({
+      id: tc.id,
+      type: "function",
+      function: { name: tc.name, arguments: tc.arguments },
+    }));
+  }
   return new Response(JSON.stringify({
     id: `chatcmpl-notion-${crypto.randomUUID().slice(0, 12)}`,
     object: "chat.completion",
     created: Math.floor(Date.now() / 1000),
     model,
-    choices: [{ index: 0, message: { role: "assistant", content: finalText }, finish_reason: "stop" }],
+    choices: [{ index: 0, message, finish_reason: toolCalls.length > 0 ? "tool_calls" : "stop" }],
     usage: { prompt_tokens: promptTokens, completion_tokens: completionTokens, total_tokens: promptTokens + completionTokens },
   }), { status: 200, headers: { "Content-Type": "application/json" } });
 }
