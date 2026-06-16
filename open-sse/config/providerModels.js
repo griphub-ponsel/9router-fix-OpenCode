@@ -57,6 +57,15 @@ export const PROVIDER_MODELS = {
     { id: "claude-sonnet-4-5-20250929", name: "Claude 4.5 Sonnet" },
     { id: "claude-haiku-4-5-20251001", name: "Claude 4.5 Haiku" },
   ],
+  glm: [  // Z.AI / GLM Coding
+    { id: "glm-5.2", name: "GLM 5.2", upstreamModelId: "GLM-5.2" },
+    { id: "glm-5.1", name: "GLM 5.1", upstreamModelId: "GLM-5.1" },
+    { id: "glm-5-turbo", name: "GLM 5 Turbo", upstreamModelId: "GLM-5-Turbo" },
+    { id: "glm-5", name: "GLM 5" },
+    { id: "glm-4.7", name: "GLM 4.7", upstreamModelId: "GLM-4.7" },
+    { id: "glm-4.6", name: "GLM 4.6" },
+    { id: "glm-4.6v", name: "GLM 4.6V (Vision)" },
+  ],
   cx: withCodexReviewModels([  // OpenAI Codex
     { id: "gpt-5.5", name: "GPT 5.5" },
     { id: "gpt-5.4", name: "GPT 5.4" },
@@ -367,9 +376,12 @@ export const PROVIDER_MODELS = {
     { id: "black-forest-labs/FLUX.1-schnell", name: "FLUX.1 Schnell (via OpenRouter)", type: "image", params: ["n", "size"] },
   ],
   glm: [
-    { id: "glm-5.1", name: "GLM 5.1" },
+    { id: "glm-5.2", name: "GLM 5.2", upstreamModelId: "GLM-5.2" },
+    { id: "glm-5.1", name: "GLM 5.1", upstreamModelId: "GLM-5.1" },
+    { id: "glm-5-turbo", name: "GLM 5 Turbo", upstreamModelId: "GLM-5-Turbo" },
     { id: "glm-5", name: "GLM 5" },
-    { id: "glm-4.7", name: "GLM 4.7" },
+    { id: "glm-4.7", name: "GLM 4.7", upstreamModelId: "GLM-4.7" },
+    { id: "glm-4.6", name: "GLM 4.6" },
     { id: "glm-4.6v", name: "GLM 4.6V (Vision)" },
   ],
   "glm-cn": [

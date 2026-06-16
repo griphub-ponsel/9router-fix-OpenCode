@@ -19,8 +19,10 @@ import { OllamaLocalExecutor } from "./ollama-local.js";
 import { CommandCodeExecutor } from "./commandcode.js";
 import { XiaomiTokenplanExecutor } from "./xiaomi-tokenplan.js";
 import { DefaultExecutor } from "./default.js";
+import { GlmExecutor } from "./glm.js";
 
 const executors = {
+  glm: new GlmExecutor(),
   antigravity: new AntigravityExecutor(),
   azure: new AzureExecutor(),
   "gemini-cli": new GeminiCLIExecutor(),
@@ -78,3 +80,5 @@ export { PerplexityWebExecutor } from "./perplexity-web.js";
 export { OllamaLocalExecutor } from "./ollama-local.js";
 export { CommandCodeExecutor } from "./commandcode.js";
 export { XiaomiTokenplanExecutor } from "./xiaomi-tokenplan.js";
+export { MimoFreeExecutor } from "./mimo-free.js";
+export { GlmExecutor } from "./glm.js";

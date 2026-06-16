@@ -1,6 +1,7 @@
 import { PROVIDERS } from "../config/providers.js";
 import { OAUTH_ENDPOINTS, GITHUB_COPILOT, REFRESH_LEAD_MS } from "../config/appConstants.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
+import { refreshGlmOAuthCredentials } from "../../src/lib/zcode/oauth.js";
 
 // Default token expiry buffer (refresh if expires within 5 minutes)
 export const TOKEN_EXPIRY_BUFFER_MS = 5 * 60 * 1000;
@@ -321,6 +322,40 @@ export async function refreshCodexToken(refreshToken, log) {
     log?.error?.("TOKEN_REFRESH", `Network error refreshing Codex token: ${error.message}`);
     return null;
   }
+  }, log);
+}
+
+/**
+ * Refresh GLM/Z.AI OAuth credentials. Rotates the zai access_token and
+ * refreshes the Coding Plan API key; Coding Plan JWT stays unchanged until
+ * the user re-authenticates.
+ */
+export async function refreshGlmToken(refreshToken, credentials, log) {
+  if (!refreshToken) return null;
+  return dedupRefresh("glm", refreshToken, async () => {
+    try {
+      const refreshed = await refreshGlmOAuthCredentials({
+        ...credentials,
+        refreshToken,
+      });
+      if (!refreshed) {
+        log?.warn?.("TOKEN_REFRESH", "GLM refresh skipped (no credentials returned)");
+        return null;
+      }
+      log?.info?.("TOKEN_REFRESH", "Successfully refreshed GLM OAuth credentials", {
+        hasNewAccessToken: !!refreshed.accessToken,
+        hasNewApiKey: !!refreshed.apiKey,
+        expiresIn: refreshed.expiresIn,
+      });
+      return refreshed;
+    } catch (e) {
+      log?.warn?.("TOKEN_REFRESH", `GLM refresh failed: ${e?.message || e}`);
+      const msg = String(e?.message || "");
+      if (msg.includes("invalid_grant") || msg.includes("invalid_request")) {
+        return { error: "invalid_grant" };
+      }
+      return null;
+    }
   }, log);
 }
 
@@ -679,6 +714,13 @@ async function _getAccessTokenInternal(provider, credentials, log) {
     case "xai-oauth":
       return await refreshXaiOauthToken(credentials.refreshToken, log);
 
+    case "glm":
+      return await refreshGlmToken(
+        credentials.refreshToken,
+        credentials,
+        log
+      );
+
     case "kiro":
       return await refreshKiroToken(
         credentials.refreshToken,
@@ -726,6 +768,8 @@ export async function refreshTokenByProvider(provider, credentials, log) {
       return refreshGitHubToken(credentials.refreshToken, log);
     case "xai-oauth":
       return refreshXaiOauthToken(credentials.refreshToken, log);
+    case "glm":
+      return refreshGlmToken(credentials.refreshToken, credentials, log);
     case "kiro":
       return refreshKiroToken(
         credentials.refreshToken,
@@ -783,6 +827,14 @@ export function formatProviderCredentials(provider, credentials, log) {
         accessToken: credentials.accessToken,
         refreshToken: credentials.refreshToken,
         projectId: credentials.projectId
+      };
+
+    case "glm":
+      return {
+        apiKey: credentials.apiKey,
+        accessToken: credentials.accessToken,
+        refreshToken: credentials.refreshToken,
+        providerSpecificData: credentials.providerSpecificData,
       };
 
     default:
