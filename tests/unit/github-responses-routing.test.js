@@ -19,19 +19,6 @@ describe("GithubExecutor.supportsResponsesEndpoint", () => {
   it("excludes Claude models from the /responses endpoint", () => {
     expect(exec.supportsResponsesEndpoint("claude-sonnet-4.6")).toBe(false);
     expect(exec.supportsResponsesEndpoint("claude-opus-4.7")).toBe(false);
-    expect(exec.supportsResponsesEndpoint("claude-opus-4.8")).toBe(false);
-  });
-
-  it("allows reasoning_effort for Claude Opus 4.6 and 4.8", () => {
-    expect(exec.supportsReasoningEffort("claude-opus-4.6")).toBe(true);
-    expect(exec.supportsReasoningEffort("claude-opus-4.8")).toBe(true);
-    expect(exec.supportsReasoningEffort("claude-opus-4.7")).toBe(false);
-  });
-
-  it("normalizes Claude Opus 4.8 reasoning_effort to medium only", () => {
-    expect(exec.normalizeReasoningEffort("claude-opus-4.8", "low")).toBe("medium");
-    expect(exec.normalizeReasoningEffort("claude-opus-4.8", "medium")).toBe("medium");
-    expect(exec.normalizeReasoningEffort("claude-opus-4.6", "low")).toBe("low");
   });
 
   it("allows OpenAI/codex models on the /responses endpoint", () => {

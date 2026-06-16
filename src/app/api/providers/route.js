@@ -8,7 +8,7 @@ import {
 } from "@/models";
 import { APIKEY_PROVIDERS } from "@/shared/constants/config";
 import { AI_PROVIDERS, FREE_TIER_PROVIDERS, WEB_COOKIE_PROVIDERS, isOpenAICompatibleProvider, isAnthropicCompatibleProvider, isCustomEmbeddingProvider } from "@/shared/constants/providers";
-import { extractNotionToken, normalizeProviderId, normalizeProviderSpecificData } from "@/lib/providerNormalization";
+import { normalizeProviderId, normalizeProviderSpecificData } from "@/lib/providerNormalization";
 
 export const dynamic = "force-dynamic";
 
@@ -88,8 +88,7 @@ export async function POST(request) {
   try {
     const body = await request.json();
     const provider = normalizeProviderId(body.provider);
-    let { apiKey } = body;
-    const { name, displayName, priority, globalPriority, defaultModel, testStatus } = body;
+    const { apiKey, name, displayName, priority, globalPriority, defaultModel, testStatus } = body;
     const proxyConfig = normalizeProxyConfig(body);
     if (proxyConfig.error) {
       return NextResponse.json({ error: proxyConfig.error }, { status: 400 });
@@ -103,10 +102,8 @@ export async function POST(request) {
 
     // Validation
     const isWebCookieProvider = !!WEB_COOKIE_PROVIDERS[provider];
-    const supportsManualApiKeyAuth = AI_PROVIDERS[provider]?.authModes?.includes("apikey");
     const isValidProvider = APIKEY_PROVIDERS[provider] ||
       FREE_TIER_PROVIDERS[provider] ||
-      supportsManualApiKeyAuth ||
       isWebCookieProvider ||
       isOpenAICompatibleProvider(provider) ||
       isAnthropicCompatibleProvider(provider) ||
@@ -115,8 +112,7 @@ export async function POST(request) {
     if (!provider || !isValidProvider) {
       return NextResponse.json({ error: "Invalid provider" }, { status: 400 });
     }
-    const notionCookieFromBody = provider === "notion" && (body.providerSpecificData?.fullCookie || body.fullCookie || body.cookie);
-    if (!apiKey && provider !== "ollama-local" && !notionCookieFromBody) {
+    if (!apiKey && provider !== "ollama-local") {
       return NextResponse.json({ error: `${isWebCookieProvider ? "Cookie value" : "API Key"} is required` }, { status: 400 });
     }
     const connectionName = name || displayName || AI_PROVIDERS[provider]?.name;
@@ -172,19 +168,6 @@ export async function POST(request) {
         baseUrl: node.baseUrl,
         nodeName: node.name,
       };
-    }
-
-    if (provider === "notion") {
-      if (!providerSpecificData?.fullCookie && typeof apiKey === "string" && apiKey.includes("token_v2=") && apiKey.includes(";")) {
-        providerSpecificData = {
-          ...(providerSpecificData || {}),
-          fullCookie: apiKey.trim(),
-        };
-      }
-      apiKey = extractNotionToken(apiKey, providerSpecificData?.fullCookie || "");
-      if (!apiKey) {
-        return NextResponse.json({ error: "Notion token_v2 is required" }, { status: 400 });
-      }
     }
 
     const mergedProviderSpecificData = {

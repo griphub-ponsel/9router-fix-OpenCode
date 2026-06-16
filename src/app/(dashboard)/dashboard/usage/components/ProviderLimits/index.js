@@ -24,11 +24,6 @@ function getConnectionQuotaRemaining(connection, quotaData) {
   return Number.POSITIVE_INFINITY;
 }
 
-function getProviderOrder(provider) {
-  const index = USAGE_SUPPORTED_PROVIDERS.indexOf(provider);
-  return index === -1 ? Number.MAX_SAFE_INTEGER : index;
-}
-
 function sortVisibleConnections(
   connections,
   quotaData,
@@ -52,25 +47,7 @@ function sortVisibleConnections(
     });
   }
 
-  if (!expiringFirst) {
-    return [...connections].sort((a, b) => {
-      const providerDiff =
-        getProviderOrder(a.provider) - getProviderOrder(b.provider);
-      if (providerDiff !== 0) return providerDiff;
-      return (
-        (a.provider || "").localeCompare(b.provider || "") ||
-        (getConnectionLabel(a) || "").localeCompare(getConnectionLabel(b) || "")
-      );
-    });
-  }
-
-  const providerOrder = new Map();
-  connections.forEach((connection) => {
-    const provider = connection.provider || "";
-    if (!providerOrder.has(provider)) {
-      providerOrder.set(provider, providerOrder.size);
-    }
-  });
+  if (!expiringFirst) return connections;
 
   const getEarliestResetTime = (connection) => {
     const resetTimes = (quotaData[connection.id]?.quotas || [])
@@ -86,11 +63,6 @@ function sortVisibleConnections(
   };
 
   return [...connections].sort((a, b) => {
-    const providerDiff =
-      (providerOrder.get(a.provider || "") ?? Number.MAX_SAFE_INTEGER) -
-      (providerOrder.get(b.provider || "") ?? Number.MAX_SAFE_INTEGER);
-    if (providerDiff !== 0) return providerDiff;
-
     const expiryDiff = getEarliestResetTime(a) - getEarliestResetTime(b);
     if (expiryDiff !== 0) return expiryDiff;
     return (
@@ -234,7 +206,6 @@ function setQuotaCache(connectionId, quotaEntry) {
 const REFRESH_INTERVAL_MS = 60000; // 60 seconds
 const DEPLETED_QUOTA_THRESHOLD = 5; // percent
 const AUTO_REFRESH_STORAGE_KEY = "quotaAutoRefresh";
-const EXPIRING_FIRST_STORAGE_KEY = "quotaExpiringFirst";
 const ACCOUNT_FILTER_OPTIONS = [
   { value: "all", label: "All accounts" },
   { value: "active", label: "Active" },
@@ -270,7 +241,6 @@ export default function ProviderLimits() {
   const [accountFilter, setAccountFilter] = useState("all");
   const [quotaSortMode, setQuotaSortMode] = useState("default");
   const [expiringFirst, setExpiringFirst] = useState(false);
-  const [hasHydratedExpiringFirst, setHasHydratedExpiringFirst] = useState(false);
   const [providerMenuOpen, setProviderMenuOpen] = useState(false);
   const [bulkToggling, setBulkToggling] = useState(false);
   const [page, setPage] = useState(1);
@@ -299,7 +269,7 @@ export default function ProviderLimits() {
           page: String(targetPage),
           pageSize: String(pageSize),
           accountStatus: accountFilter,
-          sort: "provider",
+          sort: "priority",
         });
 
         if (providerFilter !== "all") {
@@ -331,7 +301,7 @@ export default function ProviderLimits() {
         return [];
       }
     },
-    [accountFilter, page, pageSize, providerFilter],
+    [accountFilter, expiringFirst, page, pageSize, providerFilter],
   );
 
   // Fetch quota for a specific connection
@@ -600,22 +570,6 @@ export default function ProviderLimits() {
     if (typeof window === "undefined" || !hasHydratedAutoRefresh) return;
     window.localStorage.setItem(AUTO_REFRESH_STORAGE_KEY, String(autoRefresh));
   }, [autoRefresh, hasHydratedAutoRefresh]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const stored = window.localStorage.getItem(EXPIRING_FIRST_STORAGE_KEY);
-    setExpiringFirst(stored === "true");
-    setHasHydratedExpiringFirst(true);
-  }, []);
-
-  // Persist expiring-first preference
-  useEffect(() => {
-    if (typeof window === "undefined" || !hasHydratedExpiringFirst) return;
-    window.localStorage.setItem(
-      EXPIRING_FIRST_STORAGE_KEY,
-      String(expiringFirst),
-    );
-  }, [expiringFirst, hasHydratedExpiringFirst]);
 
   // Auto-refresh interval
   useEffect(() => {
@@ -1007,8 +961,8 @@ export default function ProviderLimits() {
       {/* Provider cards: 2 columns, compact */}
       {expiringFirst && (
         <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
-          Expiring-first currently reorders accounts only inside each provider.
-          Provider order still follows backend pagination.
+          Expiring-first currently reorders accounts inside the current page.
+          Cross-page ordering still follows backend pagination.
         </div>
       )}
 

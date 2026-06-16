@@ -18,6 +18,8 @@ const TARGET_HOSTS = [
   "cloudcode-pa.googleapis.com",
   "api.individual.githubcopilot.com",
   "q.us-east-1.amazonaws.com",
+  "codewhisperer.us-east-1.amazonaws.com",
+  "runtime.us-east-1.kiro.dev",
   "api2.cursor.sh",
 ];
 
@@ -32,6 +34,9 @@ const URL_PATTERNS = {
 const MODEL_SYNONYMS = {
   antigravity: {
     "gemini-default": "gemini-3.5-flash-low",
+    "gemini-3.5-flash-high": "gemini-3-flash-agent",
+    "gemini-3.5-flash-medium": "gemini-3.5-flash-low",
+    "gemini-3.5-flash-extra-low": "gemini-3.5-flash-extra-low",
     "gemini-3.1-pro-high": "gemini-pro-agent",
     "gemini-3-pro-high": "gemini-pro-agent",
     "gemini-3-pro-low": "gemini-3.1-pro-low",
@@ -42,7 +47,8 @@ const MODEL_SYNONYMS = {
 // Order matters: more specific patterns first. Catches AG renamed variants (e.g. gemini-pro-agent)
 const MODEL_PATTERNS = {
   antigravity: [
-    { match: /flash.*low|low.*flash|flash.*medium|medium.*flash/i, alias: "gemini-3.5-flash-low" },
+    { match: /flash.*extra.*low|extra.*low.*flash|flash.*low|low.*flash/i, alias: "gemini-3.5-flash-extra-low" },
+    { match: /flash.*medium|medium.*flash/i,                       alias: "gemini-3.5-flash-low" },
     { match: /flash.*agent|agent.*flash|flash/i,                   alias: "gemini-3-flash-agent" },
     { match: /pro.*low|low.*pro/i,                                 alias: "gemini-3.1-pro-low" },
     { match: /gemini.*pro|pro.*gemini/i,                           alias: "gemini-pro-agent" },
@@ -75,7 +81,7 @@ function getToolForHost(host) {
   const h = (host || "").split(":")[0];
   if (h === "api.individual.githubcopilot.com") return "copilot";
   if (h === "daily-cloudcode-pa.googleapis.com" || h === "cloudcode-pa.googleapis.com") return "antigravity";
-  if (h === "q.us-east-1.amazonaws.com") return "kiro";
+  if (h === "q.us-east-1.amazonaws.com" || h === "codewhisperer.us-east-1.amazonaws.com" || h === "runtime.us-east-1.kiro.dev") return "kiro";
   if (h === "api2.cursor.sh") return "cursor";
   return null;
 }

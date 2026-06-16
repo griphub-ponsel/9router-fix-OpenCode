@@ -9,19 +9,17 @@ const NATIVE_PAIRS = {
   "gemini-cli": ["gemini-cli"],
   "antigravity": ["antigravity"],
   "codex": ["codex"],
-  "opencode": ["opencode", "opencode-go"],
 };
 
 /**
  * Detect which CLI tool is making the request.
- * Returns one of: "claude" | "gemini-cli" | "antigravity" | "codex" | "opencode" | "github-copilot" | "deepseek-tui" | null
+ * Returns one of: "claude" | "gemini-cli" | "antigravity" | "codex" | null
  * @param {object} headers - Lowercase header key/value object
  * @param {object} body    - Parsed request body
  */
 export function detectClientTool(headers = {}, body = {}) {
   const ua = (headers["user-agent"] || "").toLowerCase();
   const xApp = (headers["x-app"] || "").toLowerCase();
-  const xOpencode = (headers["x-opencode-client"] || "").toLowerCase();
   const openaiIntent = (headers["openai-intent"] || "").toLowerCase();
   const initiator = (headers["x-initiator"] || headers["X-Initiator"] || "").toLowerCase();
 
@@ -41,11 +39,6 @@ export function detectClientTool(headers = {}, body = {}) {
 
   // Codex CLI
   if (ua.includes("codex-cli")) return "codex";
-
-  // OpenCode CLI / desktop / @ai-sdk/openai-compatible client
-  // OpenCode sends `x-opencode-client: desktop|cli` and/or
-  // `user-agent: opencode/<ver>` (sometimes via the AI SDK with `ai-sdk/<ver>`).
-  if (xOpencode || ua.includes("opencode")) return "opencode";
 
   // DeepSeek TUI
   if (ua.includes("deepseek-tui")) return "deepseek-tui";

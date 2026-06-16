@@ -10,26 +10,6 @@ import { appendRequestLog, saveRequestDetail } from "@/lib/usageDb.js";
 import { decloakToolNames } from "../../utils/claudeCloaking.js";
 
 /**
- * GitHub Copilot sometimes returns HTTP 200 with choices:[] while usage shows output
- * tokens (e.g. claude-opus-4.8 with very low max_tokens). Synthesize a minimal choice
- * so OpenAI-compatible clients and model tests do not treat the response as broken.
- */
-function normalizeGithubCopilotEmptyChoices(body, provider) {
-  if (provider !== "github" || !body || typeof body !== "object") return body;
-  if (Array.isArray(body.choices) && body.choices.length > 0) return body;
-  const outTokens = body.usage?.completion_tokens ?? 0;
-  if (outTokens <= 0) return body;
-  return {
-    ...body,
-    choices: [{
-      index: 0,
-      message: { role: "assistant", content: "" },
-      finish_reason: "length",
-    }],
-  };
-}
-
-/**
  * Translate non-streaming response body from provider format → OpenAI format.
  */
 export function translateNonStreamingResponse(responseBody, targetFormat, sourceFormat) {
@@ -177,8 +157,6 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
 
   reqLogger.logProviderResponse(providerResponse.status, providerResponse.statusText, providerResponse.headers, responseBody);
   if (onRequestSuccess) await onRequestSuccess();
-
-  responseBody = normalizeGithubCopilotEmptyChoices(responseBody, provider);
 
   // Decloak tool_use names once on raw Claude body, before any translation (INPUT side)
   responseBody = decloakToolNames(responseBody, toolNameMap);

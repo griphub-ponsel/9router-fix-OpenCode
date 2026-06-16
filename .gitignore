@@ -32,7 +32,6 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
-9router.log
 
 # env files (can opt-in for committing if needed)
 .env*
@@ -50,7 +49,6 @@ data/
 logs/*
 source/*
 .cursor/*
-.codegraph/
 docs/*
 !docs/ARCHITECTURE.md
 test/*

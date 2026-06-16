@@ -208,7 +208,7 @@ export default function ModelSelectModal({
         // Find connection object to get prefix synchronously without waiting for providerNodes fetch
         const connection = activeProviders.find(p => p.provider === providerId);
         const matchedNode = providerNodes.find(node => node.id === providerId);
-        const displayName = connection?.name || matchedNode?.name || providerInfo.name;
+        const displayName = matchedNode?.name || connection?.name || providerInfo.name;
         const nodePrefix = connection?.providerSpecificData?.prefix || matchedNode?.prefix || providerId;
 
         // Aliases are stored using the raw providerId as key (e.g. "openai-compatible-chat-<uuid>/glm-4.7"),
@@ -242,25 +242,18 @@ export default function ModelSelectModal({
         const hardcodedModels = getModelsByProviderId(providerId);
         const hardcodedIds = new Set(hardcodedModels.map((m) => m.id));
 
-        // Custom models: if no hardcoded models (e.g. openrouter), show all aliases for this provider.
-        // Otherwise only show aliases created by the provider "Add Model" flow.
+        // Custom models: if no hardcoded models (e.g. openrouter), show all aliases for this provider
+        // Otherwise only show aliases where aliasName === modelId ("Add Model" button pattern)
         const hasHardcoded = hardcodedModels.length > 0;
         const customAliasModels = Object.entries(modelAliases)
-          .filter(([aliasName, fullModel]) => {
-            if (!fullModel.startsWith(`${alias}/`)) return false;
-            const modelId = fullModel.replace(`${alias}/`, "");
-            if (hardcodedIds.has(modelId)) return false;
-            if (!hasHardcoded) return true;
-            // Accept "Add Model" aliases, including AddCustomModelModal collision fallbacks
-            return (
-              aliasName === modelId ||
-              aliasName === `${alias}-${modelId}` ||
-              aliasName === `${alias}/${modelId}`
-            );
-          })
+          .filter(([aliasName, fullModel]) =>
+            fullModel.startsWith(`${alias}/`) &&
+            (hasHardcoded ? aliasName === fullModel.replace(`${alias}/`, "") : true) &&
+            !hardcodedIds.has(fullModel.replace(`${alias}/`, ""))
+          )
           .map(([aliasName, fullModel]) => {
             const modelId = fullModel.replace(`${alias}/`, "");
-            return { id: modelId, name: modelId, value: fullModel, isCustom: true };
+            return { id: modelId, name: aliasName, value: fullModel, isCustom: true };
           });
 
         // Custom models registered via /api/models/custom (provider "Add Model" button)

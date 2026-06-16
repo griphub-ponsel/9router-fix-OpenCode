@@ -7,8 +7,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { restrictToVerticalAxis, restrictToParentElement } from "@dnd-kit/modifiers";
 import { Card, Button, Modal, Input, CardSkeleton, ModelSelectModal, Toggle, ConfirmModal } from "@/shared/components";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
-import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider, getProviderAlias } from "@/shared/constants/providers";
-import { getModelsByProviderId } from "@/shared/constants/models";
+import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
 
 // Validate combo name: only a-z, A-Z, 0-9, -, _
 const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
@@ -38,8 +37,8 @@ export default function CombosPage() {
       const providersData = await providersRes.json();
       const settingsData = settingsRes.ok ? await settingsRes.json() : {};
       
-      // Only LLM combos here — webSearch/webFetch combos belong to media-providers/web
-      if (combosRes.ok) setCombos((combosData.combos || []).filter(c => !c.kind));
+      // Only LLM combos here - webSearch/webFetch combos belong to media-providers/web
+      if (combosRes.ok) setCombos((combosData.combos || []).filter(c => !c.kind || c.kind === "llm"));
       if (providersRes.ok) {
         setActiveProviders(providersData.connections || []);
       }
@@ -477,133 +476,14 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
     setModels(newModels);
   };
 
-  const isEdit = !!combo;
-
-  const getSuggestions = () => {
-    if (models.length === 0) return [];
-    
-    // Get the base model IDs currently in the combo (e.g., "gemini-3.5-flash", "claude-sonnet-4-6")
-    const currentModelIds = models.map(m => m.includes("/") ? m.split("/")[1] : m);
-    
-    const suggestions = [];
-    
-    activeProviders.forEach(conn => {
-      const isCustom = isOpenAICompatibleProvider(conn.provider) || isAnthropicCompatibleProvider(conn.provider);
-      const prefix = isCustom ? (conn.providerSpecificData?.prefix || conn.id) : getProviderAlias(conn.provider);
-      
-      // If it's a custom provider, we can check aliases
-      if (isCustom) {
-        Object.entries(modelAliases).forEach(([aliasName, fullModel]) => {
-          if (fullModel.startsWith(`${conn.provider}/`)) {
-            const modelId = fullModel.replace(`${conn.provider}/`, "");
-            currentModelIds.forEach(currId => {
-              if (modelId.toLowerCase() === currId.toLowerCase() || aliasName.toLowerCase() === currId.toLowerCase()) {
-                const suggestValue = `${prefix}/${modelId}`;
-                if (!models.includes(suggestValue) && !suggestions.some(s => s.value === suggestValue)) {
-                  suggestions.push({
-                    value: suggestValue,
-                    name: `${conn.name} (${aliasName})`,
-                    providerName: conn.name,
-                    modelId
-                  });
-                }
-              }
-            });
-          }
-        });
-      } else {
-        const providerModels = getModelsByProviderId(conn.provider) || [];
-        providerModels.forEach(m => {
-          currentModelIds.forEach(currId => {
-            if (m.id.toLowerCase() === currId.toLowerCase()) {
-              const suggestValue = `${prefix}/${m.id}`;
-              if (!models.includes(suggestValue) && !suggestions.some(s => s.value === suggestValue)) {
-                suggestions.push({
-                  value: suggestValue,
-                  name: `${conn.name} (${m.name || m.id})`,
-                  providerName: conn.name,
-                  modelId: m.id
-                });
-              }
-            }
-          });
-        });
-      }
-    });
-    
-    return suggestions;
-  };
-
-  const getPresetComboSuggestions = () => {
-    if (isEdit || models.length > 0) return [];
-
-    const modelGroups = {};
-
-    activeProviders.forEach(conn => {
-      const isCustom = isOpenAICompatibleProvider(conn.provider) || isAnthropicCompatibleProvider(conn.provider);
-      const prefix = isCustom ? (conn.providerSpecificData?.prefix || conn.id) : getProviderAlias(conn.provider);
-
-      if (isCustom) {
-        Object.entries(modelAliases).forEach(([aliasName, fullModel]) => {
-          if (fullModel.startsWith(`${conn.provider}/`)) {
-            const modelId = fullModel.replace(`${conn.provider}/`, "");
-            const key = modelId.toLowerCase();
-            if (!modelGroups[key]) modelGroups[key] = [];
-            
-            const suggestValue = `${prefix}/${modelId}`;
-            if (!modelGroups[key].some(item => item.value === suggestValue)) {
-              modelGroups[key].push({
-                value: suggestValue,
-                providerName: conn.name,
-                displayName: aliasName
-              });
-            }
-          }
-        });
-      } else {
-        const providerModels = getModelsByProviderId(conn.provider) || [];
-        providerModels.forEach(m => {
-          if (m.type && m.type !== "llm") return;
-          const key = m.id.toLowerCase();
-          if (!modelGroups[key]) modelGroups[key] = [];
-          
-          const suggestValue = `${prefix}/${m.id}`;
-          if (!modelGroups[key].some(item => item.value === suggestValue)) {
-            modelGroups[key].push({
-              value: suggestValue,
-              providerName: conn.name,
-              displayName: m.name || m.id
-            });
-          }
-        });
-      }
-    });
-
-    const presets = [];
-    Object.entries(modelGroups).forEach(([modelId, list]) => {
-      if (list.length >= 2) {
-        const providersStr = list.map(item => item.providerName).join(", ");
-        const baseName = list[0].displayName;
-        presets.push({
-          comboName: modelId,
-          displayName: `${baseName} (${providersStr})`,
-          models: list.map(item => item.value)
-        });
-      }
-    });
-
-    return presets;
-  };
-
-  const suggestions = getSuggestions();
-  const presets = getPresetComboSuggestions();
-
   const handleSave = async () => {
     if (!validateName(name)) return;
     setSaving(true);
     await onSave({ name: name.trim(), models });
     setSaving(false);
   };
+
+  const isEdit = !!combo;
 
   return (
     <>
@@ -613,36 +493,6 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
         title={isEdit ? "Edit Combo" : "Create Combo"}
       >
         <div className="flex flex-col gap-3">
-          {/* Preset Suggestions */}
-          {!isEdit && models.length === 0 && presets.length > 0 && (
-            <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
-              <div className="flex items-center gap-1.5 text-xs font-semibold text-primary mb-2">
-                <span className="material-symbols-outlined text-[16px] text-primary">auto_awesome</span>
-                Auto-detected Preset Combos:
-              </div>
-              <div className="flex flex-col gap-1.5 max-h-[160px] overflow-y-auto pr-1">
-                {presets.map((preset) => (
-                  <button
-                    key={preset.comboName}
-                    type="button"
-                    onClick={() => {
-                      setName(preset.comboName);
-                      setModels(preset.models);
-                    }}
-                    className="w-full text-left inline-flex items-center justify-between gap-2 rounded bg-white hover:bg-primary/10 px-2.5 py-1.5 text-xs border border-primary/10 hover:border-primary transition-colors text-text-main dark:bg-black/20"
-                  >
-                    <span className="font-mono text-xs font-medium text-primary truncate max-w-[60%]">
-                      {preset.comboName}
-                    </span>
-                    <span className="text-[10px] text-text-muted truncate max-w-[40%] text-right">
-                      {preset.displayName}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
           {/* Name */}
           <div>
             <Input
@@ -701,28 +551,6 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
               <span className="material-symbols-outlined text-[16px]">add</span>
               Add Model
             </button>
-
-            {/* Suggestions */}
-            {suggestions.length > 0 && (
-              <div className="mt-3 rounded-lg border border-primary/20 bg-primary/5 p-3">
-                <div className="flex items-center gap-1.5 text-xs font-semibold text-primary mb-2">
-                  <span className="material-symbols-outlined text-[16px] text-primary">lightbulb</span>
-                  Suggested alternative providers for fallback:
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {suggestions.map((s) => (
-                    <button
-                      key={s.value}
-                      onClick={() => handleAddModel({ value: s.value })}
-                      className="inline-flex items-center gap-1 rounded bg-white px-2 py-1 text-xs border border-primary/20 hover:border-primary hover:bg-primary/10 transition-colors text-text-main dark:bg-black/20"
-                    >
-                      <span className="material-symbols-outlined text-[12px] text-primary">add</span>
-                      {s.name}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
 
           {/* Actions */}

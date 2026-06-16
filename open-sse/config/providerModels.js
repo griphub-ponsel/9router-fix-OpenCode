@@ -901,6 +901,12 @@ export function getModelTargetFormat(aliasOrId, modelId) {
   return found?.targetFormat || null;
 }
 
+export function getModelType(aliasOrId, modelId) {
+  const models = PROVIDER_MODELS[aliasOrId];
+  const found = models?.find(m => m.id === modelId);
+  return found?.type || found?.kind || "llm";
+}
+
 export function getModelLimits(aliasOrId, modelId) {
   const providerId = Object.entries(PROVIDER_ID_TO_ALIAS).find(([, alias]) => alias === aliasOrId)?.[0];
   const models = PROVIDER_MODELS[aliasOrId] || PROVIDER_MODELS[providerId];

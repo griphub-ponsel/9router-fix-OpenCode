@@ -410,6 +410,14 @@ async function updateSettings(data) {
   return makeRequest("PATCH", "/api/settings", data);
 }
 
+/**
+ * Reset dashboard password to default (clears stored hash server-side)
+ * @returns {Promise<Object>} { success }
+ */
+async function resetPassword() {
+  return makeRequest("POST", "/api/auth/reset-password");
+}
+
 // ============================================================================
 // MODELS API
 // ============================================================================
@@ -428,22 +436,6 @@ async function getModels() {
  */
 async function getAvailableModels() {
   return makeRequest("GET", "/v1/models");
-}
-
-// ============================================================================
-// DISABLED MODELS API
-// ============================================================================
-
-async function getDisabledModels() {
-  return makeRequest("GET", "/api/models/disabled");
-}
-
-async function disableModel(providerAlias, ids) {
-  return makeRequest("POST", "/api/models/disabled", { providerAlias, ids });
-}
-
-async function enableModel(providerAlias, id) {
-  return makeRequest("DELETE", `/api/models/disabled?providerAlias=${encodeURIComponent(providerAlias)}&id=${encodeURIComponent(id)}`);
 }
 
 // ============================================================================
@@ -544,6 +536,7 @@ module.exports = {
   // Settings
   getSettings,
   updateSettings,
+  resetPassword,
   
   // Tunnel
   getTunnelStatus,
@@ -553,11 +546,6 @@ module.exports = {
   // Models
   getModels,
   getAvailableModels,
-
-  // Disabled Models
-  getDisabledModels,
-  disableModel,
-  enableModel,
 
   // Provider Nodes (custom providers)
   getProviderNodes,

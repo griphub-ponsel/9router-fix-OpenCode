@@ -4,10 +4,11 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
-import { Card, Button, Badge, Input, Modal, CardSkeleton, OAuthModal, KiroOAuthWrapper, CursorAuthModal, CodexSessionImportModal, IFlowCookieModal, GitLabAuthModal, PioneerAuthModal, PioneerTrainingJobsModal, Toggle, Select, EditConnectionModal, NoAuthProxyCard, ConfirmModal } from "@/shared/components";
+import { Card, Button, Badge, Input, Modal, CardSkeleton, OAuthModal, KiroOAuthWrapper, CursorAuthModal, IFlowCookieModal, GitLabAuthModal, Toggle, Select, EditConnectionModal, NoAuthProxyCard, ConfirmModal } from "@/shared/components";
 import { OAUTH_PROVIDERS, APIKEY_PROVIDERS, FREE_PROVIDERS, FREE_TIER_PROVIDERS, WEB_COOKIE_PROVIDERS, getProviderAlias, isOpenAICompatibleProvider, isAnthropicCompatibleProvider, AI_PROVIDERS, THINKING_CONFIG } from "@/shared/constants/providers";
 import { getModelsByProviderId } from "@/shared/constants/models";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
+import { translate } from "@/i18n/runtime";
 import { fetchSuggestedModels } from "@/shared/utils/providerModelsFetcher";
 import ModelRow from "./ModelRow";
 import PassthroughModelsSection from "./PassthroughModelsSection";
@@ -16,6 +17,7 @@ import ConnectionRow from "./ConnectionRow";
 import AddApiKeyModal from "./AddApiKeyModal";
 import EditCompatibleNodeModal from "./EditCompatibleNodeModal";
 import AddCustomModelModal from "./AddCustomModelModal";
+import BulkImportCodexModal from "./BulkImportCodexModal";
 
 const ONE_BY_ONE_DELAY_MS = 1000;
 
@@ -32,10 +34,10 @@ export default function ProviderDetailPage() {
   const [providerNode, setProviderNode] = useState(null);
   const [proxyPools, setProxyPools] = useState([]);
   const [showOAuthModal, setShowOAuthModal] = useState(false);
-  const [showSessionImportModal, setShowSessionImportModal] = useState(false);
   const [showIFlowCookieModal, setShowIFlowCookieModal] = useState(false);
   const [showAddApiKeyModal, setShowAddApiKeyModal] = useState(false);
   const [addConnectionError, setAddConnectionError] = useState("");
+  const [showBulkImportCodex, setShowBulkImportCodex] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showEditNodeModal, setShowEditNodeModal] = useState(false);
   const [showBulkProxyModal, setShowBulkProxyModal] = useState(false);
@@ -46,7 +48,6 @@ export default function ProviderDetailPage() {
   const [modelsTestError, setModelsTestError] = useState("");
   const [testingModelId, setTestingModelId] = useState(null);
   const [showAddCustomModel, setShowAddCustomModel] = useState(false);
-  const [customRegisteredModels, setCustomRegisteredModels] = useState([]);
   const [selectedConnectionIds, setSelectedConnectionIds] = useState([]);
   const [bulkProxyPoolId, setBulkProxyPoolId] = useState("__none__");
   const [bulkUpdatingProxy, setBulkUpdatingProxy] = useState(false);
@@ -64,8 +65,7 @@ export default function ProviderDetailPage() {
   const [oneByOneResults, setOneByOneResults] = useState({});
   const [oneByOneSummary, setOneByOneSummary] = useState(null);
   const stopOneByOneRef = useRef(false);
-  const [showPioneerJobsModal, setShowPioneerJobsModal] = useState(false);
-  const [pioneerJobsConn, setPioneerJobsConn] = useState(null);
+  const [importingQoderModels, setImportingQoderModels] = useState(false);
   const { copied, copy } = useCopyToClipboard();
 
   const AG_RISK_STORAGE_KEY = "ag_risk_confirmed";
@@ -127,7 +127,7 @@ export default function ProviderDetailPage() {
       }
     : (OAUTH_PROVIDERS[providerId] || APIKEY_PROVIDERS[providerId] || FREE_PROVIDERS[providerId] || FREE_TIER_PROVIDERS[providerId] || WEB_COOKIE_PROVIDERS[providerId]);
   const authModes = providerInfo?.authModes || [];
-  const isOAuth = !!OAUTH_PROVIDERS[providerId] || !!FREE_PROVIDERS[providerId] || authModes.includes("oauth") || providerId === "pioneer";
+  const isOAuth = !!OAUTH_PROVIDERS[providerId] || !!FREE_PROVIDERS[providerId] || authModes.includes("oauth");
   const supportsApiKeyAuth = !!APIKEY_PROVIDERS[providerId] || authModes.includes("apikey");
   const isFreeNoAuth = !!FREE_PROVIDERS[providerId]?.noAuth;
   const models = getModelsByProviderId(providerId);
@@ -137,22 +137,14 @@ export default function ProviderDetailPage() {
   const isAnthropicCompatible = isAnthropicCompatibleProvider(providerId);
   const isCompatible = isOpenAICompatible || isAnthropicCompatible;
   const hasDualAuthModes = !isCompatible && isOAuth && supportsApiKeyAuth;
-  const isToolOnlyProvider = providerInfo?.toolOnly || !(providerInfo?.serviceKinds ?? ["llm"]).includes("llm");
-  const showModelsSection = !isToolOnlyProvider || providerInfo?.allowCustomModels;
   const oauthConnectionLabel = providerId === "xai" ? "Grok Build OAuth" : "OAuth";
-  const apiKeyConnectionLabel = providerId === "notion" ? "Notion AI Session" : (providerId === "xai" ? "xAI API Key" : "API Key");
+  const apiKeyConnectionLabel = providerId === "xai" ? "xAI API Key" : "API Key";
   const thinkingConfig = AI_PROVIDERS[providerId]?.thinkingConfig || THINKING_CONFIG.extended;
   
   const providerStorageAlias = isCompatible ? providerId : providerAlias;
   const providerDisplayAlias = isCompatible
     ? (providerNode?.prefix || providerId)
     : providerAlias;
-  const providerCustomModels = customRegisteredModels.filter((model) => (
-    model?.providerAlias === providerStorageAlias &&
-    model?.id &&
-    (!model.type || model.type === "llm")
-  ));
-  const providerCustomModelIds = new Set(providerCustomModels.map((model) => String(model.id)));
 
   const fetchDisabledModels = useCallback(async () => {
     try {
@@ -226,16 +218,6 @@ export default function ProviderDetailPage() {
       }
     } catch (error) {
       console.log("Error fetching aliases:", error);
-    }
-  }, []);
-
-  const fetchCustomModels = useCallback(async () => {
-    try {
-      const res = await fetch("/api/models/custom", { cache: "no-store" });
-      const data = await res.json();
-      if (res.ok) setCustomRegisteredModels(data.models || []);
-    } catch (error) {
-      console.log("Error fetching custom models:", error);
     }
   }, []);
 
@@ -389,9 +371,8 @@ export default function ProviderDetailPage() {
   useEffect(() => {
     fetchConnections();
     fetchAliases();
-    fetchCustomModels();
     fetchDisabledModels();
-  }, [fetchConnections, fetchAliases, fetchCustomModels, fetchDisabledModels]);
+  }, [fetchConnections, fetchAliases, fetchDisabledModels]);
 
   // Fetch suggested models from provider's public API (if configured)
   useEffect(() => {
@@ -410,16 +391,12 @@ export default function ProviderDetailPage() {
       });
       if (res.ok) {
         await fetchAliases();
-        return true;
       } else {
         const data = await res.json();
         alert(data.error || "Failed to set alias");
-        return false;
       }
     } catch (error) {
       console.log("Error setting alias:", error);
-      alert(error?.message || "Failed to set alias");
-      return false;
     }
   };
 
@@ -436,34 +413,63 @@ export default function ProviderDetailPage() {
     }
   };
 
-  const handleAddCustomModel = async (modelId, name) => {
-    try {
-      const res = await fetch("/api/models/custom", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ providerAlias: providerStorageAlias, id: modelId, type: "llm", name: name || undefined }),
-      });
-      if (res.ok) {
-        await fetchCustomModels();
-        return true;
-      }
-      const data = await res.json();
-      alert(data.error || "Failed to add custom model");
-      return false;
-    } catch (error) {
-      console.log("Error adding custom model:", error);
-      alert(error?.message || "Failed to add custom model");
-      return false;
+  // Fetch Qoder model list and automatically add to available models
+  const handleImportQoderModels = async () => {
+    if (importingQoderModels) return;
+    const activeConnection = connections.find((conn) => conn.isActive !== false);
+    if (!activeConnection) {
+      alert(translate("Please add an active Qoder connection first"));
+      return;
     }
-  };
 
-  const handleDeleteCustomModel = async (modelId) => {
+    setImportingQoderModels(true);
     try {
-      const params = new URLSearchParams({ providerAlias: providerStorageAlias, id: modelId, type: "llm" });
-      const res = await fetch(`/api/models/custom?${params.toString()}`, { method: "DELETE" });
-      if (res.ok) await fetchCustomModels();
+      const res = await fetch(`/api/providers/${activeConnection.id}/models`);
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || translate("Failed to fetch models"));
+        return;
+      }
+      const models = data.models || [];
+      if (models.length === 0) {
+        alert(translate("No models returned"));
+        return;
+      }
+
+      let importedCount = 0;
+      for (const model of models) {
+        const modelId = model.id || model.name;
+        if (!modelId) continue;
+        
+        // Qoder model ID format may be "qoder/auto" or "auto", need to remove prefix
+        const cleanModelId = modelId.replace(/^qoder\//, "");
+        const fullModel = `${providerStorageAlias}/${cleanModelId}`;
+        
+        // Check if already exists
+        if (Object.values(modelAliases).includes(fullModel)) {
+          continue;
+        }
+        
+        // Use model ID as alias
+        const alias = cleanModelId;
+        if (modelAliases[alias]) {
+          continue;
+        }
+        
+        await handleSetAlias(cleanModelId, alias, providerStorageAlias);
+        importedCount += 1;
+      }
+      
+      if (importedCount === 0) {
+        alert(translate("All models already exist, no new models added"));
+      } else {
+        alert(translate("Successfully added") + ` ${importedCount} ` + translate("models"));
+      }
     } catch (error) {
-      console.log("Error deleting custom model:", error);
+      console.log("Error importing Qoder models:", error);
+      alert(translate("Error fetching models") + ": " + error.message);
+    } finally {
+      setImportingQoderModels(false);
     }
   };
 
@@ -811,19 +817,6 @@ export default function ProviderDetailPage() {
                 oneByOneStatus={oneByOneResults[conn.id] || null}
               />
             </div>
-            {providerId === "pioneer" && (
-              <div className="flex items-center pl-2 pr-2">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  icon="model_training"
-                  onClick={() => { setPioneerJobsConn(conn); setShowPioneerJobsModal(true); }}
-                  title="Manage fine-tuning jobs for this account"
-                >
-                  Fine-Tune
-                </Button>
-              </div>
-            )}
           </div>
         ))}
     </div>
@@ -925,15 +918,8 @@ export default function ProviderDetailPage() {
     const disabledSet = new Set(disabledModelIds);
     const displayModels = allModels.filter((m) => !disabledSet.has(m.id));
     const disabledDisplayModels = allModels.filter((m) => disabledSet.has(m.id));
-    const registeredCustomModels = providerCustomModels
-      .filter((model) => !allModels.some((m) => m.id === String(model.id)))
-      .map((model) => ({
-        id: String(model.id),
-        name: model.name,
-        source: "custom",
-      }));
-    // Legacy custom models added as aliases: alias -> providerAlias/modelId
-    const aliasCustomModels = Object.entries(modelAliases)
+    // Custom models added by user (stored as aliases: modelId → providerAlias/modelId)
+    const customModels = Object.entries(modelAliases)
       .filter(([alias, fullModel]) => {
         const prefix = `${providerStorageAlias}/`;
         if (!fullModel.startsWith(prefix)) return false;
@@ -941,24 +927,13 @@ export default function ProviderDetailPage() {
         // Only show if not already in hardcoded list
         // For passthroughModels, include all aliases (model IDs may contain slashes like "anthropic/claude-3")
         if (providerInfo.passthroughModels) return !models.some((m) => m.id === modelId);
-        if (models.some((m) => m.id === modelId)) return false;
-        // Accept "Add Model" aliases, including AddCustomModelModal collision fallbacks
-        return (
-          alias === modelId ||
-          alias === `${providerStorageAlias}-${modelId}` ||
-          alias === `${providerStorageAlias}/${modelId}`
-        );
+        return !models.some((m) => m.id === modelId) && alias === modelId;
       })
       .map(([alias, fullModel]) => ({
         id: fullModel.slice(`${providerStorageAlias}/`.length),
         alias,
         fullModel,
-        source: "alias",
-      }))
-      // Dedupe by model id (multiple aliases may map to same model and cause React key collision)
-      .filter((m, i, arr) => arr.findIndex((x) => x.id === m.id) === i);
-    const customModels = [...registeredCustomModels, ...aliasCustomModels]
-      .filter((m, i, arr) => arr.findIndex((x) => x.id === m.id) === i);
+      }));
 
     return (
       <div className="flex flex-wrap gap-3">
@@ -966,13 +941,13 @@ export default function ProviderDetailPage() {
         {customModels.map((model) => (
           <ModelRow
             key={model.id}
-            model={{ id: model.id, name: model.name }}
+            model={{ id: model.id }}
             fullModel={`${providerDisplayAlias}/${model.id}`}
             alias={model.alias}
             copied={copied}
             onCopy={copy}
             onSetAlias={() => {}}
-            onDeleteAlias={() => model.source === "alias" ? handleDeleteAlias(model.alias) : handleDeleteCustomModel(model.id)}
+            onDeleteAlias={() => handleDeleteAlias(model.alias)}
             testStatus={modelTestResults[model.id]}
             onTest={connections.length > 0 || isFreeNoAuth ? () => handleTestModel(model.id) : undefined}
             isTesting={testingModelId === model.id}
@@ -1015,13 +990,26 @@ export default function ProviderDetailPage() {
           Add Model
         </button>
 
+        {/* Import Qoder models button — only show for qoder provider */}
+        {providerId === "qoder" && connections.some((conn) => conn.isActive !== false) && (
+          <button
+            onClick={handleImportQoderModels}
+            disabled={importingQoderModels}
+            className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-blue-500/40 px-3 py-2 text-xs text-blue-600 dark:text-blue-400 transition-colors hover:border-blue-500 hover:bg-blue-500/5 sm:w-auto disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <span className="material-symbols-outlined text-sm" style={importingQoderModels ? { animation: "spin 1s linear infinite" } : undefined}>
+              {importingQoderModels ? "progress_activity" : "download"}
+            </span>
+            {importingQoderModels ? translate("Fetching...") : translate("Fetch Qoder Models")}
+          </button>
+        )}
+
         {/* Suggested models from provider API — show only models not yet added */}
         {suggestedModels.length > 0 && (() => {
           const addedFullModels = new Set(Object.values(modelAliases));
           const hardcodedIds = new Set(models.map((m) => m.id));
-          const registeredIds = providerCustomModelIds;
           const notAdded = suggestedModels.filter(
-            (m) => !addedFullModels.has(`${providerStorageAlias}/${m.id}`) && !hardcodedIds.has(m.id) && !registeredIds.has(m.id)
+            (m) => !addedFullModels.has(`${providerStorageAlias}/${m.id}`) && !hardcodedIds.has(m.id)
           );
           if (notAdded.length === 0) return null;
           return (
@@ -1032,7 +1020,8 @@ export default function ProviderDetailPage() {
                   <button
                     key={m.id}
                     onClick={async () => {
-                      await handleAddCustomModel(m.id, m.name || m.id);
+                      const alias = m.id.split("/").pop();
+                      await handleSetAlias(m.id, alias, providerStorageAlias);
                     }}
                     className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-black/10 dark:border-white/10 text-xs text-text-muted hover:text-primary hover:border-primary/40 hover:bg-primary/5 transition-colors"
                     title={`${m.name} · ${(m.contextLength / 1000).toFixed(0)}k ctx`}
@@ -1176,28 +1165,6 @@ export default function ProviderDetailPage() {
             </a>
           )}
         </div>
-      )}
-
-      {isToolOnlyProvider && providerInfo.mcpConfig && (
-        <Card>
-          <div className="flex flex-col gap-3">
-            <div className="flex flex-col gap-1">
-              <h2 className="text-lg font-semibold">MCP Provider</h2>
-              <p className="break-all text-sm text-text-muted">
-                {providerInfo.mcpConfig.transport?.toUpperCase?.() || "HTTP"} · {providerInfo.mcpConfig.url}
-              </p>
-            </div>
-            {Array.isArray(providerInfo.mcpConfig.tools) && providerInfo.mcpConfig.tools.length > 0 && (
-              <div className="flex flex-wrap gap-1.5">
-                {providerInfo.mcpConfig.tools.map((tool) => (
-                  <span key={tool} className="rounded bg-black/5 px-2 py-1 text-xs text-text-muted dark:bg-white/5">
-                    {tool}
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-        </Card>
       )}
 
       {isCompatible && providerNode && (
@@ -1369,14 +1336,14 @@ export default function ProviderDetailPage() {
                   </>
                 ) : (
                   <>
-                    {!isCompatible && providerId === "codex" && (
-                      <Button size="sm" variant="secondary" onClick={() => setShowSessionImportModal(true)}>
-                        Import Accounts
-                      </Button>
-                    )}
                     {!isCompatible && providerId === "iflow" && (
                       <Button size="sm" icon="cookie" variant="secondary" onClick={() => setShowIFlowCookieModal(true)}>
                         Cookie
+                      </Button>
+                    )}
+                    {providerId === "codex" && (
+                      <Button size="sm" icon="playlist_add" variant="secondary" onClick={() => setShowBulkImportCodex(true)}>
+                        {translate("Bulk Add")}
                       </Button>
                     )}
                     <Button
@@ -1411,17 +1378,6 @@ export default function ProviderDetailPage() {
               {connectionsList}
               {!isCompatible && (
                 <div className="mt-4 grid grid-cols-1 gap-2 sm:flex">
-                  {providerId === "codex" && (
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onClick={() => setShowSessionImportModal(true)}
-                      title="Import Codex accounts from token or session JSON"
-                      className="w-full sm:w-auto"
-                    >
-                      Import Accounts
-                    </Button>
-                  )}
                   {providerId === "iflow" && (
                     <Button
                       size="sm"
@@ -1432,6 +1388,18 @@ export default function ProviderDetailPage() {
                       className="w-full sm:w-auto"
                     >
                       Cookie
+                    </Button>
+                  )}
+                  {providerId === "codex" && (
+                    <Button
+                      size="sm"
+                      icon="playlist_add"
+                      variant="secondary"
+                      onClick={() => setShowBulkImportCodex(true)}
+                      title={translate("Bulk import codex accounts from JSON")}
+                      className="w-full sm:w-auto"
+                    >
+                      {translate("Bulk Add")}
                     </Button>
                   )}
                   {hasDualAuthModes ? (
@@ -1472,11 +1440,10 @@ export default function ProviderDetailPage() {
       )}
 
       {/* Models */}
-      {showModelsSection && (
       <Card>
         <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <h2 className="text-lg font-semibold">
-            {isToolOnlyProvider && models.length === 0 ? "Custom Model IDs" : "Available Models"}
+            {"Available Models"}
           </h2>
           {!isCompatible && (() => {
             const allIds = [
@@ -1505,7 +1472,6 @@ export default function ProviderDetailPage() {
         )}
         {renderModelsSection()}
       </Card>
-      )}
 
       {bulkActionModal}
 
@@ -1530,12 +1496,6 @@ export default function ProviderDetailPage() {
           onSuccess={handleOAuthSuccess}
           onClose={() => setShowOAuthModal(false)}
         />
-      ) : providerId === "pioneer" ? (
-        <PioneerAuthModal
-          isOpen={showOAuthModal}
-          onSuccess={handleOAuthSuccess}
-          onClose={() => setShowOAuthModal(false)}
-        />
       ) : (
         <OAuthModal
           isOpen={showOAuthModal}
@@ -1550,13 +1510,6 @@ export default function ProviderDetailPage() {
           isOpen={showIFlowCookieModal}
           onSuccess={handleIFlowCookieSuccess}
           onClose={() => setShowIFlowCookieModal(false)}
-        />
-      )}
-      {providerId === "codex" && (
-        <CodexSessionImportModal
-          isOpen={showSessionImportModal}
-          onSuccess={handleOAuthSuccess}
-          onClose={() => setShowSessionImportModal(false)}
         />
       )}
       <AddApiKeyModal
@@ -1597,28 +1550,24 @@ export default function ProviderDetailPage() {
         <AddCustomModelModal
           isOpen={showAddCustomModel}
           providerAlias={providerStorageAlias}
-          existingModelIds={[
-            ...models.map((model) => model.id),
-            ...providerCustomModelIds,
-            ...Object.values(modelAliases)
-              .filter((fullModel) => typeof fullModel === "string" && fullModel.startsWith(`${providerStorageAlias}/`))
-              .map((fullModel) => fullModel.slice(`${providerStorageAlias}/`.length)),
-          ]}
-          onSave={async (modelId, name) => {
-            const saved = await handleAddCustomModel(modelId, name);
-            if (saved) setShowAddCustomModel(false);
-            return saved;
+          providerDisplayAlias={providerDisplayAlias}
+          onSave={async (modelId) => {
+            // For passthrough providers (OpenRouter), use last segment as alias to avoid slash conflicts
+            const alias = providerInfo?.passthroughModels
+              ? modelId.split("/").pop()
+              : modelId;
+            await handleSetAlias(modelId, alias, providerStorageAlias);
+            setShowAddCustomModel(false);
           }}
           onClose={() => setShowAddCustomModel(false)}
         />
       )}
 
-      {providerId === "pioneer" && (
-        <PioneerTrainingJobsModal
-          isOpen={showPioneerJobsModal}
-          onClose={() => { setShowPioneerJobsModal(false); setPioneerJobsConn(null); }}
-          connectionId={pioneerJobsConn?.id}
-          connectionName={pioneerJobsConn?.name || pioneerJobsConn?.email}
+      {providerId === "codex" && (
+        <BulkImportCodexModal
+          isOpen={showBulkImportCodex}
+          onClose={() => setShowBulkImportCodex(false)}
+          onSuccess={fetchConnections}
         />
       )}
 

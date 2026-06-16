@@ -16,7 +16,7 @@ export const UNSUPPORTED_SCHEMA_CONSTRAINTS = [
   // Dependency keywords (not supported)
   "dependencies", "dependentSchemas", "dependentRequired",
   // Other unsupported keywords
-  "title", "deprecated", "if", "then", "else", "contentMediaType", "contentEncoding",
+  "title", "if", "then", "else", "contentMediaType", "contentEncoding",
   // UI/Styling properties (from Cursor tools - NOT JSON Schema standard)
   "cornerRadius", "fillColor", "fontFamily", "fontSize", "fontWeight",
   "gap", "padding", "strokeColor", "strokeThickness", "textColor"
@@ -312,32 +312,6 @@ export function cleanJSONSchemaForAntigravity(schema) {
 
   // Phase 2.5: Infer missing type=object when properties exist (Gemini requirement)
   ensureObjectType(cleaned);
-
-  // Phase 2.7: Convert invalid property values (e.g. property: "object") to proper schemas.
-  // Claude Code tools sometimes have properties like { "field": "object" } where the value
-  // is a plain JSON Schema type string instead of a schema object. Gemini/Vertex rejects these.
-  // Closes #1564.
-  function fixInvalidPropertyValues(obj) {
-    if (!obj || typeof obj !== "object") return;
-    if (Array.isArray(obj)) { obj.forEach(fixInvalidPropertyValues); return; }
-    if (obj.properties && typeof obj.properties === "object" && !Array.isArray(obj.properties)) {
-      for (const [key, val] of Object.entries(obj.properties)) {
-        if (typeof val === "string") {
-          // Convert string type shorthand to proper schema object
-          const t = val.toLowerCase();
-          if (t === "object") obj.properties[key] = { type: "object", properties: {} };
-          else if (["string", "number", "integer", "boolean", "array"].includes(t)) obj.properties[key] = { type: t };
-          else obj.properties[key] = { type: "string", description: val };
-        } else if (val !== null && typeof val === "object") {
-          fixInvalidPropertyValues(val);
-        }
-      }
-    }
-    for (const [key, val] of Object.entries(obj)) {
-      if (key !== "properties" && val && typeof val === "object") fixInvalidPropertyValues(val);
-    }
-  }
-  fixInvalidPropertyValues(cleaned);
 
   // Phase 3: Remove all unsupported keywords at ALL levels (including inside arrays)
   removeUnsupportedKeywords(cleaned, UNSUPPORTED_SCHEMA_CONSTRAINTS);

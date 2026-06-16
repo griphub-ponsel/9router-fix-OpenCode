@@ -1,11 +1,12 @@
 import { detectFormat, getTargetFormat } from "../services/provider.js";
 import { translateRequest } from "../translator/index.js";
 import { FORMATS } from "../translator/formats.js";
+import { normalizeClaudePassthrough } from "../translator/helpers/claudeHelper.js";
 import { COLORS } from "../utils/stream.js";
 import { createStreamController } from "../utils/streamHandler.js";
 import { refreshWithRetry } from "../services/tokenRefresh.js";
 import { createRequestLogger } from "../utils/requestLogger.js";
-import { getModelTargetFormat, getModelStrip, getModelUpstreamId, PROVIDER_ID_TO_ALIAS } from "../config/providerModels.js";
+import { getModelTargetFormat, getModelStrip, getModelUpstreamId, getModelType, PROVIDER_ID_TO_ALIAS } from "../config/providerModels.js";
 import { createErrorResult, parseUpstreamError, formatProviderError } from "../utils/error.js";
 import { HTTP_STATUS } from "../config/runtimeConfig.js";
 import { handleBypassRequest } from "../utils/bypassHandler.js";
@@ -28,8 +29,7 @@ import { compressMessages, formatRtkLog } from "../rtk/index.js";
  * @param {string} options.sourceFormatOverride - Override detected source format (e.g. "openai-responses")
  */
 export async function handleChatCore({ body, modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, clientRawRequest, connectionId, userAgent, apiKey, ccFilterNaming, rtkEnabled, cavemanEnabled, cavemanLevel, sourceFormatOverride, providerThinking }) {
-  const provider = modelInfo.provider;
-  let model = modelInfo.model;
+  const { provider, model } = modelInfo;
   const requestStartTime = Date.now();
 
   const sourceFormat = sourceFormatOverride || detectFormat(body);
@@ -39,17 +39,6 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   if (bypassResponse) return bypassResponse;
 
   const alias = PROVIDER_ID_TO_ALIAS[provider] || provider;
-  const reasoningVariant = parseReasoningVariant(model);
-  if (reasoningVariant) {
-    model = reasoningVariant.model;
-    if (reasoningVariant.effort === "none") {
-      body = { ...body };
-      delete body.reasoning_effort;
-      if (!body.thinking) body.thinking = { type: "disabled" };
-    } else if (!body.reasoning_effort) {
-      body = { ...body, reasoning_effort: reasoningVariant.effort };
-    }
-  }
   const modelTargetFormat = getModelTargetFormat(alias, model);
   const targetFormat = modelTargetFormat || getTargetFormat(provider);
   const stripList = getModelStrip(alias, model);
@@ -103,6 +92,8 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   if (passthrough) {
     log?.debug?.("PASSTHROUGH", `${clientTool} → ${provider} | native lossless`);
     translatedBody = { ...body, model: upstreamModel };
+    // Normalize newer Cowork/CC beta shapes (adaptive thinking, mid-conversation system) the API rejects
+    if (clientTool === "claude") normalizeClaudePassthrough(translatedBody, upstreamModel);
   } else {
     translatedBody = translateRequest(sourceFormat, targetFormat, upstreamModel, body, stream, credentials, provider, reqLogger, stripList, connectionId, clientTool);
     if (!translatedBody) {
@@ -126,6 +117,12 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   // Token savers: applied at the final body just before dispatch
   // Covers both passthrough (source shape) and translated (target shape) flows
   const finalFormat = passthrough ? sourceFormat : targetFormat;
+
+  // TTS models don't support tool messages/function calling
+  if (getModelType(alias, model) === "tts" && translatedBody.messages) {
+    translatedBody.messages = translatedBody.messages.filter(msg => msg.role !== "tool");
+    delete translatedBody.tools;
+  }
 
   // RTK: compress tool_result content
   const rtkStats = compressMessages(translatedBody, rtkEnabled);
@@ -281,16 +278,6 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   // Streaming response
   const { onStreamComplete } = buildOnStreamComplete({ ...sharedCtx });
   return handleStreamingResponse({ ...sharedCtx, providerResponse, sourceFormat, targetFormat, userAgent, reqLogger, toolNameMap, streamController, onStreamComplete });
-}
-
-function parseReasoningVariant(model) {
-  if (typeof model !== "string") return null;
-  const match = model.match(/^(.*)-(none|low|medium|high|xhigh)$/);
-  if (!match) return null;
-  return {
-    model: match[1],
-    effort: match[2] === "xhigh" ? "high" : match[2]
-  };
 }
 
 export function isTokenExpiringSoon(expiresAt, bufferMs = 5 * 60 * 1000) {

@@ -76,13 +76,6 @@ export default function CompatibleModelsSection({ providerStorageAlias, provider
   const [importing, setImporting] = useState(false);
   const [testingModelId, setTestingModelId] = useState(null);
   const [modelTestResults, setModelTestResults] = useState({});
-  // When auto-resolution can't pick a non-conflicting alias we surface a
-  // manual alias input + per-conflict explanation instead of a dead-end alert.
-  // `aliasConflict` holds { modelId, conflicts: [{ alias, takenBy }] } so the
-  // UI can tell the user *which* aliases are taken and by whom.
-  const [aliasConflict, setAliasConflict] = useState(null);
-  const [manualAlias, setManualAlias] = useState("");
-  const [manualError, setManualError] = useState("");
 
   const handleTestModel = async (modelId) => {
     if (testingModelId) return;
@@ -117,104 +110,35 @@ export default function CompatibleModelsSection({ providerStorageAlias, provider
     return parts[parts.length - 1];
   };
 
-  // Build the alias candidate list once so resolveAlias and the conflict UI
-  // stay in sync (any change here automatically appears in the error message).
-  const buildAliasCandidates = (modelId) => {
-    const baseAlias = generateDefaultAlias(modelId);
-    // Order matters:
-    // 1. keep the old short alias when it is free (e.g. "gpt-5.5")
-    // 2. keep the legacy provider-prefixed short alias when it is free
-    //    (e.g. "fm-gpt-5.5")
-    // 3. fall back to the actual provider/model id (e.g. "fm/gpt-5.5").
-    //    This is the correct identity for same-name models across providers
-    //    and avoids forcing a fake "-2" alias.
-    return [baseAlias, `${providerDisplayAlias}-${baseAlias}`, `${providerDisplayAlias}/${modelId}`];
-  };
-
   const resolveAlias = (modelId) => {
     const fullModel = `${providerStorageAlias}/${modelId}`;
     // Skip if this exact model already has an alias
     if (Object.values(modelAliases).includes(fullModel)) return null;
-    for (const candidate of buildAliasCandidates(modelId)) {
-      if (!modelAliases[candidate]) return candidate;
-    }
+    const baseAlias = generateDefaultAlias(modelId);
+    if (!modelAliases[baseAlias]) return baseAlias;
+    const prefixedAlias = `${providerDisplayAlias}-${baseAlias}`;
+    if (!modelAliases[prefixedAlias]) return prefixedAlias;
     return null;
-  };
-
-  // Returns [{ alias, takenBy }] for every candidate that is already used.
-  // Used to populate the manual-alias prompt with actionable info instead of
-  // a generic "all aliases exist" alert.
-  const describeConflicts = (modelId) => {
-    return buildAliasCandidates(modelId)
-      .map((alias) => ({ alias, takenBy: modelAliases[alias] }))
-      .filter((c) => c.takenBy);
   };
 
   const handleAdd = async () => {
     if (!newModel.trim() || adding) return;
     const modelId = newModel.trim();
-    const fullModel = `${providerStorageAlias}/${modelId}`;
-    if (Object.values(modelAliases).includes(fullModel)) {
-      alert(`Model "${modelId}" is already added to this provider.`);
-      return;
-    }
     const resolvedAlias = resolveAlias(modelId);
     if (!resolvedAlias) {
-      // All auto-suggested aliases are taken. Open the manual alias input
-      // panel with a default suggestion the user can edit, plus the list of
-      // conflicting aliases so they know what to avoid.
-      const conflicts = describeConflicts(modelId);
-      setAliasConflict({ modelId, conflicts });
-      setManualAlias(`${providerDisplayAlias}-${generateDefaultAlias(modelId)}-2`);
-      setManualError("");
+      alert("All suggested aliases already exist. Please choose a different model or remove conflicting aliases.");
       return;
     }
 
     setAdding(true);
     try {
-      const saved = await onSetAlias(modelId, resolvedAlias, providerStorageAlias);
-      if (saved) setNewModel("");
+      await onSetAlias(modelId, resolvedAlias, providerStorageAlias);
+      setNewModel("");
     } catch (error) {
       console.log("Error adding model:", error);
     } finally {
       setAdding(false);
     }
-  };
-
-  const handleManualAliasSubmit = async () => {
-    if (!aliasConflict || adding) return;
-    const alias = manualAlias.trim();
-    if (!alias) {
-      setManualError("Alias cannot be empty");
-      return;
-    }
-    if (modelAliases[alias]) {
-      setManualError(`"${alias}" is already taken by ${modelAliases[alias]}`);
-      return;
-    }
-    setAdding(true);
-    setManualError("");
-    try {
-      const saved = await onSetAlias(aliasConflict.modelId, alias, providerStorageAlias);
-      if (saved) {
-        setNewModel("");
-        setAliasConflict(null);
-        setManualAlias("");
-      } else {
-        setManualError("Failed to add model. Check the alert for details.");
-      }
-    } catch (error) {
-      console.log("Error adding model with manual alias:", error);
-      setManualError(error?.message || "Failed to add model");
-    } finally {
-      setAdding(false);
-    }
-  };
-
-  const cancelManualAlias = () => {
-    setAliasConflict(null);
-    setManualAlias("");
-    setManualError("");
   };
 
   const handleImport = async () => {
@@ -241,8 +165,8 @@ export default function CompatibleModelsSection({ providerStorageAlias, provider
         if (!modelId) continue;
         const resolvedAlias = resolveAlias(modelId);
         if (!resolvedAlias) continue;
-        const saved = await onSetAlias(modelId, resolvedAlias, providerStorageAlias);
-        if (saved) importedCount += 1;
+        await onSetAlias(modelId, resolvedAlias, providerStorageAlias);
+        importedCount += 1;
       }
       if (importedCount === 0) {
         alert("No new models were added.");
@@ -287,51 +211,6 @@ export default function CompatibleModelsSection({ providerStorageAlias, provider
         <p className="text-xs text-text-muted">
           Add a connection to enable importing models.
         </p>
-      )}
-
-      {aliasConflict && (
-        <div className="flex flex-col gap-2 p-3 rounded-lg border border-amber-500/40 bg-amber-500/5">
-          <p className="text-sm font-medium">
-            Auto-suggested aliases for &quot;{aliasConflict.modelId}&quot; are already taken
-          </p>
-          {aliasConflict.conflicts.length > 0 && (
-            <ul className="text-xs text-text-muted space-y-0.5">
-              {aliasConflict.conflicts.map((c) => (
-                <li key={c.alias}>
-                  <code className="font-mono">{c.alias}</code>
-                  {" -> "}
-                  <code className="font-mono">{c.takenBy}</code>
-                </li>
-              ))}
-            </ul>
-          )}
-          <p className="text-xs text-text-muted">
-            Pick a custom alias instead, or remove a conflicting alias and try again.
-          </p>
-          <div className="flex items-end gap-2 flex-wrap">
-            <div className="flex-1 min-w-[200px]">
-              <label htmlFor="manual-alias-input" className="text-xs text-text-muted mb-1 block">Custom alias</label>
-              <input
-                id="manual-alias-input"
-                type="text"
-                value={manualAlias}
-                onChange={(e) => { setManualAlias(e.target.value); setManualError(""); }}
-                onKeyDown={(e) => e.key === "Enter" && handleManualAliasSubmit()}
-                placeholder="my-alias"
-                className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary"
-              />
-            </div>
-            <Button size="sm" onClick={handleManualAliasSubmit} disabled={adding}>
-              {adding ? "Adding..." : "Add with this alias"}
-            </Button>
-            <Button size="sm" variant="secondary" onClick={cancelManualAlias} disabled={adding}>
-              Cancel
-            </Button>
-          </div>
-          {manualError && (
-            <p className="text-xs text-red-500">{manualError}</p>
-          )}
-        </div>
       )}
 
       {allModels.length > 0 && (

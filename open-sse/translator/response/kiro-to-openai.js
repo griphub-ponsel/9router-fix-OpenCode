@@ -4,7 +4,6 @@
  */
 import { register } from "../index.js";
 import { FORMATS } from "../formats.js";
-import { stringifyToolArguments } from "../../utils/toolCallArguments.js";
 
 /**
  * Parse Kiro SSE event and convert to OpenAI format
@@ -123,7 +122,6 @@ export function convertKiroToOpenAI(chunk, state) {
     const toolCallId = toolUse.toolUseId || `call_${Date.now()}`;
     const toolName = toolUse.name || "";
     const toolInput = toolUse.input || {};
-    const argumentsStr = stringifyToolArguments(toolName, toolInput) || "{}";
 
     const openaiChunk = {
       id: state.responseId,
@@ -140,7 +138,7 @@ export function convertKiroToOpenAI(chunk, state) {
             type: "function",
             function: {
               name: toolName,
-              arguments: argumentsStr
+              arguments: JSON.stringify(toolInput)
             }
           }]
         },

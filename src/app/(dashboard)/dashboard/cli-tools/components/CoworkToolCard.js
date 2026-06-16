@@ -38,7 +38,6 @@ export default function CoworkToolCard({
   const [message, setMessage] = useState(null);
   const [selectedApiKey, setSelectedApiKey] = useState("");
   const [selectedModels, setSelectedModels] = useState([]);
-  const [newModelBadges, setNewModelBadges] = useState({});
   const [showManualConfigModal, setShowManualConfigModal] = useState(false);
   const [customBaseUrl, setCustomBaseUrl] = useState("");
   const [plugins, setPlugins] = useState([]);
@@ -49,9 +48,7 @@ export default function CoworkToolCard({
   const [modelSelectOpen, setModelSelectOpen] = useState(false);
   const [marketplaceOpen, setMarketplaceOpen] = useState(false);
   const [addMcpOpen, setAddMcpOpen] = useState(false);
-  const [addMcpForm, setAddMcpForm] = useState({ type: "url", name: "", url: "", command: "", args: "" });
-
-  const sortModels = (models) => ([...new Set(models)].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })));
+  const [addMcpForm, setAddMcpForm] = useState({ name: "", url: "" });
 
   useEffect(() => {
     if (apiKeys?.length > 0 && !selectedApiKey) {
@@ -79,7 +76,7 @@ export default function CoworkToolCard({
 
   useEffect(() => {
     if (status?.cowork?.models?.length) {
-      setSelectedModels(sortModels(status.cowork.models));
+      setSelectedModels(status.cowork.models);
     }
     if (status?.cowork?.baseUrl && !customBaseUrl) {
       setCustomBaseUrl(stripV1(status.cowork.baseUrl));
@@ -176,8 +173,7 @@ export default function CoworkToolCard({
         return;
       }
       if (!selectedModels.includes(name)) {
-        setSelectedModels((prev) => sortModels([...prev, name]));
-        setNewModelBadges((prev) => ({ ...prev, [name]: true }));
+        setSelectedModels([...selectedModels, name]);
       }
       setComboModalOpen(false);
       setMessage({ type: "success", text: `Combo "${name}" created and added.` });
@@ -189,18 +185,12 @@ export default function CoworkToolCard({
   const handleAddModel = (model) => {
     const value = model?.value || model?.name || model;
     if (!value || selectedModels.includes(value)) return;
-    setSelectedModels((prev) => sortModels([...prev, value]));
-    setNewModelBadges((prev) => ({ ...prev, [value]: true }));
+    setSelectedModels((prev) => [...prev, value]);
   };
 
   const handleRemoveModel = (model) => {
     const value = model?.value || model?.name || model;
-    setSelectedModels((prev) => sortModels(prev.filter((item) => item !== value)));
-    setNewModelBadges((prev) => {
-      const next = { ...prev };
-      delete next[value];
-      return next;
-    });
+    setSelectedModels((prev) => prev.filter((item) => item !== value));
   };
 
   const handleReset = async () => {
@@ -212,7 +202,6 @@ export default function CoworkToolCard({
       if (res.ok) {
         setMessage({ type: "success", text: "Settings reset successfully" });
         setSelectedModels([]);
-        setNewModelBadges({});
         setPlugins(status?.defaultPlugins || []);
         setLocalPlugins([]);
         setCustomPlugins([]);
@@ -346,14 +335,7 @@ export default function CoworkToolCard({
                       ) : (
                         selectedModels.map((m) => (
                           <span key={m} className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-black/5 dark:bg-white/5 text-text-muted border border-transparent hover:border-border">
-                            <span className="inline-flex items-center gap-1">
-                              <span>{m}</span>
-                              {newModelBadges[m] && (
-                                <span className="shrink-0 rounded bg-emerald-500/15 px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-500">
-                                  New
-                                </span>
-                              )}
-                            </span>
+                            {m}
                             <button onClick={() => handleRemoveModel(m)} className="ml-0.5 hover:text-red-500">
                               <span className="material-symbols-outlined text-[12px]">close</span>
                             </button>
@@ -392,7 +374,7 @@ export default function CoworkToolCard({
                       <div key={p.name} className="flex items-center gap-2 px-2 py-1 bg-surface rounded border border-border">
                         <span className="text-xs font-medium min-w-0 truncate flex-shrink-0">{p.name}</span>
                         <span className="text-[8px] px-1 py-0.5 rounded bg-blue-500/10 text-blue-500 shrink-0">custom</span>
-                        <span className="flex-1 text-[9px] text-text-muted truncate">{p.url || p.command}</span>
+                        <span className="flex-1 text-[9px] text-text-muted truncate">{p.url}</span>
                         <button onClick={() => setCustomPlugins(customPlugins.filter((x) => x.name !== p.name))} className="shrink-0 hover:text-red-500 ml-auto">
                           <span className="material-symbols-outlined text-[12px]">close</span>
                         </button>
@@ -406,7 +388,7 @@ export default function CoworkToolCard({
                       <button onClick={() => setMarketplaceOpen(true)} className="px-2 py-1 rounded border text-xs bg-primary/10 border-primary/40 text-primary hover:bg-primary/20 cursor-pointer whitespace-nowrap">
                         + Browse
                       </button>
-                      <button onClick={() => { setAddMcpForm({ type: "url", name: "", url: "", command: "", args: "" }); setAddMcpOpen(true); }} className="px-2 py-1 rounded border text-xs bg-surface border-border text-text-muted hover:border-primary hover:text-primary cursor-pointer whitespace-nowrap">
+                      <button onClick={() => { setAddMcpForm({ name: "", url: "" }); setAddMcpOpen(true); }} className="px-2 py-1 rounded border text-xs bg-surface border-border text-text-muted hover:border-primary hover:text-primary cursor-pointer whitespace-nowrap">
                         + Custom
                       </button>
                       <a href="https://mcp.so" target="_blank" rel="noopener noreferrer" className="text-[10px] text-text-muted hover:text-primary underline ml-auto">Find MCPs →</a>
@@ -572,17 +554,6 @@ export default function CoworkToolCard({
               </button>
             </div>
 
-            <div className="flex gap-2">
-              <button
-                onClick={() => setAddMcpForm((f) => ({ ...f, type: "url" }))}
-                className={`flex-1 py-1.5 rounded border text-xs font-medium transition-colors ${addMcpForm.type === "url" ? "bg-primary/10 border-primary/40 text-primary" : "border-border text-text-muted hover:border-primary/40"}`}
-              >URL (SSE)</button>
-              <button
-                onClick={() => setAddMcpForm((f) => ({ ...f, type: "cmd" }))}
-                className={`flex-1 py-1.5 rounded border text-xs font-medium transition-colors ${addMcpForm.type === "cmd" ? "bg-primary/10 border-primary/40 text-primary" : "border-border text-text-muted hover:border-primary/40"}`}
-              >Command (stdio)</button>
-            </div>
-
             <div className="flex flex-col gap-2">
               <div className="flex flex-col gap-1">
                 <label className="text-[11px] text-text-muted font-medium">Name</label>
@@ -594,41 +565,16 @@ export default function CoworkToolCard({
                   className="px-2 py-1.5 rounded border border-border bg-surface text-xs outline-none focus:border-primary"
                 />
               </div>
-              {addMcpForm.type === "url" ? (
-                <div className="flex flex-col gap-1">
-                  <label className="text-[11px] text-text-muted font-medium">SSE URL</label>
-                  <input
-                    type="text"
-                    placeholder="https://your-mcp-server.com/sse"
-                    value={addMcpForm.url}
-                    onChange={(e) => setAddMcpForm((f) => ({ ...f, url: e.target.value }))}
-                    className="px-2 py-1.5 rounded border border-border bg-surface text-xs outline-none focus:border-primary"
-                  />
-                </div>
-              ) : (
-                <>
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[11px] text-text-muted font-medium">Command</label>
-                    <input
-                      type="text"
-                      placeholder="npx"
-                      value={addMcpForm.command}
-                      onChange={(e) => setAddMcpForm((f) => ({ ...f, command: e.target.value }))}
-                      className="px-2 py-1.5 rounded border border-border bg-surface text-xs outline-none focus:border-primary"
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[11px] text-text-muted font-medium">Args <span className="font-normal">(comma-separated)</span></label>
-                    <input
-                      type="text"
-                      placeholder="-y, @some/mcp-package"
-                      value={addMcpForm.args}
-                      onChange={(e) => setAddMcpForm((f) => ({ ...f, args: e.target.value }))}
-                      className="px-2 py-1.5 rounded border border-border bg-surface text-xs outline-none focus:border-primary"
-                    />
-                  </div>
-                </>
-              )}
+              <div className="flex flex-col gap-1">
+                <label className="text-[11px] text-text-muted font-medium">SSE URL</label>
+                <input
+                  type="text"
+                  placeholder="https://your-mcp-server.com/sse"
+                  value={addMcpForm.url}
+                  onChange={(e) => setAddMcpForm((f) => ({ ...f, url: e.target.value }))}
+                  className="px-2 py-1.5 rounded border border-border bg-surface text-xs outline-none focus:border-primary"
+                />
+              </div>
             </div>
 
             <div className="flex gap-2 justify-end">
@@ -636,15 +582,8 @@ export default function CoworkToolCard({
               <button
                 onClick={() => {
                   const name = addMcpForm.name.trim();
-                  if (!name) return;
-                  if (addMcpForm.type === "url") {
-                    if (!addMcpForm.url.trim()) return;
-                    setCustomPlugins((prev) => [...prev.filter((x) => x.name !== name), { name, url: addMcpForm.url.trim(), transport: "sse", custom: true }]);
-                  } else {
-                    if (!addMcpForm.command.trim()) return;
-                    const args = addMcpForm.args.split(",").map((a) => a.trim()).filter(Boolean);
-                    setCustomPlugins((prev) => [...prev.filter((x) => x.name !== name), { name, command: addMcpForm.command.trim(), args, custom: true }]);
-                  }
+                  if (!name || !addMcpForm.url.trim()) return;
+                  setCustomPlugins((prev) => [...prev.filter((x) => x.name !== name), { name, url: addMcpForm.url.trim(), transport: "sse", custom: true }]);
                   setAddMcpOpen(false);
                 }}
                 className="px-3 py-1.5 rounded bg-primary text-white text-xs font-medium hover:opacity-90 cursor-pointer"

@@ -20,6 +20,45 @@ import {
   clearXaiSession,
 } from "@/lib/oauth/utils/server";
 
+async function completeXaiManualCode(code, state) {
+  const session = state ? getXaiSessionStatus(state) : null;
+  if (!session) {
+    throw new Error("xAI OAuth session not found; restart the login flow and paste the code again");
+  }
+  if (!code) throw new Error("Missing xAI authorization code");
+
+  try {
+    const tokenData = await exchangeTokens(
+      "xai",
+      code,
+      session.redirectUri,
+      session.codeVerifier,
+      state
+    );
+    const connection = await createProviderConnection({
+      provider: "xai",
+      authType: "oauth",
+      ...tokenData,
+      expiresAt: tokenData.expiresIn
+        ? new Date(Date.now() + tokenData.expiresIn * 1000).toISOString()
+        : null,
+      testStatus: "active",
+    });
+    clearXaiSession(state);
+    stopXaiProxy();
+    return {
+      id: connection.id,
+      provider: connection.provider,
+      email: connection.email,
+      displayName: connection.displayName,
+    };
+  } catch (err) {
+    clearXaiSession(state);
+    stopXaiProxy();
+    throw err;
+  }
+}
+
 /**
  * Dynamic OAuth API Route
  * Handles: authorize, exchange, device-code, poll
@@ -43,54 +82,53 @@ export async function GET(request, { params }) {
     }
 
     if (action === "start-proxy") {
-      if (provider !== "codex" && provider !== "xai-oauth") {
-        return NextResponse.json({ error: "Proxy only supported for codex and xai-oauth" }, { status: 400 });
+      if (!["codex", "xai"].includes(provider)) {
+        return NextResponse.json({ error: "Proxy only supported for codex/xai" }, { status: 400 });
       }
       const appPort = searchParams.get("app_port");
-      if (provider === "codex" && !appPort) {
+      if (!appPort) {
         return NextResponse.json({ error: "Missing app_port" }, { status: 400 });
       }
-      // Optional server-side mode params: register session for auto-exchange
       const state = searchParams.get("state");
       const codeVerifier = searchParams.get("code_verifier");
       const redirectUri = searchParams.get("redirect_uri");
-      const result = provider === "codex"
-        ? await startCodexProxy(Number(appPort))
-        : await startXaiProxy();
+      const result = provider === "xai"
+        ? await startXaiProxy(Number(appPort))
+        : await startCodexProxy(Number(appPort));
       let serverSide = false;
       if (result.success && state && codeVerifier && redirectUri) {
-        serverSide = provider === "codex"
-          ? registerCodexSession({ state, codeVerifier, redirectUri })
-          : registerXaiSession({ state, codeVerifier, redirectUri });
+        serverSide = provider === "xai"
+          ? registerXaiSession({ state, codeVerifier, redirectUri })
+          : registerCodexSession({ state, codeVerifier, redirectUri });
       }
       return NextResponse.json({ ...result, serverSide });
     }
 
     if (action === "poll-status") {
-      if (provider !== "codex" && provider !== "xai-oauth") {
-        return NextResponse.json({ error: "Poll only supported for codex and xai-oauth" }, { status: 400 });
+      if (!["codex", "xai"].includes(provider)) {
+        return NextResponse.json({ error: "Poll only supported for codex/xai" }, { status: 400 });
       }
       const state = searchParams.get("state");
       if (!state) {
         return NextResponse.json({ error: "Missing state" }, { status: 400 });
       }
-      const session = provider === "codex" ? getCodexSessionStatus(state) : getXaiSessionStatus(state);
+      const session = provider === "xai" ? getXaiSessionStatus(state) : getCodexSessionStatus(state);
       if (!session) return NextResponse.json({ status: "unknown" });
       if (session.status === "done" || session.status === "error") {
         const payload = { ...session };
-        if (provider === "codex") clearCodexSession(state);
-        else clearXaiSession(state);
+        if (provider === "xai") clearXaiSession(state);
+        else clearCodexSession(state);
         return NextResponse.json(payload);
       }
       return NextResponse.json({ status: session.status });
     }
 
     if (action === "stop-proxy") {
-      if (provider !== "codex" && provider !== "xai-oauth") {
-        return NextResponse.json({ error: "Proxy only supported for codex and xai-oauth" }, { status: 400 });
+      if (!["codex", "xai"].includes(provider)) {
+        return NextResponse.json({ error: "Proxy only supported for codex/xai" }, { status: 400 });
       }
-      if (provider === "codex") stopCodexProxy();
-      else stopXaiProxy();
+      if (provider === "xai") stopXaiProxy();
+      else stopCodexProxy();
       return NextResponse.json({ success: true });
     }
 
@@ -151,6 +189,48 @@ export async function POST(request, { params }) {
 
     if (action === "exchange") {
       const { code, redirectUri, codeVerifier, state, meta } = body;
+
+      // Detect if "code" is actually a raw JWT access token (starts with eyJ)
+      if (code && code.startsWith("eyJ") && code.includes(".")) {
+        const { extractCodexAccountInfo } = await import("@/lib/oauth/providers");
+        const info = extractCodexAccountInfo(code);
+
+        // Also decode JWT directly for ChatGPT website tokens which use
+        // top-level account_id/plan_type instead of nested openai auth claims
+        let directPayload = {};
+        try {
+          const b64 = code.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+          const padded = b64 + "=".repeat((4 - b64.length % 4) % 4);
+          directPayload = JSON.parse(Buffer.from(padded, "base64").toString("utf8"));
+        } catch {}
+
+        const accountId = info.chatgptAccountId || directPayload.account_id;
+        const planType = info.chatgptPlanType || directPayload.plan_type;
+        const email = info.email || directPayload.email;
+
+        const providerSpecificData = { authMethod: "access_token" };
+        if (accountId) providerSpecificData.chatgptAccountId = accountId;
+        if (planType) providerSpecificData.chatgptPlanType = planType;
+
+        const connection = await createProviderConnection({
+          provider,
+          authType: "access_token",
+          accessToken: code,
+          email: email || null,
+          providerSpecificData,
+          testStatus: "active",
+        });
+
+        return NextResponse.json({
+          success: true,
+          connection: {
+            id: connection.id,
+            provider: connection.provider,
+            email: connection.email,
+            displayName: connection.displayName,
+          }
+        });
+      }
 
       // Cline uses authorization_code without PKCE
       const noPkceExchangeProviders = ["cline"];
@@ -244,6 +324,15 @@ export async function POST(request, { params }) {
         errorDescription: result.errorDescription,
         pending: isPending,
       });
+    }
+
+    if (action === "manual-code") {
+      if (provider !== "xai") {
+        return NextResponse.json({ error: "Manual code only supported for xai" }, { status: 400 });
+      }
+      const { code, state } = body;
+      const connection = await completeXaiManualCode(String(code || "").trim(), String(state || "").trim());
+      return NextResponse.json({ success: true, connection });
     }
 
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });

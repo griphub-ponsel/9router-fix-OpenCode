@@ -1,6 +1,4 @@
 import crypto from "crypto";
-import fs from "fs";
-import path from "path";
 import { BaseExecutor } from "./base.js";
 import { PROVIDERS } from "../config/providers.js";
 import { OAUTH_ENDPOINTS, ANTIGRAVITY_HEADERS, INTERNAL_REQUEST_HEADER, AG_DEFAULT_TOOLS, AG_TOOL_SUFFIX } from "../config/appConstants.js";
@@ -19,85 +17,6 @@ function sanitizeFunctionName(name) {
 
 const MAX_RETRY_AFTER_MS = 10000;
 const MAX_ANTIGRAVITY_OUTPUT_TOKENS = 16384;
-const GEMINI_BUILTIN_TOOLS = new Set(["google_search", "web_search", "search_web", "googleSearch"]);
-
-const ANTIGRAVITY_WIRE_MODEL_OVERRIDES = new Map([
-  ["gemini-3.5-flash-high", "gemini-3-flash-agent"],
-  ["gemini-3.5-flash", "gemini-3.5-flash-low"],
-  ["gemini-3.5-flash-medium", "gemini-3.5-flash-low"],
-  ["gemini-3-flash-high", "gemini-3-flash"],
-  ["gemini-3-flash-medium", "gemini-3-flash"],
-  ["gemini-3-flash-low", "gemini-3-flash"],
-]);
-
-function normalizeModelId(model) {
-  return String(model || "").trim().replace(/^models\//i, "").toLowerCase();
-}
-
-export function resolveAntigravityWireModel(model) {
-  return ANTIGRAVITY_WIRE_MODEL_OVERRIDES.get(normalizeModelId(model)) || model;
-}
-
-export function getAntigravityDefaultThinkingLevel(model) {
-  switch (normalizeModelId(model)) {
-    case "gemini-3.5-flash-high":
-      return "high";
-    case "gemini-3.5-flash-medium":
-      return "medium";
-    default:
-      return "";
-  }
-}
-
-function hasExplicitThinkingConfig(generationConfig) {
-  const thinkingConfig = generationConfig?.thinkingConfig;
-  if (!thinkingConfig || typeof thinkingConfig !== "object") return false;
-  return (
-    thinkingConfig.thinkingLevel != null ||
-    thinkingConfig.thinking_level != null ||
-    thinkingConfig.thinkingBudget != null ||
-    thinkingConfig.thinking_budget != null
-  );
-}
-
-function applyDefaultVariantThinkingConfig(generationConfig, model) {
-  const thinkingLevel = getAntigravityDefaultThinkingLevel(model);
-  if (!thinkingLevel || hasExplicitThinkingConfig(generationConfig)) {
-    return generationConfig;
-  }
-
-  return {
-    ...generationConfig,
-    thinkingConfig: {
-      ...(generationConfig.thinkingConfig || {}),
-      thinkingLevel,
-      includeThoughts: true,
-    },
-  };
-}
-
-export function shouldRetryAntigravityEndpointUnavailable(status, bodyText) {
-  if (status === HTTP_STATUS.NOT_FOUND) return true;
-  if (status !== HTTP_STATUS.FORBIDDEN || !bodyText) return false;
-
-  const message = String(bodyText).toLowerCase();
-  return (
-    message.includes("gemini for google cloud api (staging)") &&
-    message.includes("staging-cloudaicompanion.sandbox.googleapis.com") &&
-    message.includes("disabled")
-  );
-}
-
-function collectHistoryToolNames(contents = []) {
-  const names = new Set();
-  for (const content of contents) {
-    for (const part of content.parts || []) {
-      const name = part.functionCall?.name || part.functionResponse?.name;
-      if (name) names.add(sanitizeFunctionName(name));
-    }
-  }
-  return names;
-}
 
 export class AntigravityExecutor extends BaseExecutor {
   constructor() {
@@ -124,7 +43,6 @@ export class AntigravityExecutor extends BaseExecutor {
 
   transformRequest(model, body, stream, credentials) {
     const projectId = credentials?.projectId || this.generateProjectId();
-    const wireModel = resolveAntigravityWireModel(model);
 
     // Fix contents for Claude models via Antigravity
     const contents = body.request?.contents?.map(c => {
@@ -151,37 +69,22 @@ export class AntigravityExecutor extends BaseExecutor {
     if (tools && tools.length > 0) {
       // Merge all groups into a single functionDeclarations group (Gemini expects 1 group)
       const allDeclarations = tools.flatMap(group =>
-        (group.functionDeclarations || [])
-          .filter(fn => !GEMINI_BUILTIN_TOOLS.has(fn.name))
-          .map(fn => ({
-            ...fn,
-            name: sanitizeFunctionName(fn.name),
-            parameters: fn.parameters
-              ? cleanJSONSchemaForAntigravity(structuredClone(fn.parameters))
-              : { type: "object", properties: { reason: { type: "string", description: "Brief explanation" } }, required: ["reason"] }
-          }))
+        (group.functionDeclarations || []).map(fn => ({
+          ...fn,
+          name: sanitizeFunctionName(fn.name),
+          parameters: fn.parameters
+            ? cleanJSONSchemaForAntigravity(structuredClone(fn.parameters))
+            : { type: "object", properties: { reason: { type: "string", description: "Brief explanation" } }, required: ["reason"] }
+        }))
       );
-
-      const declaredNames = new Set(allDeclarations.map(fn => fn.name));
-      for (const name of collectHistoryToolNames(contents)) {
-        if (declaredNames.has(name) || GEMINI_BUILTIN_TOOLS.has(name)) continue;
-        declaredNames.add(name);
-        allDeclarations.push({
-          name,
-          description: "Historical tool call from the conversation context.",
-          parameters: { type: "object", properties: {} }
-        });
-      }
-
-      tools = allDeclarations.length > 0 ? [{ functionDeclarations: allDeclarations }] : undefined;
+      tools = allDeclarations.length > 0 ? [{ functionDeclarations: allDeclarations }] : [];
     }
 
     const { tools: _originalTools, toolConfig: _originalToolConfig, ...requestWithoutTools } = body.request || {};
-    let generationConfig = { ...(requestWithoutTools.generationConfig || {}) };
+    const generationConfig = { ...(requestWithoutTools.generationConfig || {}) };
     if (generationConfig.maxOutputTokens > MAX_ANTIGRAVITY_OUTPUT_TOKENS) {
       generationConfig.maxOutputTokens = MAX_ANTIGRAVITY_OUTPUT_TOKENS;
     }
-    generationConfig = applyDefaultVariantThinkingConfig(generationConfig, model);
 
     const transformedRequest = {
       ...requestWithoutTools,
@@ -196,7 +99,7 @@ export class AntigravityExecutor extends BaseExecutor {
     return {
       ...body,
       project: projectId,
-      model: wireModel,
+      model: model,
       userAgent: "antigravity",
       requestType: "agent",
       requestId: `agent-${crypto.randomUUID()}`,
@@ -323,26 +226,6 @@ export class AntigravityExecutor extends BaseExecutor {
           body: JSON.stringify(transformedBody),
           signal
         }, proxyOptions);
-
-        if ((response.status === HTTP_STATUS.NOT_FOUND || response.status === HTTP_STATUS.FORBIDDEN) && urlIndex + 1 < fallbackCount) {
-          const errorBody = await response.clone().text().catch(() => "");
-          if (shouldRetryAntigravityEndpointUnavailable(response.status, errorBody)) {
-            log?.debug?.("RETRY", `${response.status} on ${url}, trying fallback ${urlIndex + 1}`);
-            lastStatus = response.status;
-            continue;
-          }
-        }
-
-        if (response.status === HTTP_STATUS.BAD_REQUEST) {
-          try {
-            const debugDir = path.join(process.cwd(), "logs");
-            fs.mkdirSync(debugDir, { recursive: true });
-            fs.writeFileSync(
-              path.join(debugDir, "antigravity-last-400-request.json"),
-              JSON.stringify({ url, body: transformedBody }, null, 2)
-            );
-          } catch { }
-        }
 
         if (response.status === HTTP_STATUS.RATE_LIMITED || response.status === HTTP_STATUS.SERVICE_UNAVAILABLE) {
           // Try to get retry time from headers first

@@ -18,6 +18,23 @@
 export const KIRO_AGENTIC_SUFFIX = "-agentic";
 export const KIRO_THINKING_SUFFIX = "-thinking";
 
+// Public default CodeWhisperer profile ARNs (us-east-1), keyed by auth method.
+// Used when an account cannot resolve its own profileArn. Builder ID and social
+// (Google/GitHub) sign-ins map to different shared profiles.
+export const KIRO_DEFAULT_PROFILE_ARNS = {
+  "builder-id": "arn:aws:codewhisperer:us-east-1:638616132270:profile/AAAACCCCXXXX",
+  social: "arn:aws:codewhisperer:us-east-1:699475941385:profile/EHGA3GRVQMUK",
+};
+
+// Back-compat single default (Builder ID).
+export const KIRO_DEFAULT_PROFILE_ARN = KIRO_DEFAULT_PROFILE_ARNS["builder-id"];
+
+/** Resolve the shared default profileArn for a given auth method. */
+export function resolveDefaultProfileArn(authMethod) {
+  const social = authMethod === "google" || authMethod === "github";
+  return social ? KIRO_DEFAULT_PROFILE_ARNS.social : KIRO_DEFAULT_PROFILE_ARNS["builder-id"];
+}
+
 export const KIRO_THINKING_BUDGET_DEFAULT = 16000;
 
 export const KIRO_AGENTIC_SYSTEM_PROMPT = `
@@ -33,15 +50,9 @@ You MUST follow these rules for ALL file operations. Violation causes server tim
 ## MANDATORY CHUNKED WRITE STRATEGY
 
 ### For NEW FILES (>300 lines total):
-1. FIRST: Write initial chunk (first 250-300 lines) using only the write/create-file tool actually listed in the available tools
-2. THEN: Append remaining content in 250-300 line chunks only if an append tool is actually listed
+1. FIRST: Write initial chunk (first 250-300 lines) using write_to_file/fsWrite
+2. THEN: Append remaining content in 250-300 line chunks using file append operations
 3. REPEAT: Continue appending until complete
-
-### TOOL SCHEMA SAFETY
-- Use exact tool names and exact parameter names from the available tool schema.
-- If the available tool is OpenCode 'write', every call MUST include both 'filePath' and 'content' as strings.
-- NEVER call OpenCode 'write' with only a path/filePath. The full chunk text belongs in 'content'.
-- Do not invent tools such as write_to_file, fsWrite, or append unless they are explicitly listed.
 
 ### For EDITING EXISTING FILES:
 1. Use surgical edits (apply_diff/targeted edits) - change ONLY what's needed
@@ -51,13 +62,13 @@ You MUST follow these rules for ALL file operations. Violation causes server tim
 ### For LARGE CODE GENERATION:
 1. Generate in logical sections (imports, types, functions separately)
 2. Write each section as a separate operation
-3. Use append operations for subsequent sections only when an append tool is available
+3. Use append operations for subsequent sections
 
 ## EXAMPLES OF CORRECT BEHAVIOR
 
 CORRECT: Writing a 600-line file
 - Operation 1: Write lines 1-300 (initial file creation)
-- Operation 2: Append lines 301-600 if append is available; otherwise use the safest available edit tool with the exact schema
+- Operation 2: Append lines 301-600
 
 CORRECT: Editing multiple functions
 - Operation 1: Edit function A

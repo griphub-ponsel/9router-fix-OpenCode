@@ -2,8 +2,9 @@
  * Usage Fetcher - Get usage data from provider APIs
  */
 
-import { ANTIGRAVITY_VERSION, CLIENT_METADATA, getPlatformUserAgent } from "../config/appConstants.js";
+import { CLIENT_METADATA, getPlatformUserAgent } from "../config/appConstants.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
+import { resolveDefaultProfileArn } from "../config/kiroConstants.js";
 
 // GitHub API config
 const GITHUB_CONFIG = {
@@ -29,6 +30,11 @@ const MINIMAX_USAGE_URLS = {
   ],
 };
 
+// Vercel AI Gateway credits endpoint
+// Returns { balance: "95.50", total_used: "4.50" } (USD as decimal strings).
+// Docs: https://vercel.com/docs/ai-gateway/usage
+const VERCEL_AI_GATEWAY_CREDITS_URL = "https://ai-gateway.vercel.sh/v1/credits";
+
 // Antigravity API config (from Quotio)
 const ANTIGRAVITY_CONFIG = {
   quotaApiUrl: "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
@@ -38,65 +44,6 @@ const ANTIGRAVITY_CONFIG = {
   clientSecret: "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",
   userAgent: getPlatformUserAgent(),
 };
-
-const ANTIGRAVITY_QUOTA_MODEL_ALIASES = {
-  "gemini-3-flash-agent": {
-    id: "gemini-3.5-flash-high",
-    displayName: "Gemini 3.5 Flash (High)",
-  },
-  "gemini-3.5-flash-low": {
-    id: "gemini-3.5-flash-medium",
-    displayName: "Gemini 3.5 Flash (Medium)",
-  },
-  "gemini-3.5-flash-high": {
-    id: "gemini-3.5-flash-high",
-    displayName: "Gemini 3.5 Flash (High)",
-  },
-  "gemini-3.5-flash-medium": {
-    id: "gemini-3.5-flash-medium",
-    displayName: "Gemini 3.5 Flash (Medium)",
-  },
-  "gemini-3.5-flash": {
-    id: "gemini-3.5-flash",
-    displayName: "Gemini 3.5 Flash",
-  },
-};
-
-const ANTIGRAVITY_IMPORTANT_MODELS = new Set([
-  "claude-opus-4-6-thinking",
-  "claude-sonnet-4-6",
-  "gemini-3.1-pro-high",
-  "gemini-3.1-pro-low",
-  "gemini-3-flash",
-  "gemini-3.5-flash",
-  "gemini-3.5-flash-high",
-  "gemini-3.5-flash-medium",
-  "gemini-3-flash-agent",
-  "gemini-3.5-flash-low",
-  "gpt-oss-120b-medium",
-]);
-
-export function normalizeAntigravityQuotaModel(modelKey, displayName = "") {
-  const rawKey = String(modelKey || "").trim();
-  const normalizedKey = rawKey.toLowerCase();
-  const rawDisplayName = String(displayName || "").trim();
-  const normalizedDisplayName = rawDisplayName.toLowerCase();
-
-  const alias = ANTIGRAVITY_QUOTA_MODEL_ALIASES[normalizedKey];
-  if (alias) return alias;
-
-  if (normalizedDisplayName.includes("gemini 3.5 flash (high)")) {
-    return ANTIGRAVITY_QUOTA_MODEL_ALIASES["gemini-3.5-flash-high"];
-  }
-  if (normalizedDisplayName.includes("gemini 3.5 flash (medium)")) {
-    return ANTIGRAVITY_QUOTA_MODEL_ALIASES["gemini-3.5-flash-medium"];
-  }
-
-  return {
-    id: rawKey,
-    displayName: rawDisplayName || rawKey,
-  };
-}
 
 // Codex (OpenAI) API config
 const CODEX_CONFIG = {
@@ -150,6 +97,8 @@ export async function getUsageForProvider(connection, proxyOptions = null) {
     case "minimax":
     case "minimax-cn":
       return await getMiniMaxUsage(apiKey, provider, proxyOptions);
+    case "vercel-ai-gateway":
+      return await getVercelAiGatewayUsage(apiKey, proxyOptions);
     default:
       return { message: `Usage API not implemented for ${provider}` };
   }
@@ -419,7 +368,7 @@ async function getAntigravityUsage(accessToken, providerSpecificData, proxyOptio
           "User-Agent": ANTIGRAVITY_CONFIG.userAgent,
           "Content-Type": "application/json",
           "X-Client-Name": "antigravity",
-          "X-Client-Version": ANTIGRAVITY_VERSION,
+          "X-Client-Version": "1.107.0",
           "x-request-source": "local", // MITM bypass
         },
         body: JSON.stringify({
@@ -458,6 +407,7 @@ async function getAntigravityUsage(accessToken, providerSpecificData, proxyOptio
       const importantModels = [
         'gemini-3-flash-agent',
         'gemini-3.5-flash-low',
+        'gemini-3.5-flash-extra-low',
         'gemini-pro-agent',
         'gemini-3.1-pro-low',
         'claude-sonnet-4-6',
@@ -472,10 +422,8 @@ async function getAntigravityUsage(accessToken, providerSpecificData, proxyOptio
           continue;
         }
 
-        const quotaModel = normalizeAntigravityQuotaModel(modelKey, info.displayName);
-
         // Skip internal models and non-important models
-        if (!ANTIGRAVITY_IMPORTANT_MODELS.has(quotaModel.id)) {
+        if (info.isInternal || !importantModels.includes(modelKey)) {
           continue;
         }
 
@@ -487,14 +435,14 @@ async function getAntigravityUsage(accessToken, providerSpecificData, proxyOptio
         const remaining = Math.round(total * remainingFraction);
         const used = total - remaining;
 
-        // Use normalized public key (matches PROVIDER_MODELS ag ids)
-        quotas[quotaModel.id] = {
+        // Use modelKey as key (matches PROVIDER_MODELS id)
+        quotas[modelKey] = {
           used,
           total,
           resetAt: parseResetTime(info.quotaInfo.resetTime),
           remainingPercentage,
           unlimited: false,
-          displayName: quotaModel.displayName || info.displayName || quotaModel.id,
+          displayName: info.displayName || modelKey,
         };
       }
     }
@@ -813,10 +761,8 @@ function parseKiroQuotaData(data) {
 }
 
 async function getKiroUsage(accessToken, providerSpecificData, proxyOptions = null) {
-  // Default profileArn fallback
-  const DEFAULT_PROFILE_ARN = "arn:aws:codewhisperer:us-east-1:638616132270:profile/AAAACCCCXXXX";
-  const profileArn = providerSpecificData?.profileArn || DEFAULT_PROFILE_ARN;
   const authMethod = providerSpecificData?.authMethod || "builder-id";
+  const profileArn = providerSpecificData?.profileArn || resolveDefaultProfileArn(authMethod);
 
   const getUsageParams = new URLSearchParams({
     isEmailRequired: "true",
@@ -1262,6 +1208,89 @@ async function getMiniMaxUsage(apiKey, provider, proxyOptions = null) {
   }
 
   return { message: lastErrorMessage ? `MiniMax connected. Unable to fetch usage: ${lastErrorMessage}` : "MiniMax connected. Unable to fetch usage." };
+}
+
+
+/**
+ * Vercel AI Gateway usage — credit balance for the API key
+ *
+ * Calls GET /v1/credits which returns:
+ *   { "balance": "95.50", "total_used": "4.50" }   (USD as decimal strings)
+ *
+ * We surface this as a single "Balance ($)" quota row so the existing
+ * QuotaTable / progress-bar UI can render it. used = total_used,
+ * total = balance + total_used (the original credit allotment), so the
+ * remaining percentage equals balance / total.
+ *
+ * Docs: https://vercel.com/docs/ai-gateway/usage
+ */
+async function getVercelAiGatewayUsage(apiKey, proxyOptions = null) {
+  if (!apiKey) {
+    return { message: "Vercel AI Gateway API key not available." };
+  }
+
+  try {
+    const response = await proxyAwareFetch(VERCEL_AI_GATEWAY_CREDITS_URL, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        Accept: "application/json",
+      },
+    }, proxyOptions);
+
+    if (response.status === 401 || response.status === 403) {
+      return { message: "Vercel AI Gateway API key invalid or expired." };
+    }
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => "");
+      const trimmed = errorText ? `: ${errorText.slice(0, 200)}` : "";
+      return { message: `Vercel AI Gateway credits API error (${response.status})${trimmed}` };
+    }
+
+    const data = await response.json();
+
+    // Vercel returns numeric strings; coerce safely.
+    const balance = Number(data?.balance) || 0;
+    const totalUsed = Number(data?.total_used) || 0;
+
+    // Vercel gives $5/month free credit. The API doesn't return the
+    // monthly allocation so we use the known constant as the denominator.
+    const MONTHLY_CREDIT = 5;
+    const remainingPercentage = (balance / MONTHLY_CREDIT) * 100;
+
+    if (balance <= 0 && totalUsed <= 0) {
+      return {
+        plan: "Pay-as-you-go",
+        message: "Vercel AI Gateway connected. No credit allocation found (BYOK or unfunded account).",
+        quotas: {},
+      };
+    }
+
+    // "Used (USD)": how much has been spent this month (no fixed cap → unlimited).
+    // "Remaining (USD)": balance remaining out of the $5 monthly allocation.
+    return {
+      plan: "Pay-as-you-go",
+      quotas: {
+        "Used (USD)": {
+          used: totalUsed,
+          total: 0,
+          remaining: 0,
+          remainingPercentage: 100,
+          unlimited: true,
+        },
+        "Remaining (USD)": {
+          used: balance,
+          total: MONTHLY_CREDIT,
+          remaining: balance,
+          remainingPercentage,
+          unlimited: false,
+        },
+      },
+    };
+  } catch (error) {
+    return { message: `Vercel AI Gateway error: ${error.message}` };
+  }
 }
 
 async function getQoderUsage(accessToken, proxyOptions = null) {

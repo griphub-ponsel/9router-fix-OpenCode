@@ -1,5 +1,14 @@
 import { AI_PROVIDERS } from "../shared/constants/providers.js";
 
+/**
+ * Detect xAI Grok models by id pattern (grok-*, Grok_*, etc).
+ * @param {string} modelId
+ * @returns {boolean}
+ */
+export function isXaiModel(modelId) {
+  return typeof modelId === "string" && /^grok[-_]/i.test(modelId.trim());
+}
+
 export function normalizeProviderId(provider) {
   if (typeof provider !== "string") return provider;
 
@@ -22,10 +31,10 @@ export function extractNotionToken(rawValue, fallbackCookie = "") {
     if (!raw) continue;
 
     const tokenMatch = raw.match(/(?:^|;\s*)token_v2=([^;]+)/i);
-    if (tokenMatch?.[1]) return tokenMatch[1].trim().replace(/^['"]|['"]$/g, "");
+    if (tokenMatch?.[1]) return tokenMatch[1].trim().replace(/^[']|[']$/g, "").replace(/^["]|["]$/g, "");
 
     if (!raw.includes(";") && !raw.includes("=")) {
-      return raw.replace(/^['"]|['"]$/g, "");
+      return raw.replace(/^[']|[']$/g, "").replace(/^["]|["]$/g, "");
     }
   }
   return "";
@@ -34,7 +43,7 @@ export function extractNotionToken(rawValue, fallbackCookie = "") {
 export function extractNotionUserId(rawCookie = "") {
   const raw = String(rawCookie || "").trim().replace(/^Cookie:\s*/i, "");
   const match = raw.match(/(?:^|;\s*)notion_user_id=([^;]+)/i);
-  return match?.[1]?.trim().replace(/^['"]|['"]$/g, "") || "";
+  return match?.[1]?.trim().replace(/^[']|[']$/g, "").replace(/^["]|["]$/g, "") || "";
 }
 
 export function normalizeProviderSpecificData(provider, body = {}, providerSpecificData = null) {

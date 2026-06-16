@@ -18,29 +18,6 @@ const DEFAULT_PLUGINS = [
     oauth: true,
     toolNames: ["tavily_search", "tavily_extract", "tavily_crawl", "tavily_map"],
   },
-  {
-    name: "notion",
-    title: "Notion",
-    description: "Search, create, edit, and organize Notion workspace content",
-    url: "https://mcp.notion.com/mcp",
-    transport: "http",
-    oauth: true,
-    toolNames: [
-      "search",
-      "fetch",
-      "create-pages",
-      "update-page",
-      "move-pages",
-      "duplicate-page",
-      "create-database",
-      "update-database",
-      "create-comment",
-      "get-comments",
-      "get-users",
-      "get-self",
-      "get-user",
-    ],
-  },
 ];
 
 // Local stdio plugins bridged via inline SSE endpoint on the app's port.
@@ -92,7 +69,4 @@ function buildManagedMcpServers(plugins) {
   return out;
 }
 
-// Allowlist of executables that may be spawned for custom stdio MCP plugins.
-const ALLOWED_MCP_COMMANDS = new Set(["npx", "node", "uvx", "python", "python3", "bunx", "bun"]);
-
-module.exports = { DEFAULT_PLUGINS, LOCAL_STDIO_PLUGINS, ALLOWED_MCP_COMMANDS, buildManagedMcpServers };
+module.exports = { DEFAULT_PLUGINS, LOCAL_STDIO_PLUGINS, buildManagedMcpServers };

@@ -13,6 +13,13 @@ export class DefaultExecutor extends BaseExecutor {
 
   transformRequest(model, body) {
     const transformed = this.applyJsonSchemaFallback(body);
+
+    if (transformed && typeof transformed === "object") {
+      if (this.provider === "cerebras" || this.provider === "mistral") {
+        delete transformed.client_metadata;
+      }
+    }
+
     return injectReasoningContent({ provider: this.provider, model, body: transformed });
   }
 
@@ -121,11 +128,6 @@ export class DefaultExecutor extends BaseExecutor {
         headers["x-api-key"] = credentials.apiKey || credentials.accessToken;
         if (this.provider === "kimi-coding") Object.assign(headers, buildKimiHeaders());
         break;
-      case "pioneer":
-        // Pioneer AI accepts X-API-Key (preferred) or Bearer; we use X-API-Key
-        // because the FE bundle and docs both standardize on it.
-        headers["X-API-Key"] = credentials.apiKey || credentials.accessToken;
-        break;
       default:
         if (this.provider?.startsWith?.("anthropic-compatible-")) {
           if (credentials.apiKey) {
@@ -162,6 +164,12 @@ export class DefaultExecutor extends BaseExecutor {
       const baseUrl = credentials?.providerSpecificData?.baseUrl || "";
       const isOfficialAnthropic = baseUrl === "" || baseUrl.includes("api.anthropic.com");
       if (!isOfficialAnthropic) {
+        // Some third-party Anthropic-compatible gateways require Bearer auth in
+        // addition to x-api-key. Send both (x-api-key already set above) so
+        // gateways that read either header succeed.
+        if (credentials.apiKey && !headers["Authorization"]) {
+          headers["Authorization"] = `Bearer ${credentials.apiKey}`;
+        }
         delete headers["anthropic-dangerous-direct-browser-access"];
         delete headers["Anthropic-Dangerous-Direct-Browser-Access"];
         delete headers["x-app"];

@@ -2,6 +2,9 @@ import { FORMATS } from "../../translator/formats.js";
 import { needsTranslation } from "../../translator/index.js";
 import { createSSETransformStreamWithLogger, createPassthroughStreamWithLogger } from "../../utils/stream.js";
 import { pipeWithDisconnect } from "../../utils/streamHandler.js";
+import { PROVIDERS } from "../../config/providers.js";
+import { STREAM_STALL_TIMEOUT_MS } from "../../config/runtimeConfig.js";
+import { buildAbortedResponsesTerminalBytes } from "../../utils/responsesStreamHelpers.js";
 import { buildRequestDetail, extractRequestConfig, saveUsageStats } from "./requestDetail.js";
 import { saveRequestDetail } from "@/lib/usageDb.js";
 
@@ -43,7 +46,12 @@ export function handleStreamingResponse({ providerResponse, provider, model, sou
   if (onRequestSuccess) onRequestSuccess();
 
   const transformStream = buildTransformStream({ provider, sourceFormat, targetFormat, userAgent, reqLogger, toolNameMap, model, connectionId, body, onStreamComplete, apiKey });
-  const transformedBody = pipeWithDisconnect(providerResponse, transformStream, streamController);
+
+  // Responses passthrough: synthesize response.failed + [DONE] if the stream aborts/stalls before a terminal event
+  const isResponsesPassthrough = sourceFormat === FORMATS.OPENAI_RESPONSES && targetFormat === FORMATS.OPENAI_RESPONSES;
+  const onAbortTerminal = isResponsesPassthrough ? buildAbortedResponsesTerminalBytes : null;
+  const stallTimeoutMs = PROVIDERS[provider]?.stallTimeoutMs || STREAM_STALL_TIMEOUT_MS;
+  const transformedBody = pipeWithDisconnect(providerResponse, transformStream, streamController, onAbortTerminal, stallTimeoutMs);
 
   const streamDetailId = `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
   saveRequestDetail(buildRequestDetail({
@@ -93,17 +101,6 @@ export function buildOnStreamComplete({ provider, model, connectionId, apiKey, r
     });
 
     saveUsageStats({ provider, model, tokens: usage, connectionId, apiKey, endpoint: clientRawRequest?.endpoint, label: "STREAM USAGE" });
-
-    // Detect suspicious near-empty response when tools were present. Closes #1382.
-    // DeepSeek and GLM occasionally return ~0 useful tokens when given 5+ tools.
-    // The response is already forwarded so combo fallback can't happen retroactively,
-    // but a clear log helps users diagnose why their agentic session returned empty.
-    const outTokens = usage?.completion_tokens ?? usage?.output_tokens ?? 0;
-    const hasTools = Array.isArray(body?.tools) && body.tools.length >= 5;
-    if (hasTools && outTokens > 0 && outTokens < 50) {
-      const COLORS = { yellow: "\x1b[33m", reset: "\x1b[0m" };
-      console.warn(`${COLORS.yellow}[WARN] [EMPTY-RESPONSE] ${provider?.toUpperCase()} | ${model} | out=${outTokens} tok but ${body.tools.length} tools sent — provider may not handle large tool lists. Remove this provider from tool-heavy combos.${COLORS.reset}`);
-    }
   };
 
   return { onStreamComplete, streamDetailId };

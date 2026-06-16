@@ -92,7 +92,7 @@ export class AntigravityService {
 
   /**
    * Get metadata object for loadCodeAssist / onboardUser API calls.
-    * Uses numeric enum values matching Antigravity binary ClientMetadata.
+   * Uses numeric enum values matching Antigravity binary ClientMetadata.
    */
   getMetadata() {
     return getOAuthClientMetadata();

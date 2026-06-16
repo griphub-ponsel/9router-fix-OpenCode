@@ -101,7 +101,6 @@ export default function ProvidersPage() {
   const [providerNodes, setProviderNodes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAllApikey, setShowAllApikey] = useState(false);
-  const [showConnectedOnly, setShowConnectedOnly] = useState(false);
   const [showAddCompatibleModal, setShowAddCompatibleModal] = useState(false);
   const [showAddAnthropicCompatibleModal, setShowAddAnthropicCompatibleModal] =
     useState(false);
@@ -262,7 +261,7 @@ export default function ProvidersPage() {
       textIcon: "OC",
       apiType: node.apiType,
     }))
-    .filter((p) => matchSearch(p.name) && (!showConnectedOnly || getProviderStats(p.id, "apikey").total > 0));
+    .filter((p) => matchSearch(p.name));
 
   const anthropicCompatibleProviders = providerNodes
     .filter((node) => node.type === "anthropic-compatible")
@@ -272,46 +271,25 @@ export default function ProvidersPage() {
       color: "#D97757",
       textIcon: "AC",
     }))
-    .filter((p) => matchSearch(p.name) && (!showConnectedOnly || getProviderStats(p.id, "apikey").total > 0));
+    .filter((p) => matchSearch(p.name));
 
   const oauthEntries = Object.entries(OAUTH_PROVIDERS).filter(
-    ([key, info]) => {
-      if (info.hidden || !matchSearch(info.name)) return false;
-      if (showConnectedOnly && getProviderStats(key, "oauth").total === 0) return false;
-      return true;
-    },
+    ([, info]) => !info.hidden && matchSearch(info.name),
   );
   const freeEntries = Object.entries(FREE_PROVIDERS).filter(
-    ([key, info]) => {
-      if (info.hidden || !matchSearch(info.name)) return false;
-      if (showConnectedOnly && getProviderStats(key, "oauth").total === 0) return false;
-      return true;
-    },
+    ([, info]) => !info.hidden && matchSearch(info.name),
   );
   const freeTierEntries = Object.entries(FREE_TIER_PROVIDERS).filter(
-    ([key, info]) => {
-      if (info.hidden || !matchSearch(info.name)) return false;
-      if (showConnectedOnly && getProviderStats(key, "cookie").total === 0) return false;
-      return true;
-    },
+    ([, info]) => !info.hidden && matchSearch(info.name),
   );
   const apikeyEntries = sortByPriority(
     Object.entries(APIKEY_PROVIDERS).filter(
-      ([key, info]) => {
-        if (info.hidden || !(info.serviceKinds ?? ["llm"]).includes("llm")) return false;
-        if (!matchSearch(info.name)) return false;
-        if (showConnectedOnly && getProviderStats(key, "apikey").total === 0) return false;
-        return true;
-      },
+      ([, info]) =>
+        !info.hidden &&
+        (info.serviceKinds ?? ["llm"]).includes("llm") &&
+        matchSearch(info.name),
     ),
     "apikey",
-  );
-  const webCookieEntries = Object.entries(WEB_COOKIE_PROVIDERS).filter(
-    ([key, info]) => {
-      if (info.hidden || !matchSearch(info.name)) return false;
-      if (showConnectedOnly && getProviderStats(key, "apikey").total === 0) return false;
-      return true;
-    },
   );
   const isApikeySearching = !!searchQuery.trim();
   const visibleApikeyEntries =
@@ -334,51 +312,17 @@ export default function ProvidersPage() {
     freeEntries.length > 0 ||
     freeTierEntries.length > 0 ||
     apikeyEntries.length > 0 ||
-    webCookieEntries.length > 0 ||
     compatibleProviders.length > 0 ||
     anthropicCompatibleProviders.length > 0;
 
-  const totalConnectedProviders =
-    Object.keys(OAUTH_PROVIDERS).filter(k => getProviderStats(k, "oauth").total > 0).length +
-    Object.keys(FREE_PROVIDERS).filter(k => getProviderStats(k, "oauth").total > 0).length +
-    Object.keys(FREE_TIER_PROVIDERS).filter(k => getProviderStats(k, "cookie").total > 0).length +
-    Object.keys(APIKEY_PROVIDERS).filter(k => getProviderStats(k, "apikey").total > 0).length +
-    Object.keys(WEB_COOKIE_PROVIDERS).filter(k => getProviderStats(k, "apikey").total > 0).length +
-    compatibleProviders.length + anthropicCompatibleProviders.length;
-
   return (
     <div className="flex min-w-0 flex-col gap-6 px-1 sm:px-0">
-      {/* Filter toolbar */}
-      <div className="flex items-center justify-between gap-2">
-        <div className="text-sm text-text-muted">
-          {showConnectedOnly
-            ? `Showing ${totalConnectedProviders} connected provider${totalConnectedProviders === 1 ? "" : "s"}`
-            : "Showing all available providers"}
-        </div>
-        <button
-          onClick={() => setShowConnectedOnly(v => !v)}
-          className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
-            showConnectedOnly
-              ? "bg-primary/10 border-primary/40 text-primary"
-              : "bg-bg border-border text-text-muted hover:text-text-main hover:border-primary/40"
-          }`}
-          title={showConnectedOnly ? "Show all providers" : "Show only providers with connections"}
-        >
-          <span className="material-symbols-outlined text-[14px]">
-            {showConnectedOnly ? "filter_alt" : "filter_alt_off"}
-          </span>
-          {showConnectedOnly ? "Connected only" : "All providers"}
-        </button>
-      </div>
-
       {!hasAnyResult && (
         <div className="text-center py-8 border border-dashed border-border rounded-xl">
           <span className="material-symbols-outlined text-[32px] text-text-muted mb-2">
             search_off
           </span>
-          <p className="text-text-muted text-sm">
-            {showConnectedOnly ? "No connected providers yet" : "No providers match your search"}
-          </p>
+          <p className="text-text-muted text-sm">No providers match your search</p>
         </div>
       )}
 
@@ -520,9 +464,9 @@ export default function ProvidersPage() {
               key={key}
               providerId={key}
               provider={info}
-              stats={getProviderStats(key, "cookie")}
-              authType="cookie"
-              onToggle={(active) => handleToggleProvider(key, "cookie", active)}
+              stats={getProviderStats(key, "apikey")}
+              authType="apikey"
+              onToggle={(active) => handleToggleProvider(key, "apikey", active)}
             />
           ))}
         </div>
@@ -580,15 +524,14 @@ export default function ProvidersPage() {
       )}
 
       {/* Web Cookie Providers — use browser subscription cookie instead of API key */}
-      {webCookieEntries.length > 0 && (
-      <div className="flex flex-col gap-4">
+      {/* <div className="flex flex-col gap-4">
         <div className="flex items-center justify-between">
           <h2 className="text-xl font-semibold flex items-center gap-2">
             Web Cookie Providers{" "}
           </h2>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {webCookieEntries.map(([key, info]) => (
+          {Object.entries(WEB_COOKIE_PROVIDERS).map(([key, info]) => (
             <ApiKeyProviderCard
               key={key}
               providerId={key}
@@ -599,9 +542,7 @@ export default function ProvidersPage() {
             />
           ))}
         </div>
-      </div>
-      )}
-
+      </div> */}
 
       <AddOpenAICompatibleModal
         isOpen={showAddCompatibleModal}

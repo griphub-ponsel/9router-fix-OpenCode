@@ -1,37 +1,25 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import PropTypes from "prop-types";
 import { Button, Modal } from "@/shared/components";
 
-export default function AddCustomModelModal({ isOpen, providerAlias, existingModelIds, onSave, onClose }) {
+export default function AddCustomModelModal({ isOpen, providerAlias, providerDisplayAlias, onSave, onClose }) {
   const [modelId, setModelId] = useState("");
-  const [displayName, setDisplayName] = useState("");
-  const [aliasError, setAliasError] = useState("");
   const [testStatus, setTestStatus] = useState(null); // null | "testing" | "ok" | "error"
   const [testError, setTestError] = useState("");
   const [saving, setSaving] = useState(false);
 
-  const resetForm = () => {
-    setModelId("");
-    setDisplayName("");
-    setAliasError("");
-    setTestStatus(null);
-    setTestError("");
-  };
-
-  const handleClose = () => {
-    resetForm();
-    onClose();
-  };
+  // Reset state when modal opens
+  useEffect(() => {
+    if (isOpen) { setModelId(""); setTestStatus(null); setTestError(""); }
+  }, [isOpen]);
 
   // Strip provider's own alias prefix (e.g. "cc/model" -> "model" for cc provider)
   const stripAlias = (id) => {
     const prefix = `${providerAlias}/`;
     return id.startsWith(prefix) ? id.slice(prefix.length) : id;
   };
-
-  const defaultAliasFor = (id) => id.split("/").pop();
 
   const handleTest = async () => {
     const cleanId = stripAlias(modelId.trim());
@@ -56,16 +44,9 @@ export default function AddCustomModelModal({ isOpen, providerAlias, existingMod
   const handleSave = async () => {
     const cleanId = stripAlias(modelId.trim());
     if (!cleanId || saving) return;
-    if (existingModelIds.includes(cleanId)) {
-      setAliasError(`"${cleanId}" is already added to this provider.`);
-      return;
-    }
     setSaving(true);
-    setAliasError("");
     try {
-      const saved = await onSave(cleanId, displayName.trim());
-      if (!saved) setAliasError("Failed to add model. Check the alert for details.");
-      else resetForm();
+      await onSave(cleanId);
     } finally {
       setSaving(false);
     }
@@ -76,7 +57,7 @@ export default function AddCustomModelModal({ isOpen, providerAlias, existingMod
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={handleClose} title="Add Custom Model">
+    <Modal isOpen={isOpen} onClose={onClose} title="Add Custom Model">
       <div className="flex flex-col gap-4">
         <div>
           <label className="text-sm font-medium mb-1.5 block">Model ID</label>
@@ -105,21 +86,6 @@ export default function AddCustomModelModal({ isOpen, providerAlias, existingMod
           </p>
         </div>
 
-        <div>
-          <label className="text-sm font-medium mb-1.5 block">Display Name</label>
-          <input
-            type="text"
-            value={displayName}
-            onChange={(e) => { setDisplayName(e.target.value); setAliasError(""); }}
-            placeholder={defaultAliasFor(stripAlias(modelId.trim()) || "model-id")}
-            className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary"
-          />
-          <p className="text-xs text-text-muted mt-1">
-            Optional label for this model. Leave empty to show the model ID.
-          </p>
-          {aliasError && <p className="text-xs text-red-500 mt-1">{aliasError}</p>}
-        </div>
-
         {/* Test result */}
         {testStatus === "ok" && (
           <div className="flex items-center gap-2 text-sm text-green-600">
@@ -135,7 +101,7 @@ export default function AddCustomModelModal({ isOpen, providerAlias, existingMod
         )}
 
         <div className="flex gap-2 pt-1">
-          <Button onClick={handleClose} variant="ghost" fullWidth size="sm">Cancel</Button>
+          <Button onClick={onClose} variant="ghost" fullWidth size="sm">Cancel</Button>
           <Button
             onClick={handleSave}
             fullWidth
@@ -153,11 +119,7 @@ export default function AddCustomModelModal({ isOpen, providerAlias, existingMod
 AddCustomModelModal.propTypes = {
   isOpen: PropTypes.bool.isRequired,
   providerAlias: PropTypes.string.isRequired,
-  existingModelIds: PropTypes.arrayOf(PropTypes.string),
+  providerDisplayAlias: PropTypes.string.isRequired,
   onSave: PropTypes.func.isRequired,
   onClose: PropTypes.func.isRequired,
-};
-
-AddCustomModelModal.defaultProps = {
-  existingModelIds: [],
 };

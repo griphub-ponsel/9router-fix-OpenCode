@@ -20,8 +20,6 @@ import {
 } from "../helpers/geminiHelper.js";
 import { deriveSessionId } from "../../utils/sessionManager.js";
 
-const GEMINI_BUILTIN_TOOLS = new Set(["google_search", "web_search", "search_web", "googleSearch"]);
-
 // Sanitize function names for Gemini API.
 // Gemini requires: starts with [a-zA-Z_], followed by [a-zA-Z0-9_.:\-], max 64 chars.
 // Replace any invalid character with '_' and truncate to 64.
@@ -232,22 +230,21 @@ export function openaiToGeminiCLIRequest(model, body, stream) {
   const gemini = openaiToGeminiBase(model, body, stream, DEFAULT_THINKING_GEMINI_CLI_SIGNATURE);
   const isClaude = model.toLowerCase().includes("claude");
 
-  // Add thinking config for CLI
-  if (body.reasoning_effort) {
-    const budgetMap = { low: 1024, medium: 8192, high: 32768 };
-    const budget = budgetMap[body.reasoning_effort] || 8192;
-    gemini.generationConfig.thinkingConfig = {
-      thinkingBudget: budget,
-      include_thoughts: true
-    };
+  // Map reasoning effort → thinkingConfig.thinkingLevel (gemini-3 enum: minimal|low|medium|high)
+  // Gemini 3 cannot fully disable thinking; "none"/"off" map to "minimal" (closest to no-thinking)
+  // Accept both OpenAI chat (reasoning_effort) and Responses (reasoning.effort) shapes
+  const reasoningEffort = body.reasoning_effort ?? body.reasoning?.effort;
+  if (reasoningEffort) {
+    const effort = String(reasoningEffort).toLowerCase().trim();
+    const level = (effort === "none" || effort === "off") ? "minimal" : effort;
+    gemini.generationConfig.thinkingConfig = { thinkingLevel: level, includeThoughts: level !== "minimal" };
   }
 
-  // Thinking config from Claude format
-  if (body.thinking?.type === "enabled" && body.thinking.budget_tokens) {
-    gemini.generationConfig.thinkingConfig = {
-      thinkingBudget: body.thinking.budget_tokens,
-      include_thoughts: true
-    };
+  // Claude-format thinking: disabled → minimal, enabled → high
+  if (body.thinking?.type === "disabled") {
+    gemini.generationConfig.thinkingConfig = { thinkingLevel: "minimal", includeThoughts: false };
+  } else if (body.thinking?.type === "enabled") {
+    gemini.generationConfig.thinkingConfig = { thinkingLevel: "high", includeThoughts: true };
   }
 
   // Clean schema for tools
@@ -304,18 +301,8 @@ function wrapInCloudCodeEnvelope(model, geminiCLI, credentials = null, isAntigra
       envelope.request.systemInstruction = { role: "user", parts: systemParts };
     }
 
-    // Antigravity v1internal rejects mixing built-in tools with functionDeclarations.
-    if (envelope.request.tools?.length > 0) {
-      const customDeclarations = envelope.request.tools
-        .flatMap(tool => tool.functionDeclarations || [])
-        .filter(fn => !GEMINI_BUILTIN_TOOLS.has(fn.name));
-
-      envelope.request.tools = customDeclarations.length > 0
-        ? [{ functionDeclarations: customDeclarations }]
-        : undefined;
-    }
-
-    if (envelope.request.tools?.some(tool => tool.functionDeclarations?.length > 0)) {
+    // Add toolConfig for Antigravity
+    if (geminiCLI.tools?.length > 0) {
       envelope.request.toolConfig = {
         functionCallingConfig: { mode: "VALIDATED" }
       };
@@ -415,7 +402,6 @@ function wrapInCloudCodeEnvelopeForClaude(model, claudeRequest, credentials = nu
     const functionDeclarations = [];
     for (const tool of claudeRequest.tools) {
       if (tool.name && tool.input_schema) {
-        if (GEMINI_BUILTIN_TOOLS.has(tool.name)) continue;
         const cleanedSchema = cleanJSONSchemaForAntigravity(tool.input_schema);
         functionDeclarations.push({
           name: sanitizeGeminiFunctionName(tool.name),

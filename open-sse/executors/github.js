@@ -121,25 +121,17 @@ export class GithubExecutor extends BaseExecutor {
     return !/claude/i.test(model);
   }
 
-  // reasoning_effort works for GPT-5 family AND Claude Opus 4.6 / 4.8 / Sonnet 4.6
+  // reasoning_effort works for GPT-5 family AND Claude Opus 4.6 / Sonnet 4.6
   // on GitHub Copilot. Only strip for models that don't support it:
   // Claude Haiku 4.5, Claude Opus 4.7 (rejected upstream).
   supportsReasoningEffort(model) {
     const m = model.toLowerCase();
     // Claude models that DO support reasoning_effort
-    if (/claude.*opus.*4\.(6|8)/i.test(m) || /claude.*sonnet.*4\.6/i.test(m)) return true;
+    if (/claude.*opus.*4\.6/i.test(m) || /claude.*sonnet.*4\.6/i.test(m)) return true;
     // All other Claude models: strip
     if (/claude/i.test(model)) return false;
     // GPT-5 family, Gemini, etc.: keep
     return true;
-  }
-
-  // Copilot documents per-model reasoning_effort allowlists (e.g. opus 4.8 → medium only).
-  normalizeReasoningEffort(model, effort) {
-    if (effort == null || effort === "none") return undefined;
-    const m = String(model).toLowerCase();
-    if (/claude.*opus.*4\.8/i.test(m)) return "medium";
-    return effort;
   }
 
   transformRequest(model, body, stream, credentials) {
@@ -163,10 +155,6 @@ export class GithubExecutor extends BaseExecutor {
     // Strip reasoning_effort only for models that reject it
     if (!this.supportsReasoningEffort(model) && transformed.reasoning_effort !== undefined) {
       delete transformed.reasoning_effort;
-    } else if (transformed.reasoning_effort !== undefined) {
-      const normalized = this.normalizeReasoningEffort(model, transformed.reasoning_effort);
-      if (normalized === undefined) delete transformed.reasoning_effort;
-      else transformed.reasoning_effort = normalized;
     }
     return transformed;
   }
@@ -263,7 +251,6 @@ export class GithubExecutor extends BaseExecutor {
           const converted = openaiResponsesToOpenAIResponse(parsed, state);
           if (converted) {
             const sseString = formatSSE(converted, "openai");
-            if (!sseString) continue;
             controller.enqueue(new TextEncoder().encode(sseString));
           }
         }
@@ -274,9 +261,7 @@ export class GithubExecutor extends BaseExecutor {
           if (parsed && !parsed.done) {
             const converted = openaiResponsesToOpenAIResponse(parsed, state);
             if (converted) {
-              const sseString = formatSSE(converted, "openai");
-              if (!sseString) return;
-              controller.enqueue(new TextEncoder().encode(sseString));
+              controller.enqueue(new TextEncoder().encode(formatSSE(converted, "openai")));
             }
           }
         }

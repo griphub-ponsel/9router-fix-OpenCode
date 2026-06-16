@@ -194,9 +194,7 @@ function createStreamingResponse(sourceFormat, model, text) {
     const translated = translateResponse(FORMATS.OPENAI, sourceFormat, chunk, state);
     if (translated?.length > 0) {
       for (const item of translated) {
-        const chunk = formatSSE(item, sourceFormat);
-        if (!chunk) continue;
-        translatedChunks.push(chunk);
+        translatedChunks.push(formatSSE(item, sourceFormat));
       }
     }
   }
@@ -205,9 +203,7 @@ function createStreamingResponse(sourceFormat, model, text) {
   const flushed = translateResponse(FORMATS.OPENAI, sourceFormat, null, state);
   if (flushed?.length > 0) {
     for (const item of flushed) {
-      const chunk = formatSSE(item, sourceFormat);
-      if (!chunk) continue;
-      translatedChunks.push(chunk);
+      translatedChunks.push(formatSSE(item, sourceFormat));
     }
   }
 

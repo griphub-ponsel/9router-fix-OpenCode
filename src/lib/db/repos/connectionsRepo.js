@@ -201,7 +201,7 @@ export async function cleanupProviderConnections() {
     "accessToken", "refreshToken", "expiresAt", "tokenType",
     "scope", "projectId", "apiKey", "testStatus",
     "lastTested", "lastError", "lastErrorAt", "rateLimitedUntil", "expiresIn",
-    "consecutiveUseCount", "idToken", "lastRefreshAt",
+    "consecutiveUseCount",
   ];
   let cleaned = 0;
   db.transaction(() => {

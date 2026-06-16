@@ -52,14 +52,8 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       };
     }
 
-    const allConnections = await getProviderConnections({ provider: providerId, isActive: true });
-    const connections = providerId === "notion"
-      ? allConnections.filter((c) => c.authType === "apikey" && c.apiKey && c.providerSpecificData?.fullCookie)
-      : allConnections;
+    const connections = await getProviderConnections({ provider: providerId, isActive: true });
     log.debug("AUTH", `${provider} | total connections: ${connections.length}, excludeIds: ${excludeSet.size > 0 ? [...excludeSet].join(",") : "none"}, model: ${model || "any"}`);
-    if (providerId === "notion" && allConnections.length !== connections.length) {
-      log.debug("AUTH", `notion | skipped ${allConnections.length - connections.length} non-chat/MCP connection(s)`);
-    }
 
     if (connections.length === 0) {
       log.warn("AUTH", `No credentials for ${provider}`);
@@ -169,6 +163,10 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       apiKey: connection.apiKey,
       accessToken: connection.accessToken,
       refreshToken: connection.refreshToken,
+      idToken: connection.idToken,
+      expiresAt: connection.expiresAt,
+      expiresIn: connection.expiresIn,
+      lastRefreshAt: connection.lastRefreshAt,
       projectId: connection.projectId,
       connectionName: connection.displayName || connection.name || connection.email || connection.id,
       copilotToken: connection.providerSpecificData?.copilotToken,
