@@ -13,7 +13,7 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
   const isCookie = authType === "cookie";
   const isNotionSession = provider === "notion";
   const isXaiApiKey = provider === "xai" && !isCookie;
-  const credentialLabel = isNotionSession ? "Full Cookie Header" : isCookie ? "Cookie Value" : "API Key";
+  const credentialLabel = isNotionSession ? "token_v2 or Cookie Header" : isCookie ? "Cookie Value" : "API Key";
   const credentialPlaceholder = isCookie
     ? (provider === "grok-web" ? "sso=xxxxx... or just the raw value" : "eyJhbGciOi...")
     : isNotionSession
@@ -40,6 +40,7 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
     organization: "",
   });
   const [cloudflareData, setCloudflareData] = useState({ accountId: "" });
+  const [notionData, setNotionData] = useState({ userId: "" });
   const [region, setRegion] = useState(defaultRegion);
   const [validating, setValidating] = useState(false);
   const [validationResult, setValidationResult] = useState(null);
@@ -71,6 +72,7 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
       return {
         ...(validatedProviderData || {}),
         fullCookie: formData.apiKey.trim(),
+        userId: notionData.userId.trim() || validatedProviderData?.userId,
       };
     }
     return undefined;
@@ -233,7 +235,30 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
             </div>
           </div>
         )}
-        {!isOllamaLocal && (
+        {isNotionSession ? (
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-1">
+              <label className="text-sm font-medium text-text-primary">{credentialLabel}</label>
+              <textarea
+                className="min-h-[120px] w-full resize-y rounded-lg border border-border bg-bg px-3 py-2 font-mono text-xs text-text-primary outline-none transition-colors focus:border-primary"
+                value={formData.apiKey}
+                onChange={(e) => setFormData({ ...formData, apiKey: e.target.value })}
+                placeholder={credentialPlaceholder}
+              />
+            </div>
+            <Input
+              label="Notion User ID"
+              value={notionData.userId}
+              onChange={(e) => setNotionData({ userId: e.target.value })}
+              placeholder="376d872b-594c-81db-96a2-0002490937c7"
+            />
+            <div>
+              <Button onClick={handleValidate} disabled={!formData.apiKey || validating || saving} variant="secondary">
+                {validating ? "Checking..." : "Check"}
+              </Button>
+            </div>
+          </div>
+        ) : !isOllamaLocal && (
           <div className="flex gap-2">
             <Input
               label={credentialLabel}
@@ -257,9 +282,10 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
         )}
         {isNotionSession && (
           <div className="rounded-lg border border-accent/20 bg-sidebar/50 p-3 text-xs text-text-muted">
-            <p className="mb-2">Open notion.so, press F12, open Console, then run:</p>
+            <p className="mb-2">Easy path: open notion.so, press F12, Application, Cookies, https://www.notion.so, then copy the token_v2 value. Paste it above and paste notion_user_id below.</p>
+            <p className="mb-2">Alternative: Console can copy visible cookies:</p>
             <code className="block rounded bg-bg px-2 py-1 font-mono text-[11px] text-text-main">copy(document.cookie)</code>
-            <p className="mt-2">Paste the copied value here. If it does not contain token_v2, use Network, filter loadUserContent, open Request Headers, then copy the Cookie header.</p>
+            <p className="mt-2">If the Console result has no token_v2, use the Application tab token_v2 method above. Network request names vary and may not show loadUserContent.</p>
           </div>
         )}
         {isCookie && authHint && (

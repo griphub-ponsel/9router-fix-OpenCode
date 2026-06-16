@@ -208,13 +208,10 @@ function getAccount(credentials) {
   const psd = credentials?.providerSpecificData || {};
   const fullCookie = psd.fullCookie || psd.cookie || "";
   const token = extractNotionToken(credentials?.apiKey || credentials?.accessToken || "", fullCookie);
-  if (!fullCookie) {
-    throw new Error("Notion AI requires the full Cookie header from notion.so. token_v2 alone can list models but Notion blocks inference.");
-  }
   const spaceId = psd.spaceId || psd.space_id || "";
   const userId = psd.userId || psd.user_id || parseCookieString(fullCookie).notion_user_id;
   if (!token || !userId) {
-    throw new Error("Notion AI requires token_v2 and notion_user_id. Paste the full Cookie header from notion.so, not only token_v2.");
+    throw new Error("Notion AI requires token_v2 and notion_user_id. Paste the full Cookie header or token_v2 plus notion_user_id.");
   }
   return { token, spaceId, userId };
 }

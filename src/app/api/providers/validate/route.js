@@ -58,10 +58,7 @@ async function probeNotionSession(apiKey, providerSpecificData = {}) {
   const userId = data.userId || cookieUserId;
   const token = extractNotionToken(apiKey, fullCookie);
   if (!token || !userId) {
-    return { valid: false, error: "token_v2 and notion_user_id are required. Paste the full Cookie header from notion.so." };
-  }
-  if (!fullCookie) {
-    return { valid: false, error: "Full Cookie header from notion.so is required for Notion AI chat. token_v2 alone can list models but Notion blocks inference." };
+    return { valid: false, error: "token_v2 and notion_user_id are required. Paste the full Cookie header or token_v2 plus notion_user_id." };
   }
   if (data.spaceId && !isUuid(data.spaceId)) {
     return { valid: false, error: "spaceId must be the Notion workspace UUID, not a cookie or sync_session value. Leave it blank to auto-discover." };
