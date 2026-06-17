@@ -46,6 +46,32 @@ const OPENCODE_GO_MODELS = [
   { id: "mimo-v2-omni", name: "MiMo V2 Omni", contextTokens: 1048576, maxOutputTokens: 65536 },
 ];
 
+const IMAGE_INPUT_MODEL_RE = /claude|gemini|gpt-4o|gpt-4\.1|gpt-4-turbo|(?:^|[^a-z0-9])vl(?:[^a-z0-9]|$)|vision|omni|multimodal|grok-4|grok-composer|llava|pixtral|molmo|glm-\d+(?:\.\d+)?v(?:[^a-z0-9]|$)/;
+
+function getModelEntry(aliasOrId, modelId) {
+  const models = PROVIDER_MODELS[aliasOrId];
+  return models?.find(m => m.id === modelId) || null;
+}
+
+export function modelSupportsImageInput(aliasOrId, modelId) {
+  const entry = getModelEntry(aliasOrId, modelId);
+  if (entry?.strip?.includes("image")) return false;
+
+  const type = entry?.type || "llm";
+  if (type !== "llm" && type !== "imageToText") return false;
+
+  const explicitInput = entry?.modalities?.input || entry?.inputModalities;
+  if (Array.isArray(explicitInput)) return explicitInput.includes("image");
+
+  const capabilities = Array.isArray(entry?.capabilities)
+    ? entry.capabilities.map((cap) => String(cap).toLowerCase())
+    : [];
+  if (capabilities.some((cap) => cap === "vision" || cap === "image_input" || cap === "image-input")) return true;
+
+  const normalized = `${aliasOrId}/${modelId}`.toLowerCase();
+  return IMAGE_INPUT_MODEL_RE.test(normalized);
+}
+
 export const PROVIDER_MODELS = {
   // OAuth Providers (using alias)
   cc: [  // Claude Code
@@ -971,6 +997,12 @@ export function getModelsByProviderId(providerId) {
 // Get strip list for a model entry (explicit opt-in only)
 // Returns array of content types to strip, e.g. ["image", "audio"]
 export function getModelStrip(alias, modelId) {
-  const entry = PROVIDER_MODELS[alias]?.find(m => m.id === modelId);
+  const entry = getModelEntry(alias, modelId);
   return entry?.strip || [];
+}
+
+export function getEffectiveModelStrip(alias, modelId) {
+  const strip = new Set(getModelStrip(alias, modelId));
+  if (!modelSupportsImageInput(alias, modelId)) strip.add("image");
+  return Array.from(strip);
 }
