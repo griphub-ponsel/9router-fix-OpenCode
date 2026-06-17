@@ -1,5 +1,3 @@
-import { getModelStrip } from "../../../open-sse/config/providerModels.js";
-
 export function getCopilotModelParts(id) {
   if (typeof id !== "string") return { alias: "", modelId: "" };
   const slash = id.indexOf("/");
@@ -9,7 +7,6 @@ export function getCopilotModelParts(id) {
 
 export function supportsCopilotVision(id) {
   const { alias, modelId } = getCopilotModelParts(id);
-  if (alias && getModelStrip(alias, modelId).includes("image")) return false;
 
   const normalized = `${alias}/${modelId}`.toLowerCase();
   if (/embedding|coder|deepseek|kimi-k2|mimo-v2(?:\.5)?-pro|minimax|tts|stt/.test(normalized)) return false;
