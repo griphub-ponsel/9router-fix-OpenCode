@@ -29,6 +29,7 @@ function withCodexReviewModels(models) {
 const OPENCODE_GO_MODELS = [
   { id: "kimi-k2.6", name: "Kimi K2.6", contextTokens: 262144, maxOutputTokens: 65536 },
   { id: "kimi-k2.5", name: "Kimi K2.5", contextTokens: 262144, maxOutputTokens: 65536 },
+  { id: "glm-5.2", name: "GLM 5.2", contextTokens: 1000000, maxOutputTokens: 65536 },
   { id: "glm-5.1", name: "GLM 5.1", contextTokens: 1000000, maxOutputTokens: 65536 },
   { id: "glm-5", name: "GLM 5", contextTokens: 1000000, maxOutputTokens: 65536 },
   { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro", contextTokens: 262144, maxOutputTokens: 65536 },

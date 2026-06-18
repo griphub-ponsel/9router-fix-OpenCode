@@ -13,6 +13,7 @@ const EXACT_LIMITS = {
   "claude-sonnet-4.6": { contextTokens: 1000000, maxOutputTokens: 32000, reasoningEfforts: ["low", "medium", "high"] },
   "deepseek-v4-flash": { contextTokens: 262144, maxOutputTokens: 65536, reasoningEfforts: ["low", "medium", "high"] },
   "deepseek-v4-pro": { contextTokens: 262144, maxOutputTokens: 65536, reasoningEfforts: ["low", "medium", "high"] },
+  "glm-5.2": { contextTokens: 1000000, maxOutputTokens: 65536 },
   "glm-5.1": { contextTokens: 1000000, maxOutputTokens: 65536 },
   "glm-5": { contextTokens: 1000000, maxOutputTokens: 65536 },
   "grok-4": { contextTokens: 256000, maxOutputTokens: 32768, reasoningEfforts: ["low", "medium", "high"] },
