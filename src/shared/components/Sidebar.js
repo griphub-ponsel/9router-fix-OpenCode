@@ -26,6 +26,7 @@ const navItems = [
   { href: "/dashboard/quota", label: "Quota Tracker", icon: "data_usage" },
   { href: "/dashboard/mitm", label: "MITM", icon: "security" },
   { href: "/dashboard/cli-tools", label: "CLI Tools", icon: "terminal" },
+  { href: "/dashboard/memory", label: "Memory", icon: "smart_token", badge: "NEW" },
 ];
 
 const debugItems = [
