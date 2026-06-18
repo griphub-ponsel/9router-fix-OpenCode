@@ -6,7 +6,7 @@ import { COLORS } from "../utils/stream.js";
 import { createStreamController } from "../utils/streamHandler.js";
 import { refreshWithRetry } from "../services/tokenRefresh.js";
 import { createRequestLogger } from "../utils/requestLogger.js";
-import { getModelTargetFormat, getModelStrip, getModelUpstreamId, getModelType, PROVIDER_ID_TO_ALIAS } from "../config/providerModels.js";
+import { getModelTargetFormat, getEffectiveModelStrip, getModelUpstreamId, getModelType, PROVIDER_ID_TO_ALIAS } from "../config/providerModels.js";
 import { createErrorResult, parseUpstreamError, formatProviderError } from "../utils/error.js";
 import { HTTP_STATUS } from "../config/runtimeConfig.js";
 import { handleBypassRequest } from "../utils/bypassHandler.js";
@@ -20,6 +20,66 @@ import { detectClientTool, isNativePassthrough } from "../utils/clientDetector.j
 import { dedupeTools } from "../utils/toolDeduper.js";
 import { injectCaveman } from "../rtk/caveman.js";
 import { compressMessages, formatRtkLog } from "../rtk/index.js";
+import {
+  needsVisionDelegation,
+  getVisionSibling,
+  bodyHasImages,
+  collectImageParts,
+  replaceImagesWithText,
+  buildVisionProbeBody,
+  formatVisionMarker,
+} from "../services/visionDelegation.js";
+
+/**
+ * Extract assistant text from an internal (non-streaming) chat result.
+ * Handles both JSON completion bodies and SSE fallbacks.
+ */
+async function collectTextFromResponse(response) {
+  if (!response) return null;
+  const contentType = response.headers?.get?.("content-type") || "";
+  const raw = await response.text();
+  if (!raw) return null;
+  if (contentType.includes("application/json") || raw.trimStart().startsWith("{")) {
+    try {
+      const json = JSON.parse(raw);
+      const msg = json?.choices?.[0]?.message;
+      if (typeof msg?.content === "string") return msg.content;
+      if (Array.isArray(msg?.content)) return msg.content.map((c) => c?.text || "").join("");
+    } catch { /* fall through to SSE parse */ }
+  }
+  let text = "";
+  for (const line of raw.split(/\r?\n/)) {
+    if (!line.startsWith("data:")) continue;
+    const payload = line.slice(5).trim();
+    if (!payload || payload === "[DONE]") continue;
+    try {
+      const json = JSON.parse(payload);
+      const choice = json?.choices?.[0];
+      text += choice?.delta?.content || choice?.message?.content || "";
+    } catch { /* ignore non-JSON keepalives */ }
+  }
+  return text || null;
+}
+
+/**
+ * Relay image understanding to a vision-capable sibling model on the same
+ * account, returning a factual text description. Used to give coding models
+ * (whose API rejects raw images) effective vision, mirroring Grok Build CLI.
+ */
+async function relayVisionDescription({ sibling, images, provider, credentials, log, connectionId, onCredentialsRefreshed }) {
+  const probe = buildVisionProbeBody(sibling, images);
+  const result = await handleChatCore({
+    body: probe,
+    modelInfo: { provider, model: sibling },
+    credentials,
+    log,
+    connectionId,
+    onCredentialsRefreshed,
+    internalVisionRelay: true,
+  });
+  if (!result?.success || !result.response) return null;
+  return collectTextFromResponse(result.response);
+}
 
 /**
  * Core chat handler - shared between SSE and Worker
@@ -28,7 +88,7 @@ import { compressMessages, formatRtkLog } from "../rtk/index.js";
  * @param {object} options.credentials - Provider credentials
  * @param {string} options.sourceFormatOverride - Override detected source format (e.g. "openai-responses")
  */
-export async function handleChatCore({ body, modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, clientRawRequest, connectionId, userAgent, apiKey, ccFilterNaming, rtkEnabled, cavemanEnabled, cavemanLevel, sourceFormatOverride, providerThinking }) {
+export async function handleChatCore({ body, modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, clientRawRequest, connectionId, userAgent, apiKey, ccFilterNaming, rtkEnabled, cavemanEnabled, cavemanLevel, sourceFormatOverride, providerThinking, internalVisionRelay }) {
   const { provider, model } = modelInfo;
   const requestStartTime = Date.now();
 
@@ -41,8 +101,32 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   const alias = PROVIDER_ID_TO_ALIAS[provider] || provider;
   const modelTargetFormat = getModelTargetFormat(alias, model);
   const targetFormat = modelTargetFormat || getTargetFormat(provider);
-  const stripList = getModelStrip(alias, model);
+  const stripList = getEffectiveModelStrip(alias, model);
   const upstreamModel = getModelUpstreamId(alias, model);
+
+  // Vision delegation: coding-optimized models (e.g. xAI Grok Composer/Build)
+  // reject raw image inputs at the upstream API, but the official harness lets
+  // them "see" images by relaying understanding through a vision-capable
+  // sibling. Replicate that: describe the image(s) with the sibling on the same
+  // account, then inject the description as text. Fail-safe: on any error the
+  // image is replaced with an honest note instead of hard-failing the request.
+  if (!internalVisionRelay && needsVisionDelegation(provider, model) && bodyHasImages(body)) {
+    const sibling = getVisionSibling(provider);
+    const images = collectImageParts(body);
+    let description = null;
+    if (sibling) {
+      try {
+        description = await relayVisionDescription({
+          sibling, images, provider, credentials, log, connectionId, onCredentialsRefreshed,
+        });
+      } catch (err) {
+        log?.warn?.("VISION", `delegation failed: ${err?.message || err}`);
+      }
+    }
+    const marker = formatVisionMarker(description, { count: images.length, delegated: !!description, sibling });
+    replaceImagesWithText(body, marker);
+    log?.debug?.("VISION", `${images.length} image(s) ${description ? `relayed via ${sibling}` : "replaced with note"} for ${model}`);
+  }
 
   // Inject provider-level thinking config override (only if client hasn't set)
   // on/off → extended type (body.thinking), none/low/medium/high → effort type (body.reasoning_effort)

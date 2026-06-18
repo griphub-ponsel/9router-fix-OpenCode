@@ -46,6 +46,39 @@ const OPENCODE_GO_MODELS = [
   { id: "mimo-v2-omni", name: "MiMo V2 Omni", contextTokens: 1048576, maxOutputTokens: 65536 },
 ];
 
+const IMAGE_INPUT_MODEL_RE = /claude|gemini|gpt-4o|gpt-4\.1|gpt-4-turbo|(?:^|[^a-z0-9])vl(?:[^a-z0-9]|$)|vision|omni|multimodal|grok-4|grok-composer|llava|pixtral|molmo|glm-\d+(?:\.\d+)?v(?:[^a-z0-9]|$)/;
+
+function getModelEntry(aliasOrId, modelId) {
+  const models = getModelsForAliasOrId(aliasOrId);
+  return models?.find(m => m.id === modelId) || null;
+}
+
+function getModelsForAliasOrId(aliasOrId) {
+  const models = PROVIDER_MODELS[aliasOrId];
+  if (models) return models;
+  const providerId = Object.entries(PROVIDER_ID_TO_ALIAS).find(([, alias]) => alias === aliasOrId)?.[0];
+  return PROVIDER_MODELS[providerId] || null;
+}
+
+export function modelSupportsImageInput(aliasOrId, modelId) {
+  const entry = getModelEntry(aliasOrId, modelId);
+  if (entry?.strip?.includes("image")) return false;
+
+  const type = entry?.type || "llm";
+  if (type !== "llm" && type !== "imageToText") return false;
+
+  const explicitInput = entry?.modalities?.input || entry?.inputModalities;
+  if (Array.isArray(explicitInput)) return explicitInput.includes("image");
+
+  const capabilities = Array.isArray(entry?.capabilities)
+    ? entry.capabilities.map((cap) => String(cap).toLowerCase())
+    : [];
+  if (capabilities.some((cap) => cap === "vision" || cap === "image_input" || cap === "image-input")) return true;
+
+  const normalized = `${aliasOrId}/${modelId}`.toLowerCase();
+  return IMAGE_INPUT_MODEL_RE.test(normalized);
+}
+
 export const PROVIDER_MODELS = {
   // OAuth Providers (using alias)
   cc: [  // Claude Code
@@ -884,44 +917,43 @@ export const PROVIDER_MODELS = {
 
 // Helper functions
 export function getProviderModels(aliasOrId) {
-  return PROVIDER_MODELS[aliasOrId] || [];
+  return getModelsForAliasOrId(aliasOrId) || [];
 }
 
 export function getDefaultModel(aliasOrId) {
-  const models = PROVIDER_MODELS[aliasOrId];
+  const models = getModelsForAliasOrId(aliasOrId);
   return models?.[0]?.id || null;
 }
 
 export function isValidModel(aliasOrId, modelId, passthroughProviders = new Set()) {
   if (passthroughProviders.has(aliasOrId)) return true;
-  const models = PROVIDER_MODELS[aliasOrId];
+  const models = getModelsForAliasOrId(aliasOrId);
   if (!models) return false;
   return models.some(m => m.id === modelId);
 }
 
 export function findModelName(aliasOrId, modelId) {
-  const models = PROVIDER_MODELS[aliasOrId];
+  const models = getModelsForAliasOrId(aliasOrId);
   if (!models) return modelId;
   const found = models.find(m => m.id === modelId);
   return found?.name || modelId;
 }
 
 export function getModelTargetFormat(aliasOrId, modelId) {
-  const models = PROVIDER_MODELS[aliasOrId];
+  const models = getModelsForAliasOrId(aliasOrId);
   if (!models) return null;
   const found = models.find(m => m.id === modelId);
   return found?.targetFormat || null;
 }
 
 export function getModelType(aliasOrId, modelId) {
-  const models = PROVIDER_MODELS[aliasOrId];
+  const models = getModelsForAliasOrId(aliasOrId);
   const found = models?.find(m => m.id === modelId);
   return found?.type || found?.kind || "llm";
 }
 
 export function getModelLimits(aliasOrId, modelId) {
-  const providerId = Object.entries(PROVIDER_ID_TO_ALIAS).find(([, alias]) => alias === aliasOrId)?.[0];
-  const models = PROVIDER_MODELS[aliasOrId] || PROVIDER_MODELS[providerId];
+  const models = getModelsForAliasOrId(aliasOrId);
   const found = models?.find(m => m.id === modelId);
   return found?.contextTokens ? {
     contextTokens: found.contextTokens,
@@ -930,7 +962,7 @@ export function getModelLimits(aliasOrId, modelId) {
 }
 
 export function getModelUpstreamId(aliasOrId, modelId) {
-  const models = PROVIDER_MODELS[aliasOrId];
+  const models = getModelsForAliasOrId(aliasOrId);
   const found = models?.find(m => m.id === modelId);
   if (found?.upstreamModelId) return found.upstreamModelId;
   if (aliasOrId === "cx" && typeof modelId === "string" && modelId.endsWith(CODEX_REVIEW_SUFFIX)) {
@@ -940,7 +972,7 @@ export function getModelUpstreamId(aliasOrId, modelId) {
 }
 
 export function getModelQuotaFamily(aliasOrId, modelId) {
-  const models = PROVIDER_MODELS[aliasOrId];
+  const models = getModelsForAliasOrId(aliasOrId);
   const found = models?.find(m => m.id === modelId);
   return found?.quotaFamily || "normal";
 }
@@ -983,6 +1015,12 @@ export function getModelsByProviderId(providerId) {
 // Get strip list for a model entry (explicit opt-in only)
 // Returns array of content types to strip, e.g. ["image", "audio"]
 export function getModelStrip(alias, modelId) {
-  const entry = PROVIDER_MODELS[alias]?.find(m => m.id === modelId);
+  const entry = getModelEntry(alias, modelId);
   return entry?.strip || [];
+}
+
+export function getEffectiveModelStrip(alias, modelId) {
+  const strip = new Set(getModelStrip(alias, modelId));
+  if (!modelSupportsImageInput(alias, modelId)) strip.add("image");
+  return Array.from(strip);
 }

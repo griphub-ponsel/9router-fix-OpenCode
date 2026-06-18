@@ -54,20 +54,30 @@ function ensureInitialized() {
   require("./response/commandcode-to-openai.js");
 }
 
-// Strip specific content types from messages (explicit opt-in via strip[] in PROVIDER_MODELS)
+// Strip specific content types from messages/input before format translation.
 function stripContentTypes(body, stripList = []) {
-  if (!stripList.length || !body.messages || !Array.isArray(body.messages)) return;
-  const imageTypes = new Set(["image_url", "image"]);
+  if (!stripList.length || !body) return;
+  const imageTypes = new Set(["image_url", "image", "input_image"]);
   const audioTypes = new Set(["audio_url", "input_audio"]);
   const shouldStrip = (type) => {
     if (imageTypes.has(type)) return stripList.includes("image");
     if (audioTypes.has(type)) return stripList.includes("audio");
     return false;
   };
-  for (const msg of body.messages) {
-    if (!Array.isArray(msg.content)) continue;
-    msg.content = msg.content.filter(part => !shouldStrip(part.type));
-    if (msg.content.length === 0) msg.content = "";
+  const stripContentArray = (item, emptyValue = "") => {
+    if (!Array.isArray(item.content)) return;
+    item.content = item.content.filter(part => !shouldStrip(part.type));
+    if (item.content.length === 0) item.content = emptyValue;
+  };
+  if (Array.isArray(body.messages)) {
+    for (const msg of body.messages) {
+      stripContentArray(msg);
+    }
+  }
+  if (Array.isArray(body.input)) {
+    for (const item of body.input) {
+      stripContentArray(item);
+    }
   }
 }
 
@@ -76,7 +86,7 @@ export function translateRequest(sourceFormat, targetFormat, model, body, stream
   ensureInitialized();
   let result = body;
 
-  // Strip explicit content types (opt-in via strip[] in PROVIDER_MODELS entry)
+  // Strip content types selected by routing/model capability checks.
   stripContentTypes(result, stripList);
 
   // Normalize thinking config: remove if lastMessage is not user
