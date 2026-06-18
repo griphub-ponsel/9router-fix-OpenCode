@@ -6,10 +6,10 @@
 class PrivacyFilter {
   constructor(config = {}) {
     this.config = {
-      enablePIIDetection: config.enablePIIDetection || true,
-      redactAPIKeys: config.redactAPIKeys || true,
-      redactPasswords: config.redactPasswords || true,
-      redactTokens: config.redactTokens || true,
+      enablePIIDetection: config.enablePIIDetection !== false,
+      redactAPIKeys: config.redactAPIKeys !== false && config.redactApiKeys !== false,
+      redactPasswords: config.redactPasswords !== false,
+      redactTokens: config.redactTokens !== false,
       customPatterns: config.customPatterns || []
     };
     
@@ -23,7 +23,13 @@ class PrivacyFilter {
     if (this.config.redactAPIKeys) {
       patterns.push({
         name: 'api_key',
-        regex: new RegExp('(?:api[_-]?key|apikey)\\s*[=:]\\s*[\'"]?([a-zA-Z0-9_\\-]{20,})[\'"]?', 'gi'),
+        regex: new RegExp('(?:api[_-\\s]?key|apikey)\\s*(?:is|[=:])\\s*[\'\"]?([a-zA-Z0-9_\\-.]{10,})[\'\"]?', 'gi'),
+        replacement: '[REDACTED_API_KEY]'
+      });
+
+      patterns.push({
+        name: 'openai_api_key',
+        regex: /\bsk-[a-zA-Z0-9_\-]{8,}\b/gi,
         replacement: '[REDACTED_API_KEY]'
       });
       
@@ -46,8 +52,14 @@ class PrivacyFilter {
     // Auth Tokens
     if (this.config.redactTokens) {
       patterns.push({
+        name: 'labeled_token',
+        regex: /\btoken\s*[=:]\s*(?:bearer\s+)?[a-zA-Z0-9_\-.]{10,}/gi,
+        replacement: '[REDACTED_TOKEN]'
+      });
+
+      patterns.push({
         name: 'bearer_token',
-        regex: /Bearer [a-zA-Z0-9_\-\.]+/gi,
+        regex: /\bbearer\s+[a-zA-Z0-9_\-.]+/gi,
         replacement: '[REDACTED_BEARER_TOKEN]'
       });
       
@@ -105,6 +117,7 @@ class PrivacyFilter {
    */
   containsSensitiveData(text) {
     for (const pattern of this.patterns) {
+      pattern.regex.lastIndex = 0;
       if (pattern.regex.test(text)) {
         return true;
       }
@@ -120,8 +133,10 @@ class PrivacyFilter {
     const changes = [];
 
     for (const pattern of this.patterns) {
+      pattern.regex.lastIndex = 0;
       const matches = result.match(pattern.regex);
       if (matches && matches.length > 0) {
+        pattern.regex.lastIndex = 0;
         result = result.replace(pattern.regex, pattern.replacement);
         changes.push({
           type: pattern.name,
@@ -152,6 +167,7 @@ class PrivacyFilter {
     const detected = [];
 
     for (const pattern of this.patterns) {
+      pattern.regex.lastIndex = 0;
       const matches = text.match(pattern.regex);
       if (matches && matches.length > 0) {
         detected.push({

@@ -4,6 +4,7 @@
  */
 
 const { v4: uuidv4 } = require('uuid');
+const crypto = require('crypto');
 const SqliteAdapter = require('../storage/adapters/SqliteAdapter');
 const { globalConfig } = require('./MemoryConfig');
 const { SCOPE, MEMORY_TYPE } = require('../models/Scopes');
@@ -135,9 +136,12 @@ class MemoryService {
         return existing.id;
       }
 
+      const sessionId = observation.sessionId || uuidv4();
+      await this.ensureSession(sessionId, observation);
+
       // Store observation
       const id = await this.adapter.createObservation({
-        sessionId: observation.sessionId,
+        sessionId,
         type: observation.type,
         rawContent: filtered.content,
         contentHash: filtered.contentHash,
@@ -442,7 +446,30 @@ class MemoryService {
       content = '[SENSITIVE CONTENT REMOVED]';
     }
 
-    return { content, filtered, isSensitive };
+    const contentHash = observation.contentHash || this.hashContent(content);
+    return { content, contentHash, filtered, isSensitive };
+  }
+
+  hashContent(content) {
+    return crypto.createHash('sha256').update(content || '').digest('hex');
+  }
+
+  async ensureSession(sessionId, observation = {}) {
+    const existing = await this.adapter.getSession(sessionId);
+    if (existing) return existing.id;
+
+    await this.adapter.createSession({
+      id: sessionId,
+      workspaceId: observation.workspaceId || this.currentScope?.workspaceId || 'default',
+      projectId: observation.projectId || this.currentScope?.projectId || null,
+      userId: observation.userId || this.currentScope?.userId || null,
+      agentId: observation.agentId || this.currentScope?.agentId || null,
+      provider: observation.provider || null,
+      model: observation.model || null,
+      metadata: observation.sessionMetadata || null
+    });
+
+    return sessionId;
   }
 
   /**
@@ -463,10 +490,12 @@ class MemoryService {
    */
   async findDuplicate(contentHash) {
     if (!contentHash) return null;
-    
-    const observations = await this.adapter.listObservations('*', { type: '*' });
-    const matching = observations.find(obs => obs.content_hash === contentHash);
-    return matching || null;
+
+    if (typeof this.adapter.findObservationByContentHash === 'function') {
+      return await this.adapter.findObservationByContentHash(contentHash);
+    }
+
+    return null;
   }
 
   /**
@@ -505,6 +534,9 @@ class MemoryService {
     
     // Owner can always delete
     if (memory.user_id === userId) return true;
+
+    // Memories without a specific owner are managed by the local dashboard/API caller.
+    if (!memory.user_id) return true;
     
     // Workspace admins might have broader permissions
     // TODO: Implement role-based access control

@@ -142,7 +142,7 @@ class SqliteAdapter extends StorageInterface {
     return new Promise((resolve, reject) => {
       this.db.get(query, params, (err, row) => {
         if (err) reject(err);
-        else resolve(row);
+        else resolve(row || null);
       });
     });
   }
@@ -169,28 +169,26 @@ class SqliteAdapter extends StorageInterface {
     console.log('[SqliteAdapter] Creating session:', JSON.stringify({id, ...session}));
     
     const columns = ['id', 'workspace_id', 'project_id', 'user_id', 'agent_id', 'provider', 'model'];
-    const values = [id, session.workspaceId, session.projectId, session.userId, session.agentId, session.provider, session.model];
-    
-    let placeholders = '?, ?, ?, ?, ?, ?, ?';
-    let extraColumns = '';
-    let extraValues = [];
-    
+    const values = [id, session.workspaceId || 'default', session.projectId || null, session.userId || null, session.agentId || null, session.provider || null, session.model || null];
+
     if (session.metadata) {
-      extraColumns = ', metadata';
-      extraValues.push(JSON.stringify(session.metadata));
-      placeholders += ', ?';
-      values.push(session.metadata);
+      columns.push('metadata');
+      values.push(JSON.stringify(session.metadata));
     }
-    
+
+    columns.push('started_at', 'status');
+    values.push(now, 'active');
+
+    const placeholders = columns.map(() => '?').join(', ');
     const query = `
-      INSERT INTO sessions (id${extraColumns}, workspace_id, project_id, user_id, agent_id, provider, model, started_at, status)
-      VALUES (${placeholders}, ?, 'active')
+      INSERT INTO sessions (${columns.join(', ')})
+      VALUES (${placeholders})
     `;
     
     console.log('[SqliteAdapter] SQL Query:', query.substring(0, 200), '...');
     console.log('[SqliteAdapter] Values:', values.slice(0, 5), '...');
     
-    await this.run(query, [...values, now]);
+    await this.run(query, values);
     return id;
   }
 
@@ -305,6 +303,14 @@ class SqliteAdapter extends StorageInterface {
     
     const query = `SELECT * FROM observations WHERE ${conditions.join(' AND ')} ORDER BY timestamp DESC`;
     return await this.all(query, values);
+  }
+
+  async findObservationByContentHash(contentHash) {
+    if (!contentHash) return null;
+    return await this.get(
+      'SELECT * FROM observations WHERE content_hash = ? ORDER BY timestamp ASC LIMIT 1',
+      [contentHash]
+    );
   }
 
   // ==================== Memory Operations ====================
@@ -460,9 +466,7 @@ class SqliteAdapter extends StorageInterface {
       LIMIT ?
     `;
     
-    // Need to pass searchTerm twice more for the INSTR clauses
-    const searchValuesForInstruments = [searchTerm, searchTerm];
-    const finalValues = [...values, ...searchValuesForInstruments, options.limit || 20];
+    const finalValues = [query, query, ...values, options.limit || 20];
     const results = await this.all(queryStr, finalValues);
     
     return results.map(row => ({

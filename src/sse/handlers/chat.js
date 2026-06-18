@@ -19,6 +19,7 @@ import { detectFormatByEndpoint } from "open-sse/translator/formats.js";
 import * as log from "../utils/logger.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { getProjectIdForConnection } from "open-sse/services/projectId.js";
+import { captureChatMemory } from "@/shared/memory/capture.js";
 
 /**
  * Handle chat completion request
@@ -82,6 +83,17 @@ export async function handleChat(request, clientRawRequest = null) {
   if (!modelStr) {
     log.warn("CHAT", "Missing model");
     return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing model");
+  }
+
+  try {
+    await captureChatMemory(body, {
+      endpoint: url.pathname,
+      model: modelStr,
+      sessionId: request.headers.get("x-9router-session-id") || body.session_id || body.conversation_id || body.thread_id || "chat-local",
+      userId: apiKey ? `api:${apiKey.slice(-8)}` : "local-user"
+    });
+  } catch (error) {
+    log.warn("MEMORY", `Failed to capture chat prompt: ${error?.message || error}`);
   }
 
   // Bypass naming/warmup requests before combo rotation to avoid wasting rotation slots

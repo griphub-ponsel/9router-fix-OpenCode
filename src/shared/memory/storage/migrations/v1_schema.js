@@ -22,10 +22,10 @@ CREATE TABLE IF NOT EXISTS sessions (
     metadata JSON
 );
 
-CREATE INDEX idx_sessions_workspace ON sessions(workspace_id);
-CREATE INDEX idx_sessions_project ON sessions(project_id);
-CREATE INDEX idx_sessions_user ON sessions(user_id);
-CREATE INDEX idx_sessions_status ON sessions(status);
+CREATE INDEX IF NOT EXISTS idx_sessions_workspace ON sessions(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
 
 CREATE TABLE IF NOT EXISTS observations (
     id TEXT PRIMARY KEY,
@@ -39,9 +39,9 @@ CREATE TABLE IF NOT EXISTS observations (
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
 );
 
-CREATE INDEX idx_observations_session ON observations(session_id);
-CREATE INDEX idx_observations_type ON observations(type);
-CREATE INDEX idx_observations_hash ON observations(content_hash);
+CREATE INDEX IF NOT EXISTS idx_observations_session ON observations(session_id);
+CREATE INDEX IF NOT EXISTS idx_observations_type ON observations(type);
+CREATE INDEX IF NOT EXISTS idx_observations_hash ON observations(content_hash);
 
 CREATE TABLE IF NOT EXISTS memories (
     id TEXT PRIMARY KEY,
@@ -71,12 +71,12 @@ CREATE TABLE IF NOT EXISTS memories (
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE SET NULL
 );
 
-CREATE INDEX idx_memories_type_scope ON memories(type, scope);
-CREATE INDEX idx_memories_workspace_project ON memories(workspace_id, project_id);
-CREATE INDEX idx_memories_user_agent ON memories(user_id, agent_id);
-CREATE INDEX idx_memories_importance ON memories(importance_score DESC);
-CREATE INDEX idx_memories_expires ON memories(expires_at);
-CREATE INDEX idx_memories_created ON memories(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_memories_type_scope ON memories(type, scope);
+CREATE INDEX IF NOT EXISTS idx_memories_workspace_project ON memories(workspace_id, project_id);
+CREATE INDEX IF NOT EXISTS idx_memories_user_agent ON memories(user_id, agent_id);
+CREATE INDEX IF NOT EXISTS idx_memories_importance ON memories(importance_score DESC);
+CREATE INDEX IF NOT EXISTS idx_memories_expires ON memories(expires_at);
+CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at DESC);
 
 CREATE TABLE IF NOT EXISTS knowledge_graph (
     id TEXT PRIMARY KEY,
@@ -89,8 +89,8 @@ CREATE TABLE IF NOT EXISTS knowledge_graph (
     FOREIGN KEY (source_memory_id) REFERENCES memories(id) ON DELETE CASCADE
 );
 
-CREATE INDEX idx_kg_source ON knowledge_graph(source_memory_id);
-CREATE INDEX idx_kg_label ON knowledge_graph(label);
+CREATE INDEX IF NOT EXISTS idx_kg_source ON knowledge_graph(source_memory_id);
+CREATE INDEX IF NOT EXISTS idx_kg_label ON knowledge_graph(label);
 
 CREATE TABLE IF NOT EXISTS fact_cache (
     content_hash TEXT PRIMARY KEY,
@@ -104,7 +104,7 @@ CREATE TABLE IF NOT EXISTS fact_cache (
     FOREIGN KEY (source_session_id) REFERENCES sessions(id) ON DELETE SET NULL
 );
 
-CREATE INDEX idx_fact_category ON fact_cache(category);
+CREATE INDEX IF NOT EXISTS idx_fact_category ON fact_cache(category);
 
 -- User preferences and settings
 CREATE TABLE IF NOT EXISTS memory_settings (
@@ -116,7 +116,7 @@ CREATE TABLE IF NOT EXISTS memory_settings (
     user_id TEXT
 );
 
-CREATE INDEX idx_settings_scope ON memory_settings(scope);
+CREATE INDEX IF NOT EXISTS idx_settings_scope ON memory_settings(scope);
 
 -- Audit log for memory operations
 CREATE TABLE IF NOT EXISTS memory_audit_log (
@@ -129,8 +129,8 @@ CREATE TABLE IF NOT EXISTS memory_audit_log (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_audit_memory ON memory_audit_log(memory_id);
-CREATE INDEX idx_audit_user ON memory_audit_log(user_id);
+CREATE INDEX IF NOT EXISTS idx_audit_memory ON memory_audit_log(memory_id);
+CREATE INDEX IF NOT EXISTS idx_audit_user ON memory_audit_log(user_id);
 
 -- Version tracking table
 CREATE TABLE IF NOT EXISTS schema_version (

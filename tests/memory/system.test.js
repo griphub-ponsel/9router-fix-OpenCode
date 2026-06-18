@@ -2,11 +2,11 @@
  * Memory System Unit Tests
  */
 
-const { describe, it, expect, beforeEach, afterEach } = require('vitest');
-const { memoryService } = require('../src/shared/memory');
-const { SCOPE, MEMORY_TYPE } = require('../src/shared/memory/models/Scopes');
-const SqliteAdapter = require('../src/shared/memory/storage/adapters/SqliteAdapter');
-const PrivacyFilter = require('../src/shared/memory/utils/PrivacyFilter');
+const { memoryService } = require('../../src/shared/memory');
+const { SCOPE, MEMORY_TYPE } = require('../../src/shared/memory/models/Scopes');
+const SqliteAdapter = require('../../src/shared/memory/storage/adapters/SqliteAdapter');
+const PrivacyFilter = require('../../src/shared/memory/utils/PrivacyFilter');
+const { captureChatMemory, extractRememberedPossession } = require('../../src/shared/memory/capture');
 
 describe('MemorySystem', () => {
   
@@ -288,7 +288,7 @@ describe('MemorySystem', () => {
     let counter;
 
     beforeEach(() => {
-      counter = new (require('../src/shared/memory/utils/TokenCounter'))();
+      counter = new (require('../../src/shared/memory/utils/TokenCounter'))();
     });
 
     it('should estimate token count reasonably', () => {
@@ -362,7 +362,7 @@ describe('MemorySystem', () => {
         content: 'Testing event emission'
       });
 
-      expect(eventsReceived.some(e => e.memory_saved)).toBeTruthy();
+      expect(eventsReceived.some(e => e.id && e.memory)).toBeTruthy();
       expect(eventsReceived.length).toBeGreaterThan(0);
     });
   });
@@ -399,6 +399,73 @@ describe('MemorySystem', () => {
 
       expect(userAResults.some(m => m.title === 'User A Memory')).toBe(true);
       expect(userBResults.some(m => m.title === 'User B Memory')).toBe(true);
+    });
+  });
+
+  describe('Prompt Capture', () => {
+    beforeEach(async () => {
+      await memoryService.initialize(testConfig);
+    });
+
+    it('should remember the user name from an explicit prompt', async () => {
+      await captureChatMemory({
+        model: 'test/model',
+        messages: [
+          { role: 'user', content: 'tolong inget nama gw aldrey' }
+        ]
+      }, {
+        sessionId: 'capture-session-1',
+        userId: 'local-user'
+      });
+
+      const results = await memoryService.searchMemories('Aldrey', {
+        userId: 'local-user'
+      });
+
+      expect(results.some(memory => memory.title === 'User name: Aldrey')).toBe(true);
+    });
+
+    it('should remember the user age from an explicit prompt', async () => {
+      await captureChatMemory({
+        model: 'test/model',
+        messages: [
+          { role: 'user', content: 'inget gw sekarang umur 27' }
+        ]
+      }, {
+        sessionId: 'capture-session-2',
+        userId: 'local-user'
+      });
+
+      const results = await memoryService.searchMemories('27', {
+        userId: 'local-user'
+      });
+
+      expect(results.some(memory => memory.title === 'User age: 27')).toBe(true);
+    });
+
+    it('should remember user possession count from an explicit prompt', async () => {
+      await captureChatMemory({
+        model: 'test/model',
+        messages: [
+          { role: 'user', content: 'inget, hape gw ada 5' }
+        ]
+      }, {
+        sessionId: 'capture-session-3',
+        userId: 'local-user'
+      });
+
+      const results = await memoryService.searchMemories('phones', {
+        userId: 'local-user'
+      });
+
+      expect(results.some(memory => memory.title === 'User phones: 5')).toBe(true);
+    });
+
+    it('should extract possession from various phrasings', () => {
+      expect(extractRememberedPossession('hape gw ada 5')).toEqual({ item: 'phones', count: 5 });
+      expect(extractRememberedPossession('gw punya 2 mobil')).toEqual({ item: 'cars', count: 2 });
+      expect(extractRememberedPossession('my laptop ada 3')).toEqual({ item: 'laptops', count: 3 });
+      expect(extractRememberedPossession('inget, hape gw ada 5')).toEqual({ item: 'phones', count: 5 });
     });
   });
 });
