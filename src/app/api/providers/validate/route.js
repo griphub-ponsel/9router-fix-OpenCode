@@ -69,17 +69,17 @@ async function probeNotionSession(apiKey, providerSpecificData = {}) {
 
   data.userId = userId;
 
-  const res = await fetch("https://www.notion.so/api/v3/loadUserContent", {
+  const res = await fetch("https://app.notion.com/api/v3/loadUserContent", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "Accept": "application/json",
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
       ...(data.spaceId ? { "x-notion-space-id": data.spaceId } : {}),
       "x-notion-active-user-header": data.userId,
       "notion-client-version": data.clientVersion || NOTION_CLIENT_VERSION,
-      "origin": "https://www.notion.so",
-      "referer": "https://www.notion.so/",
+      "origin": "https://app.notion.com",
+      "referer": "https://app.notion.com/",
       "cookie": buildNotionCookie(apiKey, data),
     },
     body: "{}",

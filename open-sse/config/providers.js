@@ -104,7 +104,7 @@ export const PROVIDERS = {
     headers: {},
   },
   notion: {
-    baseUrl: "https://www.notion.so/api/v3/runInferenceTranscript",
+    baseUrl: "https://app.notion.com/api/v3/runInferenceTranscript",
     format: "openai",
     headers: {},
   },

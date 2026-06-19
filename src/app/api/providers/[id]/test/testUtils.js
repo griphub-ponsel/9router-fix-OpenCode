@@ -62,20 +62,20 @@ async function testNotionSessionConnection(connection, effectiveProxy = null) {
     return { valid: false, error: "Missing token_v2 or notion_user_id" };
   }
   if (!fullCookie) {
-    return { valid: false, error: "Full Cookie header from notion.so is required for Notion AI chat" };
+    return { valid: false, error: "Full Cookie header from app.notion.com is required for Notion AI chat" };
   }
 
-  const res = await fetchWithConnectionProxy("https://www.notion.so/api/v3/loadUserContent", {
+  const res = await fetchWithConnectionProxy("https://app.notion.com/api/v3/loadUserContent", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "Accept": "application/json",
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
       ...(spaceId ? { "x-notion-space-id": spaceId } : {}),
       "x-notion-active-user-header": userId,
       "notion-client-version": psd.clientVersion || NOTION_CLIENT_VERSION,
-      "origin": "https://www.notion.so",
-      "referer": "https://www.notion.so/",
+      "origin": "https://app.notion.com",
+      "referer": "https://app.notion.com/",
       "cookie": buildNotionCookie(connection.apiKey, psd),
     },
     body: "{}",

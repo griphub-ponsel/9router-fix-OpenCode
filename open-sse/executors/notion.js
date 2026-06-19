@@ -3,13 +3,21 @@ import { PROVIDERS } from "../config/providers.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { extractNotionToken } from "../../src/lib/providerNormalization.js";
 
-const NOTION_API_BASE = "https://www.notion.so/api/v3";
+const NOTION_API_BASE = "https://app.notion.com/api/v3";
 const RUN_INFERENCE_URL = `${NOTION_API_BASE}/runInferenceTranscript`;
 const LOAD_USER_CONTENT_URL = `${NOTION_API_BASE}/loadUserContent`;
+const GET_AVAILABLE_MODELS_URL = `${NOTION_API_BASE}/getAvailableModels`;
+const NOTION_WEB_ORIGIN = "https://app.notion.com";
+const DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36";
 const DEFAULT_CLIENT_VERSION = "23.13.20260605.0836";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const MODELS_CACHE_TTL_MS = 5 * 60 * 1000;
 
 const MODEL_MAP = {
+  "notion-ai": "ambrosia-tart-high",
+  "gpt-4o": "ambrosia-tart-high",
+  "gpt-4": "ambrosia-tart-high",
+  "gpt-3.5-turbo": "almond-croissant-low",
   "claude-opus-4-8": "ambrosia-tart-high",
   "claude-opus4.8": "ambrosia-tart-high",
   "claude-opus-4-7": "apricot-sorbet-high",
@@ -25,8 +33,22 @@ const MODEL_MAP = {
   "gpt-5.2": "oatmeal-cookie",
   "gpt-5.4": "oval-kumquat-medium",
   "gpt-5.5": "opal-quince-medium",
+  "opus-4.8": "ambrosia-tart-high",
+  "opus-4.7": "apricot-sorbet-high",
+  "opus-4.6": "avocado-froyo-medium",
+  "sonnet-4.6": "almond-croissant-low",
+  "haiku-4.5": "anthropic-haiku-4.5",
   "kimi-2.6": "fireworks-kimi-k2.6",
 };
+
+const ANTHROPIC_ALIASES = {
+  "claude-opus-4-7": "opus-4.7",
+  "claude-opus-4-6": "opus-4.6",
+  "claude-sonnet-4-6": "sonnet-4.6",
+  "claude-haiku-4-5": "haiku-4.5",
+};
+
+const notionModelCache = new Map();
 
 const MARKDOWN_CHAT_MODELS = new Set(["vertex-gemini-2.5-flash"]);
 const SEG_CONTENT = "content";
@@ -52,6 +74,114 @@ function createErrorResponse(message, status = 400, code = "notion_error") {
 
 function normalizeModel(model) {
   return MODEL_MAP[model] || MODEL_MAP[model?.replace?.(/-/g, "")] || model || MODEL_MAP["claude-sonnet-4-6"];
+}
+
+function normalizeRequestedModel(model) {
+  if (!model) return "";
+  let cleaned = String(model).trim();
+  while (cleaned.includes("/")) {
+    cleaned = cleaned.split("/").pop().trim();
+  }
+  return cleaned;
+}
+
+function friendlyAlias(value) {
+  return String(value || "").trim().toLowerCase().replace(/\s+/g, "-");
+}
+
+function parseAvailableModels(payload) {
+  const out = {};
+  const models = payload?.models;
+  if (!Array.isArray(models)) return out;
+
+  for (const entry of models) {
+    if (!entry || typeof entry !== "object" || entry.isDisabled) continue;
+    const message = entry.modelMessage;
+    const modelId = entry.model;
+    if (typeof message !== "string" || typeof modelId !== "string") continue;
+
+    const primary = friendlyAlias(message);
+    if (!primary) continue;
+    const aliases = new Set([primary, modelId]);
+    if (primary.startsWith("claude-")) aliases.add(primary.slice("claude-".length));
+
+    for (const short of [
+      "opus-4.8",
+      "opus-4.7",
+      "opus-4.6",
+      "sonnet-4.6",
+      "haiku-4.5",
+      "gemini-3-flash",
+      "gemini-2.5-flash",
+      "gpt-5.5",
+      "gpt-5.4",
+      "gpt-5.2",
+      "gpt-4o",
+      "minimax-m2.5",
+    ]) {
+      if (primary.includes(short)) aliases.add(short);
+    }
+
+    for (const alias of aliases) out[alias] = modelId;
+  }
+
+  return out;
+}
+
+function findModelInMap(mapping, name) {
+  if (!name || !mapping) return "";
+  if (mapping[name]) return mapping[name];
+  const lowered = String(name).toLowerCase().replace(/_/g, "-");
+  if (mapping[lowered]) return mapping[lowered];
+  for (const [alias, value] of Object.entries(mapping)) {
+    if (String(alias).toLowerCase() === lowered) return value;
+  }
+  return "";
+}
+
+function resolveModelFromMaps(model, bodyModel, aliasMap) {
+  const requested = normalizeRequestedModel(bodyModel || model);
+
+  if (!requested) {
+    return findModelInMap(aliasMap, "notion-ai")
+      || findModelInMap(MODEL_MAP, "notion-ai")
+      || MODEL_MAP["claude-sonnet-4-6"];
+  }
+
+  if (requested === "notion-ai") {
+    return findModelInMap(aliasMap, "notion-ai")
+      || findModelInMap(MODEL_MAP, "notion-ai")
+      || MODEL_MAP["claude-sonnet-4-6"];
+  }
+
+  let hit = findModelInMap(aliasMap, requested) || findModelInMap(MODEL_MAP, requested);
+  if (hit) return hit;
+
+  if (ANTHROPIC_ALIASES[requested]) {
+    const alias = ANTHROPIC_ALIASES[requested];
+    hit = findModelInMap(aliasMap, alias) || findModelInMap(MODEL_MAP, alias);
+    if (hit) return hit;
+  }
+
+  const lowered = requested.toLowerCase().replace(/_/g, "-");
+  if (lowered.includes("opus")) {
+    for (const alias of ["opus-4.8", "opus-4.7", "opus-4.6"]) {
+      if (lowered.includes(alias)) {
+        hit = findModelInMap(aliasMap, alias) || findModelInMap(MODEL_MAP, alias);
+        if (hit) return hit;
+      }
+    }
+  }
+  if (lowered.includes("sonnet")) {
+    hit = findModelInMap(aliasMap, "sonnet-4.6") || findModelInMap(MODEL_MAP, "sonnet-4.6");
+    if (hit) return hit;
+  }
+  if (lowered.includes("haiku")) {
+    hit = findModelInMap(aliasMap, "haiku-4.5") || findModelInMap(MODEL_MAP, "haiku-4.5");
+    if (hit) return hit;
+  }
+
+  return normalizeModel(requested);
 }
 
 function getThreadType(notionModel) {
@@ -232,11 +362,11 @@ async function resolveAccountSpace(credentials, account, signal, proxyOptions) {
   const headers = {
     "Content-Type": "application/json",
     "Accept": "application/json",
-    "User-Agent": psd.userAgent || "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
+    "User-Agent": psd.userAgent || DEFAULT_USER_AGENT,
     "x-notion-active-user-header": account.userId,
     "notion-client-version": psd.clientVersion || DEFAULT_CLIENT_VERSION,
-    "origin": "https://www.notion.so",
-    "referer": "https://www.notion.so/",
+    "origin": NOTION_WEB_ORIGIN,
+    "referer": `${NOTION_WEB_ORIGIN}/`,
     "cookie": buildCookieHeader(credentials, account),
   };
   const response = await proxyAwareFetch(LOAD_USER_CONTENT_URL, {
@@ -256,25 +386,75 @@ async function resolveAccountSpace(credentials, account, signal, proxyOptions) {
   return { ...account, spaceId: resolvedSpaceId };
 }
 
+async function resolveNotionAliasMap(credentials, account, signal, proxyOptions, log) {
+  const cacheKey = `${account.userId}:${account.spaceId}`;
+  const now = Date.now();
+  const cached = notionModelCache.get(cacheKey);
+  if (cached?.expiresAt > now && cached.aliasMap) {
+    return cached.aliasMap;
+  }
+
+  const psd = credentials?.providerSpecificData || {};
+  const headers = {
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+    "User-Agent": psd.userAgent || DEFAULT_USER_AGENT,
+    "x-notion-space-id": account.spaceId,
+    "x-notion-active-user-header": account.userId,
+    "notion-client-version": psd.clientVersion || DEFAULT_CLIENT_VERSION,
+    "origin": NOTION_WEB_ORIGIN,
+    "referer": `${NOTION_WEB_ORIGIN}/ai`,
+    "cookie": buildCookieHeader(credentials, account),
+  };
+
+  try {
+    const response = await proxyAwareFetch(GET_AVAILABLE_MODELS_URL, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ spaceId: account.spaceId }),
+      signal,
+    }, proxyOptions);
+
+    if (!response.ok) {
+      log?.debug?.("NOTION", `getAvailableModels returned HTTP ${response.status}; falling back to static model map`);
+      if (cached?.aliasMap) return cached.aliasMap;
+      return {};
+    }
+
+    const payload = await response.json().catch(() => null);
+    const aliasMap = parseAvailableModels(payload);
+    if (Object.keys(aliasMap).length > 0) {
+      notionModelCache.set(cacheKey, { aliasMap, expiresAt: now + MODELS_CACHE_TTL_MS });
+      return aliasMap;
+    }
+
+    if (cached?.aliasMap) return cached.aliasMap;
+    return {};
+  } catch (error) {
+    log?.debug?.("NOTION", `getAvailableModels failed (${error?.message || error}); falling back to static model map`);
+    if (cached?.aliasMap) return cached.aliasMap;
+    return {};
+  }
+}
+
 function buildHeaders(credentials, account) {
   const psd = credentials?.providerSpecificData || {};
   return {
     "Content-Type": "application/json",
     "Accept": "application/x-ndjson",
-    "User-Agent": psd.userAgent || "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
+    "User-Agent": psd.userAgent || DEFAULT_USER_AGENT,
     "x-notion-space-id": account.spaceId,
     "x-notion-active-user-header": account.userId,
     "notion-audit-log-platform": "web",
     "notion-client-version": psd.clientVersion || DEFAULT_CLIENT_VERSION,
-    "origin": "https://www.notion.so",
-    "referer": "https://www.notion.so/ai",
+    "origin": NOTION_WEB_ORIGIN,
+    "referer": `${NOTION_WEB_ORIGIN}/ai`,
     "cookie": buildCookieHeader(credentials, account),
   };
 }
 
-function buildPayload(body, model, account) {
-  const { transcript, threadType } = buildTranscript(body?.messages || [], model, account, body?.tools || []);
-  const notionModel = normalizeModel(model);
+function buildPayload(body, notionModel, account) {
+  const { transcript, threadType } = buildTranscript(body?.messages || [], notionModel, account, body?.tools || []);
   const threadId = crypto.randomUUID();
   const isMarkdownChat = threadType === "markdown-chat";
   return {
@@ -945,9 +1125,11 @@ export class NotionExecutor extends BaseExecutor {
       return { response: createErrorResponse(error.message, 401, "missing_notion_session"), url: RUN_INFERENCE_URL, headers: {}, transformedBody: body };
     }
 
+    const aliasMap = await resolveNotionAliasMap(credentials, account, signal, proxyOptions, log);
+    const notionModel = resolveModelFromMaps(model, body?.model, aliasMap);
     const headers = buildHeaders(credentials, account);
-    const payload = buildPayload(body, model, account);
-    log?.info?.("NOTION", `Dispatching ${model} via Notion AI (${normalizeModel(model)})`);
+    const payload = buildPayload(body, notionModel, account);
+    log?.info?.("NOTION", `Dispatching ${model} via Notion AI (${notionModel})`);
 
     let response;
     try {

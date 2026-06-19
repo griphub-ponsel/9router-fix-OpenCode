@@ -282,7 +282,7 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
         )}
         {isNotionSession && (
           <div className="rounded-lg border border-accent/20 bg-sidebar/50 p-3 text-xs text-text-muted">
-            <p className="mb-2">Easy path: open notion.so, press F12, Application, Cookies, https://www.notion.so, then copy the token_v2 value. Paste it above and paste notion_user_id below.</p>
+            <p className="mb-2">Easy path: open app.notion.com, press F12, Application, Cookies, https://app.notion.com, then copy the token_v2 value. Paste it above and paste notion_user_id below.</p>
             <p className="mb-2">Alternative: Console can copy visible cookies:</p>
             <code className="block rounded bg-bg px-2 py-1 font-mono text-[11px] text-text-main">copy(document.cookie)</code>
             <p className="mt-2">If the Console result has no token_v2, use the Application tab token_v2 method above. Network request names vary and may not show loadUserContent.</p>
