@@ -1,0 +1,14 @@
+{
+  "servers": {
+    "codegraph": {
+      "type": "stdio",
+      "command": "C:\\Users\\ALDREY\\AppData\\Roaming\\npm\\codegraph.cmd",
+      "args": ["serve", "--mcp"]
+    },
+    "agentmemory": {
+      "type": "stdio",
+      "command": "C:\\Users\\ALDREY\\AppData\\Roaming\\npm\\agentmemory.cmd",
+      "args": ["mcp"]
+    }
+  }
+}

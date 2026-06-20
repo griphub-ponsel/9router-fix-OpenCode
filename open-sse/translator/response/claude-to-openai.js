@@ -42,9 +42,11 @@ export function claudeToOpenAIResponse(chunk, state) {
       if (block?.type === "text") {
         state.textBlockStarted = true;
       } else if (block?.type === "thinking") {
+        // Thinking content is streamed via reasoning_content (see content_block_delta).
+        // Do NOT emit literal <think> tags into the content channel — clients like
+        // VS Code Copilot render those as raw text and show empty <think></think>.
         state.inThinkingBlock = true;
         state.currentBlockIndex = chunk.index;
-        results.push(createChunk(state, { content: "<think>" }));
       } else if (block?.type === "tool_use") {
         const toolCallIndex = state.toolCallIndex++;
         // Restore original tool name from mapping (Claude OAuth)
@@ -95,7 +97,8 @@ export function claudeToOpenAIResponse(chunk, state) {
         break;
       }
       if (state.inThinkingBlock && chunk.index === state.currentBlockIndex) {
-        results.push(createChunk(state, { content: "</think>" }));
+        // Thinking was streamed via reasoning_content; nothing to close in the
+        // content channel. Just clear the flag (no literal </think> tag).
         state.inThinkingBlock = false;
       }
       state.textBlockStarted = false;
