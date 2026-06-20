@@ -57,12 +57,15 @@ CREATE TABLE IF NOT EXISTS memories (
     content TEXT NOT NULL,
     summary TEXT,
     
-    embedding FLOAT[384], -- Optional, for vector search
+    embedding FLOAT[384], -- Legacy / hint for sqlite-vss (not used directly)
+    embedding_json TEXT,  -- Actual storage: JSON array of floats (e.g. "[0.1, -0.2, ...]")
     
     importance_score REAL DEFAULT 1.0,
     access_count INTEGER DEFAULT 0,
     last_accessed TIMESTAMP,
     ttl_days INTEGER,
+    
+    is_pinned BOOLEAN DEFAULT 0, -- Memory Slots (Phase 3)
     
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

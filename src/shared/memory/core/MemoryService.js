@@ -8,6 +8,7 @@ const crypto = require('crypto');
 const SqliteAdapter = require('../storage/adapters/SqliteAdapter');
 const { globalConfig } = require('./MemoryConfig');
 const { SCOPE, MEMORY_TYPE } = require('../models/Scopes');
+const { EmbeddingService, getDefaultEmbeddingService } = require('../embedding/EmbeddingService');
 
 class MemoryService {
   constructor() {
@@ -15,6 +16,7 @@ class MemoryService {
     this.config = new Map();
     this.initialized = false;
     this.eventListeners = new Map();
+    this.embeddingService = null;
   }
 
   /**
@@ -47,6 +49,29 @@ class MemoryService {
     
     this.adapter = new SqliteAdapter(storageConfig);
     await this.adapter.initialize(storageConfig);
+
+    // Initialize embedding service (Phase 2)
+    const embCfg = this.config.get('global').get('embedding') || {};
+    if (embCfg.enabled !== false) {
+      const provider = embCfg.provider || 'local';
+      const model = embCfg.model || null;
+      const dimension = embCfg.dimension || 384;
+      const baseUrl = embCfg.baseUrl || process.env.MEMORY_EMBEDDING_BASE_URL || null;
+
+      this.embeddingService = new EmbeddingService({
+        provider,
+        model,
+        dimension,
+        baseUrl
+      });
+
+      // Kick off lazy init (non-blocking for service start)
+      this.embeddingService.initialize().catch(err => {
+        console.warn('[MemoryService] Embedding provider init warning:', err.message);
+      });
+
+      console.log('[MemoryService] Embedding service configured:', provider);
+    }
 
     console.log('[MemoryService] Initialized successfully');
     this.initialized = true;
@@ -161,8 +186,13 @@ class MemoryService {
 
   /**
    * Search memories
-   * @param {string} query - Search query
+   * Supports keyword, hybrid, and semantic search.
+   * 
+   * @param {string} query - Search query (text)
    * @param {Object} options - Query options
+   * @param {boolean} [options.hybrid] - Force hybrid (keyword + vector)
+   * @param {boolean} [options.semantic] - Force semantic-only
+   * @param {number[]} [options.embedding] - Pre-computed embedding for the query
    */
   async searchMemories(query, options = {}) {
     const filters = {
@@ -174,17 +204,82 @@ class MemoryService {
       type: options.type
     };
 
-    const results = await this.adapter.hybridSearch(query, null, {
-      filters,
-      limit: options.maxResults || this.config.get('global').get('retrieval.maxResults'),
-      scoreThreshold: this.config.get('global').get('retrieval.minRelevanceScore')
-    });
+    const embCfg = this.config.get('global').get('embedding') || {};
+    const useHybrid = options.hybrid !== false && (options.hybrid === true || embCfg.useHybridSearch);
+    const useSemanticOnly = options.semantic === true;
+
+    let embedding = options.embedding || null;
+
+    // Auto-generate embedding for query if needed
+    if ((useHybrid || useSemanticOnly) && !embedding && this.embeddingService && query) {
+      try {
+        embedding = await this.embeddingService.embed(query);
+      } catch (e) {
+        console.warn('[MemoryService] Failed to embed search query:', e.message);
+        embedding = null;
+      }
+    }
+
+    let results;
+
+    if (useSemanticOnly && embedding) {
+      // Pure semantic search
+      results = await this.adapter.semanticSearch(embedding, filters, options.maxResults || 20);
+    } else if (useHybrid && embedding) {
+      // Hybrid
+      results = await this.adapter.hybridSearch(query, embedding, {
+        filters,
+        limit: options.maxResults || this.config.get('global').get('retrieval.maxResults'),
+        rrfK: embCfg.rrfK || 60,
+        weights: [embCfg.bm25Weight || 0.4, embCfg.vectorWeight || 0.6]
+      });
+    } else {
+      // Pure keyword (BM25)
+      results = await this.adapter.keywordSearch(query, filters, {
+        limit: options.maxResults || this.config.get('global').get('retrieval.maxResults')
+      });
+    }
 
     // Apply token budget if specified
     if (options.tokenBudget) {
       const selected = this.selectByTokenBudget(results, options.tokenBudget);
       return selected.map(r => r.memory);
     }
+
+    return results.map(r => r.memory);
+  }
+
+  /**
+   * Semantic search by text or precomputed embedding
+   */
+  async semanticSearchMemories(queryOrEmbedding, options = {}) {
+    let embedding = queryOrEmbedding;
+
+    if (typeof queryOrEmbedding === 'string') {
+      if (this.embeddingService) {
+        embedding = await this.embeddingService.embed(queryOrEmbedding);
+      } else {
+        embedding = null;
+      }
+    }
+
+    if (!embedding || !Array.isArray(embedding)) {
+      return [];
+    }
+
+    const filters = {
+      workspaceId: options.workspaceId,
+      projectId: options.projectId,
+      userId: options.userId,
+      scope: options.scope,
+      type: options.type
+    };
+
+    const results = await this.adapter.semanticSearch(
+      embedding,
+      filters,
+      options.maxResults || 20
+    );
 
     return results.map(r => r.memory);
   }
@@ -226,7 +321,7 @@ class MemoryService {
 
   /**
    * Save memory (structured knowledge)
-   * @param {Object} memory - Memory data
+   * Auto-generates embedding if embedding is enabled and autoEmbedOnSave is true.
    */
   async saveMemory(memory) {
     const input = {
@@ -245,10 +340,37 @@ class MemoryService {
       ttlDays: memory.ttlDays || null
     };
 
+    // Phase 2: Auto-embed if enabled
+    const embCfg = this.config.get('global').get('embedding') || {};
+    if (embCfg.enabled !== false && embCfg.autoEmbedOnSave !== false && this.embeddingService) {
+      try {
+        const textToEmbed = [memory.title, memory.content].filter(Boolean).join('\n').slice(0, 6000);
+        if (textToEmbed) {
+          const embedding = await this.embeddingService.embed(textToEmbed);
+          if (embedding && Array.isArray(embedding)) {
+            input.embedding = embedding;
+          }
+        }
+      } catch (e) {
+        console.warn('[MemoryService] Embedding generation failed for memory, continuing without vector:', e.message);
+      }
+    }
+
     const id = await this.adapter.saveMemory(input);
     
     await this.emit('memory_saved', { id, memory: input });
     return id;
+  }
+
+  /**
+   * Generate embedding for arbitrary text (public helper)
+   */
+  async generateEmbedding(text) {
+    if (!this.embeddingService) {
+      await this.initialize(); // ensure
+    }
+    if (!this.embeddingService) return null;
+    return await this.embeddingService.embed(text);
   }
 
   /**
@@ -332,14 +454,17 @@ class MemoryService {
   }
 
   /**
-   * Consolidate memories (merge duplicates, summarize, decay)
+   * Consolidate memories (Phase 3)
+   * - Merge near-duplicates using vector similarity
+   * - Create episodic summaries for recent sessions (optional)
+   * - Decay old memories
    */
   async consolidate(options = {}) {
     if (!this.config.get('global').isEnabled('consolidation.enabled')) {
       return { skipped: true };
     }
 
-    console.log('[MemoryService] Starting consolidation...');
+    console.log('[MemoryService] Starting Phase 3 consolidation...');
 
     const mergedCount = await this.mergeDuplicateMemories(
       this.config.get('global').get('consolidation.mergeThreshold')
@@ -347,13 +472,36 @@ class MemoryService {
 
     const decayedCount = await this.runDecaySweep();
 
+    let episodicCount = 0;
+    if (options.createEpisodicSummaries !== false) {
+      try {
+        // Get recent completed sessions that don't have an episodic summary yet
+        const sessions = await this.adapter.listSessions({ status: 'completed' }, 20);
+        for (const session of sessions) {
+          // Check if we already have an episodic memory for this session
+          const existing = await this.adapter.listMemories({ sessionId: session.id, type: MEMORY_TYPE.EPISODIC }, { limit: 1 });
+          if (existing.length === 0) {
+            const memId = await this.createEpisodicSummary(session.id, {
+              scope: SCOPE.SESSION,
+              userId: session.user_id,
+              workspaceId: session.workspace_id,
+              projectId: session.project_id
+            });
+            if (memId) episodicCount++;
+          }
+        }
+      } catch (e) {
+        console.warn('[MemoryService] Episodic summarization during consolidate failed:', e.message);
+      }
+    }
+
     if (this.config.get('global').get('consolidation.snapshotEnabled')) {
       // Snapshot logic would go here
     }
 
-    console.log(`[MemoryService] Consolidation complete: merged=${mergedCount}, decayed=${decayedCount}`);
+    console.log(`[MemoryService] Consolidation complete: merged=${mergedCount}, decayed=${decayedCount}, episodic=${episodicCount}`);
 
-    return { merged: mergedCount, decayed: decayedCount };
+    return { merged: mergedCount, decayed: decayedCount, episodic: episodicCount };
   }
 
   /**
@@ -389,10 +537,206 @@ class MemoryService {
   }
 
   /**
-   * Get statistics
+   * Get statistics + embedding status
    */
   async getStats() {
-    return await this.adapter.getStats();
+    const base = await this.adapter.getStats();
+
+    // Add embedding provider info (Phase 2)
+    const embCfg = this.config.get('global')?.get?.('embedding') || {};
+    base.embedding = {
+      enabled: embCfg.enabled !== false,
+      provider: this.embeddingService ? this.embeddingService.getProvider() : 'none',
+      dimension: this.embeddingService ? this.embeddingService.getDimension() : null,
+      hasService: !!this.embeddingService
+    };
+
+    return base;
+  }
+
+  // ==================== Phase 3: Memory Slots (Pinned) ====================
+
+  /**
+   * Pin a memory (Memory Slot)
+   */
+  async pinMemory(memoryId, userId = null) {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+    const existing = await this.getMemory(memoryId);
+    if (!existing) {
+      throw new Error('Memory not found');
+    }
+    await this.adapter.setPinned(memoryId, true);
+    await this.emit('memory_pinned', { memoryId, userId });
+    return true;
+  }
+
+  /**
+   * Unpin a memory
+   */
+  async unpinMemory(memoryId, userId = null) {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+    await this.adapter.setPinned(memoryId, false);
+    await this.emit('memory_unpinned', { memoryId, userId });
+    return true;
+  }
+
+  /**
+   * Get all pinned memories (Memory Slots)
+   */
+  async getPinnedMemories(filters = {}, limit = 50) {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+    return await this.adapter.getPinnedMemories(filters, { limit });
+  }
+
+  // ==================== Phase 3: Advanced Features (Summarize, Facts, Episodic) ====================
+
+  /**
+   * Summarize arbitrary text using the local 9Router LLM (self-call).
+   * Falls back to simple extractive summary if the LLM call fails.
+   */
+  async summarizeWithRouter(text, options = {}) {
+    if (!text || typeof text !== 'string') return null;
+
+    const maxLength = options.maxLength || 600;
+    const style = options.style || 'concise';
+
+    // Try to summarize via the running 9Router instance
+    try {
+      const baseUrl = process.env.ROUTER_BASE_URL || 'http://localhost:20128';
+      const res = await fetch(`${baseUrl}/v1/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'auto',
+          messages: [
+            {
+              role: 'system',
+              content: `You create ${style} summaries. Keep key facts, decisions, preferences and actions. Max ~${maxLength} characters. Output ONLY the summary.`
+            },
+            {
+              role: 'user',
+              content: text.slice(0, 14000)
+            }
+          ],
+          max_tokens: Math.min(900, Math.ceil(maxLength * 1.4)),
+          temperature: 0.2
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const summary = data.choices?.[0]?.message?.content?.trim();
+        if (summary && summary.length > 8) {
+          return summary.slice(0, maxLength);
+        }
+      }
+    } catch (e) {
+      console.warn('[MemoryService] LLM summarize failed, falling back to extractive:', e.message);
+    }
+
+    // Fallback extractive summary
+    const sentences = text.split(/[.!?]\s+/).filter(s => s.trim().length > 12);
+    let out = '';
+    for (const s of sentences) {
+      if ((out + ' ' + s).length > maxLength) break;
+      out += (out ? ' ' : '') + s.trim();
+    }
+    return out || text.slice(0, maxLength);
+  }
+
+  /**
+   * Extract facts from an array of observations.
+   * Each observation should have raw_content (or content).
+   */
+  async extractFactsFromObservations(observations = [], options = {}) {
+    const texts = (observations || [])
+      .map(o => (o.raw_content || o.content || '').trim())
+      .filter(Boolean);
+
+    if (!texts.length) return [];
+
+    const combined = texts.join('\n');
+    const facts = [];
+    const lines = combined.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 15);
+
+    for (const line of lines) {
+      const lower = line.toLowerCase();
+      if (
+        /(prefer|always|never|must|should|requires?|uses?|implemented|set up|added|using|via|with|token|jwt|rate.?limit|auth)/i.test(line) &&
+        line.length < 320
+      ) {
+        facts.push({
+          value: line,
+          type: 'extracted',
+          confidence: 0.65
+        });
+      }
+    }
+
+    // Fallback: take a few longer sentences
+    if (facts.length < 3) {
+      const sentences = combined.split(/[.!?]\s+/);
+      for (const s of sentences) {
+        if (s.length > 20 && s.length < 280 && facts.length < 6) {
+          facts.push({ value: s.trim(), type: 'fact', confidence: 0.5 });
+        }
+      }
+    }
+
+    return facts.slice(0, 10);
+  }
+
+  /**
+   * Create (or return null) an episodic memory for a session.
+   * Aggregates recent observations and saves a summary memory.
+   */
+  async createEpisodicSummary(sessionId, context = {}) {
+    if (!sessionId) return null;
+
+    try {
+      const obs = await this.adapter.listObservationsBySession(sessionId, { limit: 120 });
+      if (!obs || !obs.length) return null;
+
+      const blob = obs
+        .map(o => o.raw_content || '')
+        .filter(Boolean)
+        .join('\n')
+        .slice(0, 15000);
+
+      if (!blob || blob.length < 20) return null;
+
+      const summary = await this.summarizeWithRouter(blob, {
+        maxLength: context.maxLength || 850,
+        style: 'episodic'
+      });
+
+      if (!summary) return null;
+
+      const title = context.title || `Session ${String(sessionId).slice(0, 8)} summary`;
+
+      const memId = await this.saveMemory({
+        type: MEMORY_TYPE.EPISODIC,
+        scope: context.scope || SCOPE.SESSION,
+        sessionId,
+        workspaceId: context.workspaceId,
+        projectId: context.projectId,
+        userId: context.userId,
+        title,
+        content: summary,
+        importanceScore: context.importanceScore || 0.75
+      });
+
+      return memId;
+    } catch (e) {
+      console.warn('[MemoryService] createEpisodicSummary failed:', e.message);
+      return null;
+    }
   }
 
   // ==================== Helper Methods ====================
@@ -551,12 +895,72 @@ class MemoryService {
   }
 
   /**
-   * Merge duplicate memories
+   * Merge duplicate memories using vector similarity (Phase 3 - leverages Phase 2 embeddings)
    */
-  async mergeDuplicateMemories(similarityThreshold) {
-    // Placeholder for actual merge logic
-    // Would use semantic similarity comparison
-    return 0;
+  async mergeDuplicateMemories(similarityThreshold = 0.85) {
+    const memories = await this.adapter.listMemories({}, { limit: 500 });
+
+    if (!this.embeddingService) {
+      console.log('[MemoryService] No embedding service - skipping vector merge');
+      return 0;
+    }
+
+    const groups = [];
+    const visited = new Set();
+
+    for (let i = 0; i < memories.length; i++) {
+      if (visited.has(memories[i].id)) continue;
+      const group = [memories[i]];
+      visited.add(memories[i].id);
+
+      // Get embedding for this memory (or generate on fly)
+      let embA = memories[i].embedding_json ? JSON.parse(memories[i].embedding_json) : null;
+      if (!embA) {
+        embA = await this.generateEmbedding(`${memories[i].title}\n${memories[i].content}`);
+      }
+
+      for (let j = i + 1; j < memories.length; j++) {
+        if (visited.has(memories[j].id)) continue;
+        let embB = memories[j].embedding_json ? JSON.parse(memories[j].embedding_json) : null;
+        if (!embB) {
+          embB = await this.generateEmbedding(`${memories[j].title}\n${memories[j].content}`);
+        }
+
+        const sim = EmbeddingService.cosineSimilarity(embA, embB);
+        if (sim >= similarityThreshold) {
+          group.push(memories[j]);
+          visited.add(memories[j].id);
+        }
+      }
+
+      if (group.length > 1) groups.push(group);
+    }
+
+    let merged = 0;
+    for (const group of groups) {
+      // Keep the highest importance one, merge content into it
+      group.sort((a, b) => (b.importance_score || 0) - (a.importance_score || 0));
+      const keeper = group[0];
+      const others = group.slice(1);
+
+      const mergedContent = [
+        keeper.content,
+        ...others.map(o => o.content)
+      ].filter(Boolean).join('\n---\n');
+
+      await this.adapter.updateMemory(keeper.id, {
+        content: mergedContent.slice(0, 12000),
+        importanceScore: Math.max(keeper.importance_score || 1, 0.95)
+      });
+
+      for (const other of others) {
+        await this.adapter.deleteMemory(other.id);
+        merged++;
+      }
+    }
+
+    console.log(`[MemoryService] Merged ${merged} duplicate memories`);
+    return merged;
   }
 
   // ==================== Utility Methods ====================

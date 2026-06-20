@@ -25,6 +25,10 @@ const { AdapterRegistry, registry: adapterRegistry } = require('./providers/Adap
 const PrivacyFilter = require('./utils/PrivacyFilter');
 const TokenCounter = require('./utils/TokenCounter');
 
+// Phase 2 - Embedding
+const { EmbeddingService, getDefaultEmbeddingService } = require('./embedding/EmbeddingService');
+const { reciprocalRankFusion } = require('./embedding/RRF');
+
 module.exports = {
   // Main service instance
   memoryService,
@@ -55,5 +59,10 @@ module.exports = {
   TokenCounter,
   
   // Config
-  globalConfig
+  globalConfig,
+
+  // Phase 2: Embeddings & Fusion
+  EmbeddingService,
+  getDefaultEmbeddingService,
+  reciprocalRankFusion
 };

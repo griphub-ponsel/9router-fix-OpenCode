@@ -62,14 +62,40 @@ function StatCard({ icon, label, value, tone = "primary" }) {
 
 export default function MemoryDashboard() {
   const [memories, setMemories] = useState([]);
+  const [pinnedMemories, setPinnedMemories] = useState([]);
+  const [facts, setFacts] = useState([]);
   const [stats, setStats] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [searchMode, setSearchMode] = useState("hybrid"); // 'keyword' | 'hybrid' | 'semantic'
+  const [lastSearchMode, setLastSearchMode] = useState("hybrid");
   const [scopeFilter, setScopeFilter] = useState("all");
   const [selectedMemory, setSelectedMemory] = useState(null);
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportFormat, setExportFormat] = useState("json");
   const [loading, setLoading] = useState(true);
+  const [consolidating, setConsolidating] = useState(false);
+  const [actionMessage, setActionMessage] = useState(null); // { type: 'success'|'info', text: string }
   const [lastUpdated, setLastUpdated] = useState(null);
+
+  const fetchPinned = async () => {
+    try {
+      const res = await fetch("/api/memory/pinned?limit=20");
+      const data = await res.json();
+      setPinnedMemories(data.pinned || []);
+    } catch (error) {
+      console.error("Failed to fetch pinned:", error);
+    }
+  };
+
+  const fetchFacts = async () => {
+    try {
+      const res = await fetch("/api/memory/facts?limit=50");
+      const data = await res.json();
+      setFacts(data.facts || []);
+    } catch (error) {
+      console.error("Failed to fetch facts:", error);
+    }
+  };
 
   const fetchStats = async () => {
     const res = await fetch("/api/memory/stats");
@@ -77,17 +103,22 @@ export default function MemoryDashboard() {
     setStats(data);
   };
 
-  const fetchMemories = async (query = "") => {
+  const fetchMemories = async (query = "", modeOverride = null) => {
     setLoading(true);
     try {
+      const effectiveMode = modeOverride || searchMode;
       const params = new URLSearchParams({
         limit: 50,
+        mode: effectiveMode,
         ...(query && { q: query }),
       });
 
       const res = await fetch(`/api/memory/search?${params}`);
       const data = await res.json();
       setMemories(data.memories || []);
+      if (data.mode) {
+        setLastSearchMode(data.mode);
+      }
       setLastUpdated(new Date());
     } catch (error) {
       console.error("Failed to fetch memories:", error);
@@ -98,6 +129,8 @@ export default function MemoryDashboard() {
 
   useEffect(() => {
     fetchStats().catch((error) => console.error("Failed to fetch stats:", error));
+    fetchPinned().catch((error) => console.error("Failed to fetch pinned:", error));
+    fetchFacts().catch((error) => console.error("Failed to fetch facts:", error));
     fetchMemories();
   }, []);
 
@@ -123,6 +156,12 @@ export default function MemoryDashboard() {
     fetchMemories(searchQuery.trim());
   };
 
+  const handleModeChange = (newMode) => {
+    setSearchMode(newMode);
+    // Re-fetch with the new mode immediately
+    fetchMemories(searchQuery.trim(), newMode);
+  };
+
   const handleDelete = async (memoryId) => {
     if (!confirm("Delete this memory?")) return;
 
@@ -130,7 +169,10 @@ export default function MemoryDashboard() {
       const res = await fetch(`/api/memory/${memoryId}`, { method: "DELETE" });
       if (res.ok) {
         setMemories((items) => items.filter((memory) => memory.id !== memoryId));
+        setPinnedMemories((items) => items.filter((m) => m.id !== memoryId));
         await fetchStats();
+        await fetchPinned();
+        await fetchFacts();
       }
     } catch (error) {
       console.error("Failed to delete memory:", error);
@@ -153,6 +195,67 @@ export default function MemoryDashboard() {
     }
   };
 
+  const handleTogglePin = async (memoryId, currentlyPinned) => {
+    try {
+      const res = await fetch("/api/memory/pinned", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          memoryId,
+          action: currentlyPinned ? "unpin" : "pin"
+        })
+      });
+      if (res.ok) {
+        // Refresh list + stats + pinned slots
+        await fetchStats();
+        await fetchPinned();
+        await fetchMemories(searchQuery.trim());
+      }
+    } catch (error) {
+      console.error("Failed to toggle pin:", error);
+    }
+  };
+
+  const handleSummarize = async (memory) => {
+    if (!confirm("Summarize this memory content with LLM?")) return;
+    try {
+      const res = await fetch("/api/memory/summarize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: memory.content,
+          title: `Summary: ${memory.title || "Memory"}`,
+          scope: memory.scope
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        await fetchStats();
+        await fetchPinned();
+        await fetchMemories(searchQuery.trim());
+        alert("Summary created as new memory!");
+      }
+    } catch (error) {
+      console.error("Summarize failed:", error);
+    }
+  };
+
+  const handleConsolidate = async () => {
+    if (!confirm("Run consolidation now? (merge duplicates + decay + episodic summaries)")) return;
+    try {
+      const res = await fetch("/api/memory/consolidate", { method: "POST" });
+      const data = await res.json();
+      const msg = `Consolidation done!\n• Merged: ${data.merged || 0}\n• Decayed: ${data.decayed || 0}\n• Episodic summaries: ${data.episodic || 0}\n• Facts extracted: ${data.facts || 0}`;
+      alert(msg);
+      await fetchStats();
+      await fetchPinned();
+      await fetchFacts();
+      await fetchMemories(searchQuery.trim());
+    } catch (error) {
+      console.error("Consolidate failed:", error);
+    }
+  };
+
   return (
     <div className="space-y-6 pb-2">
       <div className="relative overflow-hidden rounded-[18px] border border-border-subtle bg-gradient-to-br from-surface via-surface to-bg p-5 shadow-[var(--shadow-elevated)]">
@@ -168,6 +271,19 @@ export default function MemoryDashboard() {
               <p className="mt-1 max-w-2xl text-sm text-text-muted">
                 Persistent context captured from prompts and sessions, searchable across providers.
               </p>
+              {/* Phase 2 embedding status */}
+              {stats?.embedding && (
+                <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px]">
+                  <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 ${stats.embedding.hasService && stats.embedding.provider !== 'none'
+                    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-500'
+                    : 'border-amber-500/30 bg-amber-500/10 text-amber-500'}`}>
+                    <span className="material-symbols-outlined text-[12px]">psychology</span>
+                    Vector: {stats.embedding.provider || 'none'}
+                    {stats.embedding.dimension ? ` (${stats.embedding.dimension}d)` : ''}
+                  </span>
+                  <span className="text-text-muted">Mode aktif: <strong className="text-text-main">{lastSearchMode}</strong></span>
+                </div>
+              )}
             </div>
           </div>
           <Button onClick={() => setShowExportModal(true)} variant="secondary" icon="download">
@@ -176,12 +292,100 @@ export default function MemoryDashboard() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-6">
         <StatCard icon="database" label="Total Memories" value={stats?.totalMemories || 0} />
+        <StatCard icon="push_pin" label="Pinned Slots" value={stats?.pinnedMemories || 0} tone="orange" />
+        <StatCard icon="fact_check" label="Facts" value={stats?.totalFacts || 0} tone="green" />
         <StatCard icon="history" label="Observations" value={stats?.totalObservations || 0} tone="green" />
         <StatCard icon="category" label="Memory Types" value={Object.keys(stats?.memoriesByType || {}).length} tone="blue" />
         <StatCard icon="schedule" label="Last Updated" value={lastUpdated ? lastUpdated.toLocaleTimeString("id-ID") : "-"} tone="orange" />
       </div>
+
+      {/* Pinned Memory Slots (Phase 3) */}
+      {pinnedMemories.length > 0 && (
+        <Card padding="none" className="overflow-hidden border-orange/30">
+          <div className="flex items-center justify-between border-b border-border-subtle bg-orange/5 px-5 py-3">
+            <div className="flex items-center gap-2">
+              <span className="material-symbols-outlined text-orange">push_pin</span>
+              <h2 className="font-semibold text-text-main">Pinned Memory Slots</h2>
+              <span className="rounded-full bg-orange/10 px-2 py-0.5 text-xs font-medium text-orange">
+                {pinnedMemories.length}
+              </span>
+            </div>
+            <span className="text-[11px] text-text-muted">Tetap di atas • prioritas tinggi</span>
+          </div>
+          <div className="divide-y divide-border-subtle">
+            {pinnedMemories.map((memory) => (
+              <div
+                key={memory.id}
+                className="group flex cursor-pointer items-start gap-3 px-5 py-3 transition-colors hover:bg-surface-2/60"
+                onClick={() => setSelectedMemory(memory)}
+              >
+                <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-[8px] bg-orange/10 text-orange ring-1 ring-orange/20">
+                  <span className="material-symbols-outlined text-[16px]">push_pin</span>
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="mb-0.5 flex flex-wrap items-center gap-2 text-xs">
+                    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold ${scopeStyles[memory.scope] || scopeStyles.agent}`}>
+                      {scopeLabels[memory.scope] || memory.scope || "memory"}
+                    </span>
+                    <span className="text-text-muted">{formatDate(memory.created_at)}</span>
+                    {memory.type ? <span className="text-text-muted">{memory.type.replace(/_/g, " ")}</span> : null}
+                  </div>
+                  <h3 className="truncate text-sm font-semibold text-text-main">{memory.title || "Untitled memory"}</h3>
+                  <p className="mt-0.5 line-clamp-1 text-xs text-text-muted">{memory.content}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    handleTogglePin(memory.id, true);
+                  }}
+                  className="rounded-[8px] p-2 text-orange opacity-70 transition-all hover:bg-orange/10 hover:opacity-100 group-hover:opacity-100"
+                  title="Unpin (remove from Memory Slots)"
+                >
+                  <span className="material-symbols-outlined text-[18px]">push_pin</span>
+                </button>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {/* Extracted Facts (Phase 3) */}
+      {facts.length > 0 && (
+        <Card padding="none" className="overflow-hidden">
+          <div className="flex items-center justify-between border-b border-border-subtle bg-emerald-500/5 px-5 py-3">
+            <div className="flex items-center gap-2">
+              <span className="material-symbols-outlined text-emerald-500">fact_check</span>
+              <h2 className="font-semibold text-text-main">Extracted Facts</h2>
+              <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-500">
+                {facts.length}
+              </span>
+            </div>
+            <span className="text-[11px] text-text-muted">Dari sesi / ringkasan</span>
+          </div>
+          <div className="max-h-60 divide-y divide-border-subtle overflow-auto">
+            {facts.slice(0, 15).map((fact, idx) => (
+              <div key={idx} className="px-5 py-2.5 text-sm">
+                <div className="mb-0.5 flex items-center gap-2">
+                  <span className="inline-flex rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-500">
+                    {fact.category || 'fact'}
+                  </span>
+                  {fact.confidence != null && (
+                    <span className="text-[10px] text-text-muted">
+                      {Math.round((fact.confidence || 0) * 100)}%
+                    </span>
+                  )}
+                </div>
+                <p className="line-clamp-2 text-text-main">
+                  {fact.fact_text || fact.factText || fact.text || (typeof fact === 'string' ? fact : JSON.stringify(fact))}
+                </p>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
 
       <Card padding="sm" className="border-border-subtle/80 bg-surface/95">
         <form onSubmit={handleSearch} className="flex flex-col gap-3 sm:flex-row">
@@ -200,7 +404,33 @@ export default function MemoryDashboard() {
           </Button>
         </form>
 
+        {/* Search Mode Selector (Phase 2) */}
         <div className="mt-3 flex flex-wrap items-center gap-2">
+          <span className="text-xs font-semibold uppercase tracking-wider text-text-muted pr-1">Search:</span>
+          {[
+            { key: "keyword", label: "Keyword", icon: "search" },
+            { key: "hybrid", label: "Hybrid", icon: "tune" },
+            { key: "semantic", label: "Semantic", icon: "psychology" }
+          ].map((m) => (
+            <button
+              key={m.key}
+              type="button"
+              onClick={() => handleModeChange(m.key)}
+              className={`rounded-full border px-3 py-1 text-xs font-semibold transition-colors flex items-center gap-1 ${
+                searchMode === m.key
+                  ? "border-primary/40 bg-primary/10 text-primary"
+                  : "border-border-subtle bg-bg text-text-muted hover:border-primary/20 hover:text-text-main"
+              }`}
+              title={m.key === "hybrid" ? "Keyword + Vector (recommended)" : m.key}
+            >
+              <span className="material-symbols-outlined text-[14px]">{m.icon}</span>
+              {m.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <span className="text-xs font-semibold uppercase tracking-wider text-text-muted pr-1">Scope:</span>
           <button
             type="button"
             onClick={() => setScopeFilter("all")}
@@ -235,9 +465,14 @@ export default function MemoryDashboard() {
             <h2 className="font-semibold text-text-main">Recent Memories</h2>
             <p className="text-xs text-text-muted">Showing {filteredMemories.length} of {memories.length} loaded</p>
           </div>
-          <Button variant="ghost" size="sm" icon="refresh" onClick={() => { fetchStats(); fetchMemories(searchQuery.trim()); }}>
-            Refresh
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="ghost" size="sm" icon="autorenew" onClick={handleConsolidate} title="Run consolidation (merge + decay + episodic)">
+              Consolidate
+            </Button>
+            <Button variant="ghost" size="sm" icon="refresh" onClick={() => { fetchStats(); fetchPinned(); fetchFacts(); fetchMemories(searchQuery.trim()); }}>
+              Refresh
+            </Button>
+          </div>
         </div>
 
         {loading ? (
@@ -282,17 +517,43 @@ export default function MemoryDashboard() {
                   <h3 className="truncate text-sm font-semibold text-text-main">{memory.title || "Untitled memory"}</h3>
                   <p className="mt-1 line-clamp-2 text-sm text-text-muted">{memory.content}</p>
                 </div>
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    handleDelete(memory.id);
-                  }}
-                  className="rounded-[8px] p-2 text-text-muted opacity-0 transition-all hover:bg-red-500/10 hover:text-red-500 group-hover:opacity-100 focus:opacity-100"
-                  title="Delete memory"
-                >
-                  <span className="material-symbols-outlined text-[18px]">delete</span>
-                </button>
+                <div className="flex items-center gap-1 opacity-0 transition-all group-hover:opacity-100">
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      handleTogglePin(memory.id, !!memory.is_pinned);
+                    }}
+                    className={`rounded-[8px] p-2 transition-colors ${memory.is_pinned ? 'text-orange' : 'text-text-muted hover:text-orange'}`}
+                    title={memory.is_pinned ? "Unpin memory" : "Pin memory (Memory Slot)"}
+                  >
+                    <span className="material-symbols-outlined text-[18px]">{memory.is_pinned ? "push_pin" : "push_pin"}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      handleSummarize(memory);
+                    }}
+                    className="rounded-[8px] p-2 text-text-muted hover:text-primary"
+                    title="Summarize this memory with LLM"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">auto_awesome</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      handleDelete(memory.id);
+                    }}
+                    className="rounded-[8px] p-2 text-text-muted hover:bg-red-500/10 hover:text-red-500"
+                    title="Delete memory"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">delete</span>
+                  </button>
+                </div>
               </div>
             ))}
           </div>

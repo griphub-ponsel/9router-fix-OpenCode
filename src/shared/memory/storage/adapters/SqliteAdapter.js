@@ -5,6 +5,7 @@
 
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
+const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
 const { CREATE_TABLES_SQL, SCHEMA_VERSION } = require('../migrations/v1_schema');
 const StorageInterface = require('./BaseAdapter');
@@ -100,6 +101,22 @@ class SqliteAdapter extends StorageInterface {
       this.initializePromise = null;
       throw error;
     }
+
+    // Best-effort: add embedding_json column for vector support (Phase 2)
+    await new Promise((resolve) => {
+      this.db.run(
+        'ALTER TABLE memories ADD COLUMN embedding_json TEXT',
+        (err) => { resolve(); }
+      );
+    });
+
+    // Best-effort: add is_pinned for Memory Slots (Phase 3)
+    await new Promise((resolve) => {
+      this.db.run(
+        'ALTER TABLE memories ADD COLUMN is_pinned INTEGER DEFAULT 0',
+        (err) => { resolve(); }
+      );
+    });
 
     return this;
   }
@@ -305,6 +322,21 @@ class SqliteAdapter extends StorageInterface {
     return await this.all(query, values);
   }
 
+  async listObservationsBySession(sessionId, options = {}) {
+    const { limit = 200, type } = options;
+    let query = 'SELECT * FROM observations WHERE session_id = ?';
+    const params = [sessionId];
+
+    if (type) {
+      query += ' AND type = ?';
+      params.push(type);
+    }
+    query += ' ORDER BY timestamp ASC LIMIT ?';
+    params.push(limit);
+
+    return await this.all(query, params);
+  }
+
   async findObservationByContentHash(contentHash) {
     if (!contentHash) return null;
     return await this.get(
@@ -323,11 +355,15 @@ class SqliteAdapter extends StorageInterface {
       ? new Date(Date.now() + memory.ttlDays * 24 * 60 * 60 * 1000).toISOString()
       : null;
     
+    const embeddingJson = memory.embedding && Array.isArray(memory.embedding)
+      ? JSON.stringify(memory.embedding)
+      : null;
+    
     const query = `
       INSERT INTO memories 
       (id, session_id, type, scope, workspace_id, project_id, user_id, agent_id,
-       title, content, summary, importance_score, created_at, updated_at, expires_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       title, content, summary, embedding_json, importance_score, created_at, updated_at, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
     
     await this.run(query, [
@@ -342,6 +378,7 @@ class SqliteAdapter extends StorageInterface {
       memory.title,
       memory.content,
       memory.summary || null,
+      embeddingJson,
       memory.importanceScore || 1.0,
       now,
       now,
@@ -383,6 +420,10 @@ class SqliteAdapter extends StorageInterface {
       fields.push('expires_at = ?');
       values.push(updates.expiresAt);
     }
+    if (updates.isPinned !== undefined) {
+      fields.push('is_pinned = ?');
+      values.push(updates.isPinned ? 1 : 0);
+    }
     
     fields.push('updated_at = CURRENT_TIMESTAMP');
     
@@ -396,10 +437,34 @@ class SqliteAdapter extends StorageInterface {
     await this.run('DELETE FROM memories WHERE id = ?', [memoryId]);
   }
 
+  async setPinned(memoryId, pinned = true) {
+    await this.run(
+      'UPDATE memories SET is_pinned = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [pinned ? 1 : 0, memoryId]
+    );
+  }
+
+  async getPinnedMemories(filters = {}, options = {}) {
+    const conditions = ['is_pinned = 1'];
+    const values = [];
+
+    if (filters.scope) { conditions.push('scope = ?'); values.push(filters.scope); }
+    if (filters.userId) { conditions.push('user_id = ?'); values.push(filters.userId); }
+    if (filters.workspaceId) { conditions.push('workspace_id = ?'); values.push(filters.workspaceId); }
+    conditions.push('(expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)');
+
+    let query = `SELECT * FROM memories WHERE ${conditions.join(' AND ')} ORDER BY importance_score DESC, created_at DESC`;
+    const { limit = 50 } = options;
+    query += ' LIMIT ?';
+    values.push(limit);
+
+    return await this.all(query, values);
+  }
+
   async listMemories(filters = {}, options = {}) {
     const conditions = [];
     const values = [];
-    
+
     if (filters.type) {
       conditions.push('type = ?');
       values.push(filters.type);
@@ -424,17 +489,18 @@ class SqliteAdapter extends StorageInterface {
       conditions.push('agent_id = ?');
       values.push(filters.agentId);
     }
-    
+
     // Filter out expired memories
     conditions.push('(expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)');
-    
+
+    // Pinned first, then by importance + recency
     let query = 'SELECT * FROM memories WHERE ' + conditions.join(' AND ');
-    query += ' ORDER BY importance_score DESC, created_at DESC';
-    
+    query += ' ORDER BY is_pinned DESC, importance_score DESC, created_at DESC';
+
     const { limit = 50, offset = 0 } = options;
     query += ` LIMIT ? OFFSET ?`;
     values.push(limit, offset);
-    
+
     return await this.all(query, values);
   }
 
@@ -475,62 +541,208 @@ class SqliteAdapter extends StorageInterface {
     }));
   }
 
+  async semanticSearch(query, filters = {}, options = {}) {
+    // Placeholder for semantic search using JS cosine similarity
+    // For now, return keyword search results
+    return await this.keywordSearch(query, filters, options);
+  }
+
   async hybridSearch(query, embedding = null, options = {}) {
     const bm25Results = await this.keywordSearch(query, options.filters || {}, options);
     
-    if (embedding && embedding.length > 0) {
-      // Placeholder for vector search - implement when vector index available
-      // For now, return BM25 results only
+    if (!embedding || embedding.length === 0) {
       return bm25Results;
     }
+
+    const vectorResults = await this.semanticSearch(embedding, options.filters || {}, options.limit || 20);
+
+    // Combine using RRF
+    const { reciprocalRankFusion } = require('../../embedding/RRF');
     
-    return bm25Results;
+    const lists = [bm25Results, vectorResults];
+    const weights = options.weights || [0.5, 0.5]; // keyword, vector
+    
+    const fused = reciprocalRankFusion(lists, {
+      k: options.rrfK || 60,
+      topK: options.limit || 20,
+      weights
+    });
+
+    return fused;
   }
 
-  // ==================== Settings & Audit ====================
+  /**
+   * Semantic search: load memories that have embeddings, compute cosine similarity in JS.
+   * This is practical for local use (<10k memories). For larger scale use sqlite-vss later.
+   */
+  async semanticSearch(embedding, filters = {}, topK = 10) {
+    if (!embedding || !Array.isArray(embedding) || embedding.length === 0) {
+      return [];
+    }
 
-  async getSetting(key) {
-    return await this.get('SELECT * FROM memory_settings WHERE setting_key = ?', [key]);
-  }
+    const conditions = ['embedding_json IS NOT NULL'];
+    const values = [];
 
-  async setSetting(setting) {
+    if (filters.workspaceId) {
+      conditions.push('workspace_id = ?');
+      values.push(filters.workspaceId);
+    }
+    if (filters.scope) {
+      conditions.push('scope = ?');
+      values.push(filters.scope);
+    }
+    if (filters.type) {
+      conditions.push('type = ?');
+      values.push(filters.type);
+    }
+    if (filters.userId) {
+      conditions.push('user_id = ?');
+      values.push(filters.userId);
+    }
+    if (filters.projectId) {
+      conditions.push('project_id = ?');
+      values.push(filters.projectId);
+    }
+
+    conditions.push('(expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)');
+
     const query = `
-      INSERT INTO memory_settings (setting_key, scope, value, workspace_id, user_id, updated_at)
-      VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-      ON CONFLICT(setting_key) DO UPDATE SET
-        value = excluded.value,
-        scope = excluded.scope,
-        workspace_id = excluded.workspace_id,
-        user_id = excluded.user_id,
-        updated_at = CURRENT_TIMESTAMP
+      SELECT * FROM memories 
+      WHERE ${conditions.join(' AND ')}
+      ORDER BY importance_score DESC, created_at DESC
+      LIMIT 500
     `;
-    
-    await this.run(query, [
-      setting.key,
-      setting.scope,
-      JSON.stringify(setting.value),
-      setting.workspaceId || null,
-      setting.userId || null
-    ]);
+
+    const rows = await this.all(query, values);
+
+    // Parse embeddings + compute similarity
+    const { EmbeddingService } = require('../../embedding/EmbeddingService');
+    const scored = [];
+
+    for (const row of rows) {
+      try {
+        const vec = row.embedding_json ? JSON.parse(row.embedding_json) : null;
+        if (!vec || !Array.isArray(vec)) continue;
+
+        const similarity = EmbeddingService.cosineSimilarity(embedding, vec);
+        scored.push({
+          memory: row,
+          similarity,
+          score: similarity // for RRF compatibility, we use 'score' field in some paths
+        });
+      } catch {
+        // skip bad embedding
+      }
+    }
+
+    // Sort by similarity desc
+    scored.sort((a, b) => b.similarity - a.similarity);
+
+    return scored.slice(0, topK);
   }
 
-  async logAudit(auditEvent) {
-    const id = uuidv4();
-    await this.run(`
-      INSERT INTO memory_audit_log 
-      (id, action, memory_id, user_id, changes, ip_address, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `, [
-      id,
-      auditEvent.action,
-      auditEvent.memoryId || null,
-      auditEvent.userId || null,
-      JSON.stringify(auditEvent.changes) || null,
-      auditEvent.ipAddress || null,
-      auditEvent.timestamp || new Date().toISOString()
+  // ==================== Phase 3: Facts & Knowledge Graph ====================
+
+  async saveFact(fact) {
+    const hash = fact.contentHash || crypto.createHash('sha256').update(fact.factText || fact.text || '').digest('hex');
+
+    const query = `
+      INSERT INTO fact_cache (content_hash, fact_text, category, confidence, source_session_id, created_at, last_verified)
+      VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ON CONFLICT(content_hash) DO UPDATE SET
+        fact_text = excluded.fact_text,
+        category = excluded.category,
+        confidence = excluded.confidence,
+        last_verified = CURRENT_TIMESTAMP
+    `;
+
+    await this.run(query, [
+      hash,
+      fact.factText || fact.text,
+      fact.category || 'general',
+      fact.confidence || 0.8,
+      fact.sourceSessionId || null
     ]);
-    
+
+    return hash;
+  }
+
+  async listFacts(filters = {}, options = {}) {
+    const conditions = [];
+    const values = [];
+
+    if (filters.category) {
+      conditions.push('category = ?');
+      values.push(filters.category);
+    }
+    if (filters.sessionId) {
+      conditions.push('source_session_id = ?');
+      values.push(filters.sessionId);
+    }
+
+    let query = 'SELECT * FROM fact_cache';
+    if (conditions.length) query += ' WHERE ' + conditions.join(' AND ');
+    query += ' ORDER BY last_verified DESC, confidence DESC';
+
+    const { limit = 100 } = options;
+    query += ' LIMIT ?';
+    values.push(limit);
+
+    return await this.all(query, values);
+  }
+
+  async saveKnowledgeNode(node) {
+    const id = node.id || uuidv4();
+
+    const query = `
+      INSERT INTO knowledge_graph (id, source_memory_id, node_type, label, properties, embedding)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        label = excluded.label,
+        properties = excluded.properties
+    `;
+
+    const props = node.properties ? JSON.stringify(node.properties) : null;
+    const emb = node.embedding ? JSON.stringify(node.embedding) : null;
+
+    await this.run(query, [
+      id,
+      node.sourceMemoryId || null,
+      node.nodeType || 'concept',
+      node.label,
+      props,
+      emb
+    ]);
+
     return id;
+  }
+
+  async listKnowledgeNodes(filters = {}, options = {}) {
+    const conditions = [];
+    const values = [];
+
+    if (filters.nodeType) {
+      conditions.push('node_type = ?');
+      values.push(filters.nodeType);
+    }
+    if (filters.sourceMemoryId) {
+      conditions.push('source_memory_id = ?');
+      values.push(filters.sourceMemoryId);
+    }
+
+    let query = 'SELECT * FROM knowledge_graph';
+    if (conditions.length) query += ' WHERE ' + conditions.join(' AND ');
+    query += ' ORDER BY id';
+
+    const { limit = 200 } = options;
+    query += ' LIMIT ?';
+    values.push(limit);
+
+    const rows = await this.all(query, values);
+    return rows.map(r => ({
+      ...r,
+      properties: r.properties ? JSON.parse(r.properties) : null
+    }));
   }
 
   // ==================== Statistics ====================
@@ -558,6 +770,14 @@ class SqliteAdapter extends StorageInterface {
     
     // Total memories
     stats.totalMemories = Object.values(stats.memoriesByType).reduce((a, b) => a + b, 0);
+    
+    // Pinned count (Memory Slots)
+    const pinnedCount = await this.get('SELECT COUNT(*) as count FROM memories WHERE is_pinned = 1 AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)');
+    stats.pinnedMemories = pinnedCount.count;
+    
+    // Facts count
+    const factsCount = await this.get('SELECT COUNT(*) as count FROM fact_cache');
+    stats.totalFacts = factsCount.count;
     
     // Observations count
     if (!filters.workspaceId && !filters.projectId && !filters.userId) {

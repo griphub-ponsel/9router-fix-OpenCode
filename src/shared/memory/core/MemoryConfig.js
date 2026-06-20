@@ -33,6 +33,19 @@ class MemoryConfig {
         importanceBoost: true        // Boost high-importance memories
       },
 
+      // Embedding / Vector settings (Phase 2)
+      embedding: {
+        enabled: true,                           // Master switch for embeddings
+        provider: 'local',                       // 'local' | 'openai' | 'none'
+        model: null,                             // e.g. 'Xenova/all-MiniLM-L6-v2' or 'text-embedding-3-small'
+        dimension: 384,                          // 384 for all-MiniLM-L6-v2
+        autoEmbedOnSave: true,                   // Generate embedding for every new memory
+        autoEmbedOnObservation: false,           // Future: embed raw observations
+        useHybridSearch: true,                   // keyword + vector when possible
+        rrfK: 60,                                // RRF constant
+        baseUrl: null                            // Optional: override for OpenAI-compatible (e.g. local 9Router)
+      },
+
       // Provider adapter settings
       adapters: {
         defaultProvider: 'openai',
@@ -91,7 +104,8 @@ class MemoryConfig {
       retrieval: { ...this.defaults.retrieval, ...(customConfig.retrieval || {}) },
       consolidation: { ...this.defaults.consolidation, ...(customConfig.consolidation || {}) },
       privacy: { ...this.defaults.privacy, ...(customConfig.privacy || {}) },
-      performance: { ...this.defaults.performance, ...(customConfig.performance || {}) }
+      performance: { ...this.defaults.performance, ...(customConfig.performance || {}) },
+      embedding: { ...this.defaults.embedding, ...(customConfig.embedding || {}) }
     };
   }
 

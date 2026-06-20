@@ -217,6 +217,55 @@ class StorageInterface {
   async getStats(filters = {}) {
     throw new Error('Method not implemented');
   }
+
+  /**
+   * Pin or unpin a memory (Memory Slots - Phase 3)
+   */
+  async setPinned(memoryId, pinned = true) {
+    throw new Error('Method not implemented');
+  }
+
+  /**
+   * Get all pinned memories (high-priority slots)
+   */
+  async getPinnedMemories(filters = {}, options = {}) {
+    throw new Error('Method not implemented');
+  }
+
+  /**
+   * Get observations for a session (useful for summarization)
+   */
+  async listObservationsBySession(sessionId, options = {}) {
+    throw new Error('Method not implemented');
+  }
+
+  /**
+   * Save a structured fact (Phase 3)
+   */
+  async saveFact(fact) {
+    throw new Error('Method not implemented');
+  }
+
+  /**
+   * List facts with filters
+   */
+  async listFacts(filters = {}, options = {}) {
+    throw new Error('Method not implemented');
+  }
+
+  /**
+   * Save a knowledge graph node (basic Phase 3)
+   */
+  async saveKnowledgeNode(node) {
+    throw new Error('Method not implemented');
+  }
+
+  /**
+   * List knowledge graph nodes
+   */
+  async listKnowledgeNodes(filters = {}, options = {}) {
+    throw new Error('Method not implemented');
+  }
 }
 
 module.exports = StorageInterface;
