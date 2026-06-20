@@ -82,6 +82,21 @@ function copyRecursive(src, dest) {
   }
 }
 
+function clearDirectoryContents(dirPath) {
+  if (!fs.existsSync(dirPath)) return;
+
+  const entries = fs.readdirSync(dirPath);
+  for (const entry of entries) {
+    const target = path.join(dirPath, entry);
+    try {
+      fs.rmSync(target, { recursive: true, force: true });
+    } catch (error) {
+      // On Windows a child can still be momentarily locked; continue so rebuild can proceed.
+      console.warn(`⚠️  Could not remove ${target}: ${error.message}`);
+    }
+  }
+}
+
 function findStandaloneAppRoot(baseDir) {
   if (!fs.existsSync(baseDir)) return null;
 
@@ -156,8 +171,9 @@ try {
 // Step 2: Clean old app/cli/app if exists
 console.log("2️⃣  Cleaning old app/cli/app...");
 if (fs.existsSync(cliAppDir)) {
-  fs.rmSync(cliAppDir, { recursive: true, force: true });
+  clearDirectoryContents(cliAppDir);
 }
+fs.mkdirSync(cliAppDir, { recursive: true });
 console.log("✅ Cleaned\n");
 
 // Step 3: Copy Next.js standalone build to app/cli/app.
