@@ -41,6 +41,7 @@ export const PATTERN_CAPABILITIES = [
   { pattern: "*deepseek*r*", caps: { reasoning: true } },
   { pattern: "*reasoner*", caps: { reasoning: true } },
   { pattern: "*minimax*image*", caps: { vision: false } },
+  { pattern: "*minimax-m3*", caps: { vision: true, reasoning: true } },
   { pattern: "*minimax*", caps: { reasoning: true } },
   { pattern: "*mimo*omni*", caps: { vision: true } },
   { pattern: "*mimo*v2.5*", caps: { vision: true } },
