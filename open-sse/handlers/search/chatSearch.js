@@ -1,6 +1,6 @@
 /**
  * Wrap chat-completions endpoints (with built-in web search) into the unified
- * /v1/search response format. Supports gemini, openai, xai, kimi, minimax, perplexity.
+ * /v1/search response format. Supports gemini, openai, kimi, minimax, perplexity.
  */
 
 const REQUEST_TIMEOUT_MS = 15000;
@@ -99,46 +99,6 @@ const CHAT_SEARCH_CONFIG = {
         ? data.citations.map(normalizeCitation).filter(Boolean)
         : [];
       const citations = fromAnn.length ? fromAnn : fromTop;
-      const tokens = data?.usage?.total_tokens || 0;
-      return { text, citations, tokens };
-    }
-  },
-
-  xai: {
-    endpoint: () => "https://api.x.ai/v1/responses",
-    defaultModel: "grok-4.20-reasoning",
-    buildBody: (query, model) => ({
-      model,
-      input: [{ role: "user", content: query }],
-      tools: [{ type: "web_search" }]
-    }),
-    buildHeaders: (token) => ({
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`
-    }),
-    extractAnswer: (data) => {
-      // /v1/responses returns output[] array of message/tool blocks
-      const output = Array.isArray(data?.output) ? data.output : [];
-      let text = "";
-      const citations = [];
-      for (const item of output) {
-        const parts = Array.isArray(item?.content) ? item.content : [];
-        for (const p of parts) {
-          if (typeof p?.text === "string") text += p.text;
-          const anns = Array.isArray(p?.annotations) ? p.annotations : [];
-          for (const a of anns) {
-            const c = normalizeCitation(a?.url ? a : a?.url_citation);
-            if (c) citations.push(c);
-          }
-        }
-      }
-      // Fallback: top-level citations array (some response variants)
-      if (!citations.length && Array.isArray(data?.citations)) {
-        for (const c of data.citations) {
-          const n = normalizeCitation(c);
-          if (n) citations.push(n);
-        }
-      }
       const tokens = data?.usage?.total_tokens || 0;
       return { text, citations, tokens };
     }
