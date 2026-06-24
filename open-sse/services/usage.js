@@ -5,6 +5,7 @@
 import { CLIENT_METADATA, getPlatformUserAgent } from "../config/appConstants.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { resolveDefaultProfileArn } from "../config/kiroConstants.js";
+import { getCodeBuddyCnUsage } from "./usage/codebuddy-cn.js";
 
 // GitHub API config
 const GITHUB_CONFIG = {
@@ -100,6 +101,8 @@ export async function getUsageForProvider(connection, proxyOptions = null) {
       return await getMiniMaxUsage(apiKey, provider, proxyOptions);
     case "vercel-ai-gateway":
       return await getVercelAiGatewayUsage(apiKey, proxyOptions);
+    case "codebuddy-cn":
+      return await getCodeBuddyCnUsage(accessToken, apiKey, providerSpecificData, proxyOptions);
     default:
       return { message: `Usage API not implemented for ${provider}` };
   }

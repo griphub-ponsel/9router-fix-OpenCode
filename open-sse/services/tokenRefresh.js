@@ -432,6 +432,45 @@ export async function refreshXaiOauthToken(refreshToken, log) {
   }
 }
 
+export async function refreshCodeBuddyCnToken(refreshToken, log) {
+  if (!refreshToken) return null;
+  return dedupRefresh("codebuddy-cn", refreshToken, async () => {
+    const config = PROVIDERS["codebuddy-cn"];
+    const response = await fetch(config.refreshUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        "User-Agent": "CLI/2.63.2 CodeBuddy/2.63.2",
+        "X-Requested-With": "XMLHttpRequest",
+        "X-Domain": "copilot.tencent.com",
+        "X-Refresh-Token": refreshToken,
+        "X-Auth-Refresh-Source": "plugin",
+        "X-Product": "SaaS",
+      },
+      body: "{}",
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      log?.error?.("TOKEN_REFRESH", "Failed to refresh CodeBuddy token", { status: response.status, error: errorText });
+      return null;
+    }
+
+    const data = await response.json();
+    if (data.code !== 0 || !data.data?.accessToken) {
+      log?.error?.("TOKEN_REFRESH", "CodeBuddy token refresh returned no token", { code: data.code, msg: data.msg });
+      return null;
+    }
+
+    return {
+      accessToken: data.data.accessToken,
+      refreshToken: data.data.refreshToken || refreshToken,
+      expiresIn: data.data.expiresIn,
+    };
+  }, log);
+}
+
 /**
  * Specialized refresh for Kiro (AWS CodeWhisperer) tokens
  * Supports both AWS SSO OIDC (Builder ID/IDC) and Social Auth (Google/GitHub)
@@ -721,6 +760,9 @@ async function _getAccessTokenInternal(provider, credentials, log) {
         log
       );
 
+    case "codebuddy-cn":
+      return await refreshCodeBuddyCnToken(credentials.refreshToken, log);
+
     case "kiro":
       return await refreshKiroToken(
         credentials.refreshToken,
@@ -770,6 +812,8 @@ export async function refreshTokenByProvider(provider, credentials, log) {
       return refreshXaiOauthToken(credentials.refreshToken, log);
     case "glm":
       return refreshGlmToken(credentials.refreshToken, credentials, log);
+    case "codebuddy-cn":
+      return refreshCodeBuddyCnToken(credentials.refreshToken, log);
     case "kiro":
       return refreshKiroToken(
         credentials.refreshToken,
