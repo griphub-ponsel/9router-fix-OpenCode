@@ -237,9 +237,21 @@ export function prepareClaudeRequest(body, provider = null, apiKey = null, conne
 
   // 3. Tools: filter built-in tools for non-Anthropic providers, then handle cache_control
   if (body.tools && Array.isArray(body.tools)) {
-    // Strip built-in tools (e.g. web_search_20250305) for providers that don't support them
+    // Strip built-in tools and normalize OpenAI function shape for non-Anthropic providers.
     if (provider !== "claude") {
-      body.tools = body.tools.filter(tool => !tool.type || tool.type === "function");
+      body.tools = body.tools
+        .filter(tool => !tool.type || tool.type === "function")
+        .map(tool => {
+          if (tool.function) {
+            return {
+              name: tool.function.name,
+              description: tool.function.description,
+              input_schema: tool.function.parameters,
+            };
+          }
+          const { type, ...rest } = tool;
+          return rest;
+        });
     }
 
     body.tools = body.tools.map((tool, i) => {

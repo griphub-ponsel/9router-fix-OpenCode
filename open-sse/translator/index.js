@@ -81,6 +81,16 @@ function stripContentTypes(body, stripList = []) {
   }
 }
 
+function flattenContentArraysForProvider(provider, body) {
+  if (provider !== "cloudflare-ai" || !Array.isArray(body?.messages)) return;
+  for (const msg of body.messages) {
+    if (!msg || !Array.isArray(msg.content)) continue;
+    msg.content = msg.content
+      .map(part => (part?.type === "text" && typeof part.text === "string") ? part.text : "")
+      .join("");
+  }
+}
+
 // Translate request: source -> openai -> target
 export function translateRequest(sourceFormat, targetFormat, model, body, stream = true, credentials = null, provider = null, reqLogger = null, stripList = [], connectionId = null, clientTool = null) {
   ensureInitialized();
@@ -88,6 +98,7 @@ export function translateRequest(sourceFormat, targetFormat, model, body, stream
 
   // Strip content types selected by routing/model capability checks.
   stripContentTypes(result, stripList);
+  flattenContentArraysForProvider(provider, result);
 
   // Normalize thinking config: remove if lastMessage is not user
   normalizeThinkingConfig(result);
@@ -123,6 +134,7 @@ export function translateRequest(sourceFormat, targetFormat, model, body, stream
   // This handles hybrid requests (e.g., OpenAI messages + Claude tools)
   if (targetFormat === FORMATS.OPENAI) {
     result = filterToOpenAIFormat(result);
+    flattenContentArraysForProvider(provider, result);
   }
 
   // Final step: prepare request for Claude format endpoints
