@@ -139,9 +139,8 @@ export default function ProviderDetailPage() {
   const isAnthropicCompatible = isAnthropicCompatibleProvider(providerId);
   const isCompatible = isOpenAICompatible || isAnthropicCompatible;
   const hasDualAuthModes = !isCompatible && isOAuth && supportsApiKeyAuth;
-  const oauthConnectionLabel =
-    providerId === "xai" ? "Grok Build OAuth" : providerId === "glm" ? "Z.AI OAuth" : "OAuth";
-  const apiKeyConnectionLabel = providerId === "xai" ? "xAI API Key" : providerId === "notion" ? "Notion AI Session" : "API Key";
+  const oauthConnectionLabel = providerId === "glm" ? "Z.AI OAuth" : "OAuth";
+  const apiKeyConnectionLabel = providerId === "notion" ? "Notion AI Session" : "API Key";
   const thinkingConfig = AI_PROVIDERS[providerId]?.thinkingConfig || THINKING_CONFIG.extended;
   
   const providerStorageAlias = isCompatible ? providerId : providerAlias;
