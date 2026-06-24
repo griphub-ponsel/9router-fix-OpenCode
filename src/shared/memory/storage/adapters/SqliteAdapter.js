@@ -10,12 +10,26 @@ const { v4: uuidv4 } = require('uuid');
 const { CREATE_TABLES_SQL, SCHEMA_VERSION } = require('../migrations/v1_schema');
 const StorageInterface = require('./BaseAdapter');
 
+function resolveDbPath(config = {}) {
+  if (config.dbPath || process.env.MEMORY_DB_PATH) {
+    return path.resolve(config.dbPath || process.env.MEMORY_DB_PATH);
+  }
+
+  let dir = process.cwd();
+  while (dir !== path.dirname(dir)) {
+    if (path.basename(dir) === '9router-fix-OpenCode') {
+      return path.join(dir, 'data', '9router-memory.sqlite');
+    }
+    dir = path.dirname(dir);
+  }
+
+  return path.join(process.cwd(), 'data', '9router-memory.sqlite');
+}
+
 class SqliteAdapter extends StorageInterface {
   constructor(config = {}) {
     super();
-    // Initialize dbPath immediately as absolute path
-    const rootDir = process.cwd();
-    this.dbPath = config.dbPath || `data/9router-memory.sqlite`;
+    this.dbPath = resolveDbPath(config);
     this.connection = null;
     this.initializePromise = null;
   }
@@ -28,12 +42,9 @@ class SqliteAdapter extends StorageInterface {
       return this.initializePromise;
     }
 
-    // Ensure dbPath is absolute using full path module
-    const path = require('path');
     const fs = require('fs');
     
-    const rootDir = process.cwd();
-    this.dbPath = config.dbPath || path.join(rootDir, 'data', '9router-memory.sqlite');
+    this.dbPath = resolveDbPath(config);
     
     console.log('[SqliteAdapter] DB Path:', this.dbPath);
     console.log('[SqliteAdapter] DB Dir exists:', fs.existsSync(path.dirname(this.dbPath)));
