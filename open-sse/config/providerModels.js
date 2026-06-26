@@ -712,6 +712,22 @@ export const PROVIDER_MODELS = {
     { id: "pplx-opus", name: "Claude Opus 4.6 (via Perplexity)" },
     { id: "pplx-nemotron", name: "Nemotron 3 Super (via Perplexity)" },
   ],
+  merlin: [  // Merlin AI (getmerlin.in) via Pro account access token
+    { id: "minimax-m2.7", name: "MiniMax M2.7 (via Merlin)" },
+    { id: "gemini-2.5-flash-lite", name: "Gemini 2.5 Flash Lite (via Merlin)" },
+    { id: "gemini-3.1-flash-lite", name: "Gemini 3.1 Flash Lite (via Merlin)" },
+    { id: "gemini-3.5-flash", name: "Gemini 3.5 Flash (via Merlin)" },
+    { id: "gemini-3.1-pro", name: "Gemini 3.1 Pro (via Merlin)" },
+    { id: "gpt-5.4", name: "GPT 5.4 (via Merlin)" },
+    { id: "gpt-5.5", name: "GPT 5.5 (via Merlin)" },
+    { id: "claude-4.5-haiku", name: "Claude Haiku 4.5 (via Merlin)" },
+    { id: "claude-4.6-sonnet", name: "Claude Sonnet 4.6 (via Merlin)" },
+    { id: "claude-4.8-opus", name: "Claude Opus 4.8 (via Merlin)" },
+    { id: "grok-4.3", name: "Grok 4.3 (via Merlin)" },
+    { id: "kimi-k2.6", name: "Kimi K2.6 (via Merlin)" },
+    { id: "deepseek-v4-pro", name: "DeepSeek v4 Pro (via Merlin)" },
+    { id: "glm-5.1", name: "GLM 5.1 (via Merlin)" },
+  ],
 
   // TTS entries are loaded from ttsModels.js via buildTtsProviderModels()
   ...buildTtsProviderModels(),

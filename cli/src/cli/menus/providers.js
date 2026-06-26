@@ -77,6 +77,15 @@ const PROVIDER_MODELS = {
     { id: "gemini-2.5-pro" },
     { id: "grok-code-fast-1" },
   ],
+  xog: [
+    { id: "grok-composer-2.5-fast" },
+    { id: "grok-4.3" },
+    { id: "grok-4.20-0309-reasoning" },
+    { id: "grok-4.20-0309-non-reasoning" },
+    { id: "grok-4.20-multi-agent-0309" },
+    { id: "grok-4" },
+    { id: "grok-3" },
+  ],
   kr: [
     { id: "claude-sonnet-4.5" },
     { id: "claude-haiku-4.5" },
@@ -112,6 +121,19 @@ const PROVIDER_MODELS = {
   minimax: [
     { id: "MiniMax-M2.1" },
   ],
+  merlin: [
+    { id: "minimax-m2.7" },
+    { id: "gemini-2.5-flash-lite" },
+    { id: "gemini-3.1-pro" },
+    { id: "gpt-5.4" },
+    { id: "gpt-5.5" },
+    { id: "claude-4.6-sonnet" },
+    { id: "claude-4.8-opus" },
+    { id: "grok-4.3" },
+    { id: "kimi-k2.6" },
+    { id: "deepseek-v4-pro" },
+    { id: "glm-5.1" },
+  ],
 };
 
 // Provider definitions
@@ -124,6 +146,7 @@ const OAUTH_PROVIDERS = {
   iflow: { id: "iflow", alias: "if", name: "iFlow AI" },
   qwen: { id: "qwen", alias: "qw", name: "Qwen Code" },
   kiro: { id: "kiro", alias: "kr", name: "Kiro AI" },
+  "xai-oauth": { id: "xai-oauth", alias: "xog", name: "xAI Grok" },
 };
 
 const APIKEY_PROVIDERS = {
@@ -134,6 +157,7 @@ const APIKEY_PROVIDERS = {
   openai: { id: "openai", name: "OpenAI" },
   anthropic: { id: "anthropic", name: "Anthropic" },
   gemini: { id: "gemini", name: "Gemini" },
+  merlin: { id: "merlin", name: "Merlin AI (Pro)" },
 };
 
 const ALL_PROVIDERS = { ...OAUTH_PROVIDERS, ...APIKEY_PROVIDERS };

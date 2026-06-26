@@ -71,6 +71,8 @@ const ALIAS_TO_PROVIDER_ID = {
   // Web cookie providers
   pw: "perplexity-web",
   "perplexity-web": "perplexity-web",
+  mer: "merlin",
+  merlin: "merlin",
   mimo: "xiaomi-mimo",
   "xiaomi-mimo": "xiaomi-mimo",
   xmtp: "xiaomi-tokenplan",

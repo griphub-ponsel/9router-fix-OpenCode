@@ -401,6 +401,11 @@ export const PROVIDERS = {
     format: "perplexity-web",
     authType: "cookie"
   },
+  merlin: {
+    baseUrl: "https://www.getmerlin.in/arcane/api/v2/thread/unified",
+    format: "merlin",
+    authType: "cookie"
+  },
   azure: {
     baseUrl: "",
     format: "openai",

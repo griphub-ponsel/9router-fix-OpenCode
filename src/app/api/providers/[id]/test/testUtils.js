@@ -758,6 +758,29 @@ async function testApiKeyConnection(connection, effectiveProxy = null) {
         const valid = !!(data && data.user);
         return { valid, error: valid ? null : "Session expired — re-paste cookie" };
       }
+      case "merlin": {
+        const token = connection.apiKey.startsWith("Bearer ") ? connection.apiKey.slice(7).trim() : connection.apiKey;
+        const res = await fetchWithConnectionProxy("https://www.getmerlin.in/arcane/api/v2/thread/unified", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "text/event-stream",
+            Authorization: `Bearer ${token}`,
+            "X-Merlin-Version": "web-merlin",
+            Origin: "https://www.getmerlin.in",
+            Referer: "https://www.getmerlin.in/chat",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+          },
+          body: JSON.stringify({
+            attachments: [], chatId: crypto.randomUUID(), language: "AUTO",
+            message: { childId: crypto.randomUUID(), content: "ping", context: "", id: crypto.randomUUID(), parentId: "root" },
+            mode: "UNIFIED_CHAT", model: "gemini-2.5-flash-lite",
+            metadata: { noTask: true, isWebpageChat: false, deepResearch: false, webAccess: false, proFinderMode: false, mcpConfig: { isEnabled: false }, merlinMagic: false },
+          }),
+        }, effectiveProxy);
+        const valid = res.status !== 401 && res.status !== 403;
+        return { valid, error: valid ? null : "Invalid or expired token — re-paste your getmerlin.in Bearer token" };
+      }
       case "opencode-go": {
         const res = await fetchWithConnectionProxy("https://opencode.ai/zen/go/v1/chat/completions", {
           method: "POST",

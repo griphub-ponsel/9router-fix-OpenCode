@@ -19,6 +19,7 @@ import { OllamaLocalExecutor } from "./ollama-local.js";
 import { CommandCodeExecutor } from "./commandcode.js";
 import { XiaomiTokenplanExecutor } from "./xiaomi-tokenplan.js";
 import { CodeBuddyCnExecutor } from "./codebuddy-cn.js";
+import { MerlinExecutor } from "./merlin.js";
 import { DefaultExecutor } from "./default.js";
 import { GlmExecutor } from "./glm.js";
 
@@ -47,6 +48,7 @@ const executors = {
   commandcode: new CommandCodeExecutor(),
   "xiaomi-tokenplan": new XiaomiTokenplanExecutor(),
   "codebuddy-cn": new CodeBuddyCnExecutor(),
+  merlin: new MerlinExecutor(),
 };
 
 const defaultCache = new Map();
@@ -84,4 +86,5 @@ export { CommandCodeExecutor } from "./commandcode.js";
 export { XiaomiTokenplanExecutor } from "./xiaomi-tokenplan.js";
 export { CodeBuddyCnExecutor } from "./codebuddy-cn.js";
 export { MimoFreeExecutor } from "./mimo-free.js";
+export { MerlinExecutor } from "./merlin.js";
 export { GlmExecutor } from "./glm.js";
