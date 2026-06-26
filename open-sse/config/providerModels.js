@@ -81,3 +81,13 @@ export function getModelsByProviderId(providerId) {
 export function getModelStrip(alias, modelId) {
   return modelStrip(PROVIDER_MODELS[alias]?.find(m => m.id === modelId));
 }
+
+// Model context/output limits (used by the Copilot config generator). Returns null
+// when a model entry carries no explicit contextTokens metadata.
+export function getModelLimits(aliasOrId, modelId) {
+  const found = PROVIDER_MODELS[aliasOrId]?.find(m => m.id === modelId);
+  return found?.contextTokens ? {
+    contextTokens: found.contextTokens,
+    maxOutputTokens: found.maxOutputTokens || 16000,
+  } : null;
+}

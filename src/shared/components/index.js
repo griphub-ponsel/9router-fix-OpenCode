@@ -38,7 +38,6 @@ export { default as SegmentedControl } from "./SegmentedControl";
 export { default as Tooltip } from "./Tooltip";
 export { default as CapacityBadges } from "./CapacityBadges";
 export { default as ProviderInfoCard } from "./ProviderInfoCard";
-export { default as CapacityBadges } from "./CapacityBadges";
 
 // Layouts
 export * from "./layouts";

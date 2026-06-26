@@ -21,7 +21,6 @@ import {
   formatProviderCredentials as _formatProviderCredentials,
   getAllAccessTokens as _getAllAccessTokens,
   refreshKiroToken as _refreshKiroToken,
-  refreshGlmToken as _refreshGlmToken,
   getRefreshLeadMs as _getRefreshLeadMs
 } from "open-sse/services/tokenRefresh.js";
 import {
@@ -59,9 +58,6 @@ export const refreshCopilotToken = (githubAccessToken) =>
 
 export const refreshKiroToken = (refreshToken, providerSpecificData) =>
   _refreshKiroToken(refreshToken, providerSpecificData, log);
-
-export const refreshGlmToken = (refreshToken, credentials) =>
-  _refreshGlmToken(refreshToken, credentials, log);
 
 export const getAccessToken = (provider, credentials) =>
   _getAccessToken(provider, credentials, log);
