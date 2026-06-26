@@ -1,31 +1,40 @@
+/**
+ * CodeBuddy CN usage handler
+ *
+ * Scoped to the "codebuddy-cn" provider specifically — a future "codebuddy-intl"
+ * variant would get its own handler/endpoint, so keep this CN-only.
+ *
+ * Quota lives behind a Tencent billing endpoint (POST, payload wrapped twice
+ * under data.Response.Data). It mixes two credit types that must NOT be merged:
+ *
+ *  - Refill / base ("基础体验包"): a recurring allowance whose cycle resets long
+ *    before the resource itself expires (CycleEndTime << DeductionEndTime). The
+ *    live numbers live in the *Cycle* fields (e.g. CycleCapacityUsed 6.54 / 500)
+ *    and resetAt is the next monthly refresh.
+ *  - Bonus ("活动赠送包"): one-shot credits that run a single cycle and then
+ *    expire for good (CycleEndTime == DeductionEndTime). Numbers live in the
+ *    plain Capacity fields.
+ *
+ * We surface one quota row per package — a cadence label (Monthly/Weekly/Daily)
+ * for refill packs, "Bonus Pack N" for bonus packs (soonest-expiring first).
+ */
+
 import { proxyAwareFetch } from "../../utils/proxyFetch.js";
-import { PROVIDERS } from "../../config/providers.js";
+import { PROVIDERS } from "../../providers/index.js";
+import { U, parseResetTime } from "./shared.js";
 
-const USAGE_URL = "https://copilot.tencent.com/v2/billing/meter/get-user-resource";
+const PROVIDER_ID = "codebuddy-cn";
 
-function parseResetTime(value) {
-  if (!value) return null;
-  try {
-    if (value instanceof Date) return value.toISOString();
-    if (typeof value === "number") return new Date(value < 1e12 ? value * 1000 : value).toISOString();
-    if (typeof value === "string" && /^\d+$/.test(value)) {
-      const timestamp = Number(value);
-      return new Date(timestamp < 1e12 ? timestamp * 1000 : timestamp).toISOString();
-    }
-    return new Date(value).toISOString();
-  } catch {
-    return null;
-  }
-}
-
+// Prefer the *Precise string fields (exact), fall back to the numeric ones.
 function num(precise, plain) {
   const n = Number(precise ?? plain);
   return Number.isFinite(n) ? n : 0;
 }
 
-function refillCadence(account) {
-  const start = parseResetTime(account.CycleStartTime);
-  const end = parseResetTime(account.CycleEndTime);
+// Label a refill pack by its cycle length (Monthly is the common CodeBuddy case).
+function refillCadence(acc) {
+  const start = parseResetTime(acc.CycleStartTime);
+  const end = parseResetTime(acc.CycleEndTime);
   if (start && end) {
     const days = (new Date(end).getTime() - new Date(start).getTime()) / 86400000;
     if (days <= 1.5) return "Daily";
@@ -36,13 +45,15 @@ function refillCadence(account) {
 
 export async function getCodeBuddyCnUsage(accessToken, apiKey, providerSpecificData, proxyOptions = null) {
   const token = accessToken || apiKey;
-  if (!token) return { message: "CodeBuddy CN credential not available." };
+  if (!token) {
+    return { message: "CodeBuddy CN credential not available." };
+  }
 
   try {
-    const response = await proxyAwareFetch(USAGE_URL, {
+    const response = await proxyAwareFetch(U(PROVIDER_ID).url, {
       method: "POST",
       headers: {
-        ...(PROVIDERS["codebuddy-cn"]?.headers || {}),
+        ...(PROVIDERS[PROVIDER_ID]?.headers || {}),
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
         Accept: "application/json",
@@ -53,55 +64,67 @@ export async function getCodeBuddyCnUsage(accessToken, apiKey, providerSpecificD
     if (response.status === 401 || response.status === 403) {
       return { message: "CodeBuddy CN credential invalid or expired." };
     }
-    if (!response.ok) return { message: `CodeBuddy CN quota API error (${response.status}).` };
+    if (!response.ok) {
+      return { message: `CodeBuddy CN quota API error (${response.status}).` };
+    }
 
     const json = await response.json();
-    if (json?.code !== 0) return { message: `CodeBuddy CN quota error: ${json?.msg || "unknown"}` };
+    if (json?.code !== 0) {
+      return { message: `CodeBuddy CN quota error: ${json?.msg || "unknown"}` };
+    }
 
     const data = json?.data?.Response?.Data || {};
     const accounts = Array.isArray(data.Accounts) ? data.Accounts : [];
-    if (accounts.length === 0) return { message: "CodeBuddy CN connected. No credit package found." };
+    if (accounts.length === 0) {
+      return { message: "CodeBuddy CN connected. No credit package found." };
+    }
 
-    const cycleEndMs = (account) => {
-      const reset = parseResetTime(account.CycleEndTime);
-      return reset ? new Date(reset).getTime() : Number.POSITIVE_INFINITY;
+    const cycleEndMs = (acc) => {
+      const r = parseResetTime(acc.CycleEndTime);
+      return r ? new Date(r).getTime() : Number.POSITIVE_INFINITY;
     };
-    const refillGapMs = 2 * 24 * 60 * 60 * 1000;
-    const isRefill = (account) => {
-      const cycleEnd = cycleEndMs(account);
-      const deductionEnd = Number(account.DeductionEndTime);
-      return Number.isFinite(cycleEnd) && Number.isFinite(deductionEnd) && deductionEnd - cycleEnd > refillGapMs;
+    // Refill packs roll into a new cycle before the resource expires; bonus packs
+    // end exactly at expiry. >2d gap between cycle end and validity end = refill.
+    const REFILL_GAP_MS = 2 * 24 * 60 * 60 * 1000;
+    const isRefill = (acc) => {
+      const ce = cycleEndMs(acc);
+      const de = Number(acc.DeductionEndTime);
+      return Number.isFinite(ce) && Number.isFinite(de) && de - ce > REFILL_GAP_MS;
     };
     const byExpiry = (a, b) => cycleEndMs(a) - cycleEndMs(b);
 
     const refills = accounts.filter(isRefill).sort(byExpiry);
-    const bonuses = accounts.filter((account) => !isRefill(account)).sort(byExpiry);
-    const quotas = {};
-    const seenRefill = {};
+    const bonuses = accounts.filter((a) => !isRefill(a)).sort(byExpiry);
 
-    refills.forEach((account) => {
-      const base = refillCadence(account);
+    const quotas = {};
+    // Refill packs first: cadence-labelled, using the *Cycle* balance and
+    // resetting at the next refresh.
+    const seenRefill = {};
+    refills.forEach((acc) => {
+      const base = refillCadence(acc);
       seenRefill[base] = (seenRefill[base] || 0) + 1;
       const name = seenRefill[base] > 1 ? `${base} ${seenRefill[base]}` : base;
       quotas[name] = {
-        used: num(account.CycleCapacityUsedPrecise, account.CycleCapacityUsed),
-        total: num(account.CycleCapacitySizePrecise, account.CycleCapacitySize),
-        resetAt: parseResetTime(account.CycleEndTime),
+        used: num(acc.CycleCapacityUsedPrecise, acc.CycleCapacityUsed),
+        total: num(acc.CycleCapacitySizePrecise, acc.CycleCapacitySize),
+        resetAt: parseResetTime(acc.CycleEndTime),
+        unlimited: false,
+      };
+    });
+    // Bonus packs: use the lifetime Capacity balance; resetAt is the expiry.
+    bonuses.forEach((acc, i) => {
+      quotas[`Bonus Pack ${i + 1}`] = {
+        used: num(acc.CapacityUsedPrecise, acc.CapacityUsed),
+        total: num(acc.CapacitySizePrecise, acc.CapacitySize),
+        resetAt: parseResetTime(acc.CycleEndTime),
         unlimited: false,
       };
     });
 
-    bonuses.forEach((account, index) => {
-      quotas[`Bonus Pack ${index + 1}`] = {
-        used: num(account.CapacityUsedPrecise, account.CapacityUsed),
-        total: num(account.CapacitySizePrecise, account.CapacitySize),
-        resetAt: parseResetTime(account.CycleEndTime),
-        unlimited: false,
-      };
-    });
+    const basePkg = refills[0] || accounts[0] || {};
+    const plan = basePkg.PackageName || basePkg.SubProductName || "CodeBuddy CN";
 
-    const basePackage = refills[0] || accounts[0] || {};
-    return { plan: basePackage.PackageName || basePackage.SubProductName || "CodeBuddy CN", quotas };
+    return { plan, quotas };
   } catch (error) {
     return { message: `CodeBuddy CN error: ${error.message}` };
   }

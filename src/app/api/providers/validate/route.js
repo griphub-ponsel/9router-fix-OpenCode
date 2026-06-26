@@ -3,109 +3,8 @@ import { getProviderNodeById } from "@/models";
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider, isCustomEmbeddingProvider, AI_PROVIDERS } from "@/shared/constants/providers";
 import { getDefaultModel } from "open-sse/config/providerModels.js";
 import { resolveOllamaLocalHost, resolveXiaomiTokenplanBaseUrl, PROVIDERS } from "open-sse/config/providers.js";
-import { openaiToCommandCode } from "open-sse/translator/request/openai-to-commandcode.js";
-import { PROVIDER_ENDPOINTS } from "@/shared/constants/config";
-import { extractNotionToken, normalizeProviderId, normalizeProviderSpecificData } from "@/lib/providerNormalization";
-
-const NOTION_CLIENT_VERSION = "23.13.20260605.0836";
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-function isUuid(value) {
-  return UUID_RE.test(String(value || ""));
-}
-
-function parseCookieString(cookieString) {
-  const out = {};
-  for (const part of String(cookieString || "").split(";")) {
-    const idx = part.indexOf("=");
-    if (idx <= 0) continue;
-    const key = part.slice(0, idx).trim();
-    const value = part.slice(idx + 1).trim();
-    if (key && value) out[key] = value;
-  }
-  return out;
-}
-
-function resolveNotionFullCookie(apiKey, data = {}) {
-  const storedCookie = data.fullCookie || data.cookie || "";
-  if (storedCookie) return storedCookie;
-  const rawApiKey = String(apiKey || "").trim();
-  return rawApiKey.includes("token_v2=") && rawApiKey.includes(";") ? rawApiKey : "";
-}
-
-function buildNotionCookie(apiKey, data = {}) {
-  const fullCookie = resolveNotionFullCookie(apiKey, data);
-  const token = extractNotionToken(apiKey, fullCookie);
-  const cookieUserId = parseCookieString(fullCookie).notion_user_id;
-  const cookies = {
-    ...parseCookieString(fullCookie),
-    token_v2: token,
-    notion_user_id: data.userId || cookieUserId,
-  };
-  return Object.entries(cookies).filter(([, value]) => value).map(([key, value]) => `${key}=${value}`).join("; ");
-}
-
-function extractSpaceIdFromUserContent(payload) {
-  const spaces = payload?.recordMap?.space;
-  if (!spaces || typeof spaces !== "object") return "";
-  return Object.keys(spaces).find(isUuid) || "";
-}
-
-async function probeNotionSession(apiKey, providerSpecificData = {}) {
-  const data = normalizeProviderSpecificData("notion", {}, providerSpecificData) || {};
-  const fullCookie = resolveNotionFullCookie(apiKey, data);
-  const cookieUserId = parseCookieString(fullCookie).notion_user_id;
-  const userId = data.userId || cookieUserId;
-  const token = extractNotionToken(apiKey, fullCookie);
-  if (!token || !userId) {
-    return { valid: false, error: "token_v2 and notion_user_id are required. Paste the full Cookie header or token_v2 plus notion_user_id." };
-  }
-  if (data.spaceId && !isUuid(data.spaceId)) {
-    return { valid: false, error: "spaceId must be the Notion workspace UUID, not a cookie or sync_session value. Leave it blank to auto-discover." };
-  }
-  if (!isUuid(userId)) {
-    return { valid: false, error: "userId must be the Notion user UUID." };
-  }
-
-  data.userId = userId;
-
-  const res = await fetch("https://app.notion.com/api/v3/loadUserContent", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Accept": "application/json",
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
-      ...(data.spaceId ? { "x-notion-space-id": data.spaceId } : {}),
-      "x-notion-active-user-header": data.userId,
-      "notion-client-version": data.clientVersion || NOTION_CLIENT_VERSION,
-      "origin": "https://app.notion.com",
-      "referer": "https://app.notion.com/",
-      "cookie": buildNotionCookie(apiKey, data),
-    },
-    body: "{}",
-    signal: AbortSignal.timeout(10000),
-  });
-
-  if (res.status === 401 || res.status === 403) {
-    return { valid: false, error: "Invalid Notion session. Re-check token_v2, full cookie, spaceId, and userId." };
-  }
-  if (!res.ok) {
-    return { valid: false, error: `Notion session probe returned HTTP ${res.status}` };
-  }
-  const payload = await res.json().catch(() => null);
-  if (!payload?.recordMap || typeof payload.recordMap !== "object") {
-    return { valid: false, error: "Notion session probe returned an unexpected response" };
-  }
-  return {
-    valid: true,
-    error: null,
-    providerSpecificData: {
-      ...data,
-      spaceId: data.spaceId || extractSpaceIdFromUserContent(payload) || undefined,
-      userId,
-    },
-  };
-}
+import { openaiToCommandCodeRequest } from "open-sse/translator/request/openai-to-commandcode.js";
+import { normalizeProviderId } from "@/lib/providerNormalization";
 
 // Probe a webSearch/webFetch provider using its searchConfig/fetchConfig.
 // Returns true if API key is accepted (status !== 401 && !== 403).
@@ -175,7 +74,7 @@ async function probeMediaProvider(provider, apiKey) {
   const res = await fetch(cfg.baseUrl, {
     method,
     headers,
-    body: method === "GET" ? undefined : JSON.stringify({ input: "ping", text: "ping", prompt: "ping", model: cfg.models?.[0]?.id || "test" }),
+    body: method === "GET" ? undefined : JSON.stringify({ input: "ping", text: "ping", prompt: "ping", model: getDefaultModel(provider) || "test" }),
     signal: AbortSignal.timeout(8000),
   });
   return res.status !== 401 && res.status !== 403;
@@ -334,11 +233,6 @@ export async function POST(request) {
         });
       }
 
-      if (provider === "notion") {
-        const result = await probeNotionSession(apiKey, providerSpecificData);
-        return NextResponse.json(result);
-      }
-
       // Generic probe for webSearch/webFetch providers (config-driven)
       const webResult = await probeWebProvider(provider, apiKey);
       if (webResult !== null) {
@@ -440,7 +334,7 @@ export async function POST(request) {
         }
         case "volcengine-ark":
         case "byteplus": {
-          const res = await fetch(PROVIDER_ENDPOINTS[provider], {
+          const res = await fetch(PROVIDERS[provider]?.baseUrl, {
             method: "POST",
             headers: {
               "Authorization": `Bearer ${apiKey}`,
@@ -476,25 +370,12 @@ export async function POST(request) {
         case "xiaomi-tokenplan":
         case "nvidia": {
           const endpoints = {
-            deepseek: "https://api.deepseek.com/models",
-            groq: "https://api.groq.com/openai/v1/models",
-            mistral: "https://api.mistral.ai/v1/models",
-            perplexity: "https://api.perplexity.ai/models",
-            together: "https://api.together.xyz/v1/models",
-            fireworks: "https://api.fireworks.ai/inference/v1/models",
-            cerebras: "https://api.cerebras.ai/v1/models",
-            cohere: "https://api.cohere.ai/v1/models",
-            nebius: "https://api.studio.nebius.ai/v1/models",
-            siliconflow: "https://api.siliconflow.cn/v1/models",
-            hyperbolic: "https://api.hyperbolic.xyz/v1/models",
-            ollama: "https://ollama.com/api/tags",
+            ...Object.fromEntries(
+              Object.entries(PROVIDERS).filter(([, t]) => t.validateUrl).map(([id, t]) => [id, t.validateUrl])
+            ),
+            // dynamic URLs (depend on providerSpecificData) — kept inline
             "ollama-local": `${resolveOllamaLocalHost({ providerSpecificData })}/api/tags`,
-            assemblyai: "https://api.assemblyai.com/v1/account",
-            nanobanana: "https://api.nanobananaapi.ai/v1/models",
-            chutes: "https://llm.chutes.ai/v1/models",
-            nvidia: "https://integrate.api.nvidia.com/v1/models",
-            "xiaomi-mimo": "https://api.xiaomimimo.com/v1/models",
-            "xiaomi-tokenplan": `${resolveXiaomiTokenplanBaseUrl({ providerSpecificData })}/models`
+            "xiaomi-tokenplan": `${resolveXiaomiTokenplanBaseUrl({ providerSpecificData })}/models`,
           };
           const headers = {};
           if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
@@ -521,7 +402,7 @@ export async function POST(request) {
         case "commandcode": {
           const cfg = PROVIDERS.commandcode;
           const model = getDefaultModel("commandcode");
-          const payload = openaiToCommandCode(model, {
+          const payload = openaiToCommandCodeRequest(model, {
             messages: [{ role: "user", content: "ping" }],
             max_tokens: 1,
             stream: false,

@@ -3,20 +3,23 @@
 import { CAPACITY_META } from "@/shared/constants/models";
 import Tooltip from "./Tooltip";
 
+// Render small icon badges for a model's capabilities (only those set true).
+// colorOverride: force a single color class for all badges (default: per-cap color).
+// size: icon font-size in px (default 16).
 export default function CapacityBadges({ caps, className = "", colorOverride, size = 16 }) {
   if (!caps) return null;
-  const active = Object.keys(CAPACITY_META).filter((key) => caps[key]);
+  const active = Object.keys(CAPACITY_META).filter((k) => caps[k]);
   if (active.length === 0) return null;
 
   return (
     <span className={`inline-flex items-center gap-0.5 ${className}`}>
-      {active.map((key) => (
-        <Tooltip key={key} text={`${CAPACITY_META[key].label} - ${CAPACITY_META[key].desc}`}>
+      {active.map((k) => (
+        <Tooltip key={k} text={`${CAPACITY_META[k].label} — ${CAPACITY_META[k].desc}`}>
           <span
-            className={`material-symbols-outlined leading-none cursor-help ${colorOverride || CAPACITY_META[key].color}`}
+            className={`material-symbols-outlined leading-none cursor-help ${colorOverride || CAPACITY_META[k].color}`}
             style={{ fontSize: `${size}px` }}
           >
-            {CAPACITY_META[key].icon}
+            {CAPACITY_META[k].icon}
           </span>
         </Tooltip>
       ))}

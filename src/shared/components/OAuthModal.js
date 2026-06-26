@@ -20,6 +20,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
   const [polling, setPolling] = useState(false);
   const popupRef = useRef(null);
   const pollingAbortRef = useRef(false);
+  const openedRef = useRef(false);
   const { copied, copy } = useCopyToClipboard();
 
   // State for client-only values to avoid hydration mismatch
@@ -51,22 +52,39 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
           redirectUri: authData.redirectUri,
           codeVerifier: authData.codeVerifier,
           state,
-          ...((oauthMeta || authData.authMeta) ? { meta: { ...(oauthMeta || {}), ...(authData.authMeta || {}) } } : {}),
+          ...(oauthMeta ? { meta: oauthMeta } : {}),
         }),
       });
 
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
 
-      // Close popup window automatically once exchange completes
-      try { popupRef.current?.close?.(); } catch { /* ignore */ }
       setStep("success");
       onSuccess?.();
     } catch (err) {
       setError(err.message);
       setStep("error");
     }
-  }, [authData, provider, onSuccess, oauthMeta]);
+  }, [authData, provider, onSuccess]);
+
+  const completeXaiManualCode = useCallback(async (code) => {
+    if (!authData?.state) return;
+    try {
+      const res = await fetch("/api/oauth/xai/manual-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code, state: authData.state }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+
+      setStep("success");
+      onSuccess?.();
+    } catch (err) {
+      setError(err.message);
+      setStep("error");
+    }
+  }, [authData, onSuccess]);
 
   // Poll for device code token
   const startPolling = useCallback(async (deviceCode, codeVerifier, interval, extraData, deadlineMs) => {
@@ -139,7 +157,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
       setError(null);
 
       // Device code flow providers
-      const deviceCodeProviders = ["github", "qwen", "kiro", "kimi-coding", "kilocode", "codebuddy", "codebuddy-cn", "qoder"];
+      const deviceCodeProviders = ["github", "qwen", "kiro", "kimi-coding", "kilocode", "codebuddy-cn", "qoder"];
       if (deviceCodeProviders.includes(provider)) {
         setIsDeviceCode(true);
         setStep("waiting");
@@ -199,7 +217,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
       let redirectUri;
       if (provider === "codex") {
         redirectUri = "http://localhost:1455/auth/callback";
-      } else if (provider === "xai-oauth") {
+      } else if (provider === "xai") {
         redirectUri = "http://127.0.0.1:56121/callback";
       } else {
         redirectUri = `http://localhost:${appPort}/callback`;
@@ -234,11 +252,13 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
         }
       }
 
+      // xAI: same fixed-port server-side proxy pattern as codex (port 56121)
       let xaiProxyActive = false;
       let xaiServerSide = false;
-      if (provider === "xai-oauth") {
+      if (provider === "xai") {
         try {
-          const proxyUrl = new URL(`/api/oauth/xai-oauth/start-proxy`, window.location.origin);
+          const proxyUrl = new URL(`/api/oauth/xai/start-proxy`, window.location.origin);
+          proxyUrl.searchParams.set("app_port", appPort);
           proxyUrl.searchParams.set("state", data.state);
           proxyUrl.searchParams.set("code_verifier", data.codeVerifier);
           proxyUrl.searchParams.set("redirect_uri", redirectUri);
@@ -246,23 +266,16 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
           const proxyData = await proxyRes.json();
           xaiProxyActive = proxyData.success;
           xaiServerSide = !!proxyData.serverSide;
-          if (!xaiProxyActive) {
-            throw new Error(proxyData.reason === "port_busy"
-              ? "Port 56121 is already in use. Close Hermes/xAI auth flow and try again."
-              : (proxyData.reason || "Failed to start xAI callback server"));
+          if (!xaiProxyActive && proxyData.reason === "port_busy") {
+            throw new Error("Port 56121 in use; close the conflicting process and retry");
           }
-        } catch (err) {
-          throw new Error(err.message || "Failed to start xAI callback server");
+        } catch (e) {
+          if (e?.message) throw e;
+          xaiProxyActive = false;
         }
       }
 
-      setAuthData({
-        ...data,
-        redirectUri,
-        codexServerSide,
-        xaiServerSide,
-        serverSideProvider: xaiServerSide ? "xai-oauth" : (codexServerSide ? "codex" : null),
-      });
+      setAuthData({ ...data, redirectUri, codexServerSide, xaiServerSide });
 
       if (provider === "codex" && codexProxyActive) {
         // Proxy active: callback will be handled server-side (auto-exchange) or via channels (fallback)
@@ -271,18 +284,18 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
         if (!popupRef.current) {
           setStep("input");
         }
-      } else if (provider === "xai-oauth" && xaiProxyActive) {
+      } else if (provider === "xai" && xaiProxyActive) {
         setStep("waiting");
         popupRef.current = window.open(data.authUrl, "oauth_popup", "width=600,height=700");
         if (!popupRef.current) {
           setStep("input");
         }
-      } else if (!isLocalhost || provider === "codex") {
+      } else if (!isLocalhost || provider === "codex" || provider === "xai") {
         // Non-localhost or proxy failed: manual input mode
         setStep("input");
         window.open(data.authUrl, "_blank");
       } else {
-        // Localhost (non-Codex): Open popup and wait for message
+        // Localhost (non-Codex/xAI): Open popup and wait for message
         setStep("waiting");
         popupRef.current = window.open(data.authUrl, "oauth_popup", "width=600,height=700");
         if (!popupRef.current) {
@@ -298,6 +311,9 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
   // Reset state and start OAuth when modal opens
   useEffect(() => {
     if (isOpen && provider) {
+      // Guard against StrictMode/effect re-runs auto-opening multiple tabs.
+      if (openedRef.current) return;
+      openedRef.current = true;
       setAuthData(null);
       setCallbackUrl("");
       setError(null);
@@ -309,18 +325,19 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
     } else if (!isOpen) {
       // Abort polling and cleanup proxy when modal closes
       pollingAbortRef.current = true;
+      openedRef.current = false;
       if (provider === "codex") {
         fetch("/api/oauth/codex/stop-proxy").catch(() => {});
-      }
-      if (provider === "xai-oauth") {
-        fetch("/api/oauth/xai-oauth/stop-proxy").catch(() => {});
+      } else if (provider === "xai") {
+        fetch("/api/oauth/xai/stop-proxy").catch(() => {});
       }
     }
   }, [isOpen, provider, startOAuthFlow]);
 
-  // Server-side mode: poll status (proxy auto-exchanges + saves DB)
+  // Fixed-port server-side mode: poll status (proxy auto-exchanges + saves DB)
   useEffect(() => {
-    if (!authData?.serverSideProvider || !authData?.state) return;
+    const pollProvider = authData?.codexServerSide ? "codex" : authData?.xaiServerSide ? "xai" : null;
+    if (!pollProvider || !authData?.state) return;
     if (callbackProcessedRef.current) return;
     let cancelled = false;
     const POLL_INTERVAL_MS = 1500;
@@ -331,13 +348,11 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
       if (cancelled || callbackProcessedRef.current) return;
       attempts += 1;
       try {
-        const res = await fetch(`/api/oauth/${authData.serverSideProvider}/poll-status?state=${encodeURIComponent(authData.state)}`);
+          const res = await fetch(`/api/oauth/${pollProvider}/poll-status?state=${encodeURIComponent(authData.state)}`);
         const data = await res.json();
         if (cancelled || callbackProcessedRef.current) return;
         if (data.status === "done") {
           callbackProcessedRef.current = true;
-          // Close popup window automatically once exchange completes
-          try { popupRef.current?.close?.(); } catch { /* ignore */ }
           setStep("success");
           onSuccess?.();
           return;
@@ -448,27 +463,31 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
   const handleManualSubmit = async () => {
     try {
       setError(null);
-      const trimmed = callbackUrl.trim();
-      let code = "";
-      let state = null;
-      let errorParam = null;
 
-      if (provider === "xai-oauth" && !/^https?:\/\//i.test(trimmed)) {
-        code = trimmed;
-        state = authData?.state || null;
-      } else {
-        const url = new URL(trimmed);
-        code = url.searchParams.get("code");
-        state = url.searchParams.get("state");
-        errorParam = url.searchParams.get("error");
+      const input = callbackUrl.trim();
+
+      // Detect raw JWT access token (starts with eyJ) — skip URL parsing
+      if (input.startsWith("eyJ") && input.includes(".")) {
+        await exchangeTokens(input, null);
+        return;
       }
+
+      if (provider === "xai" && input && !input.includes("://") && !input.includes("?") && !input.includes("code=")) {
+        await completeXaiManualCode(input);
+        return;
+      }
+
+      const url = new URL(input);
+      const code = url.searchParams.get("code");
+      const state = url.searchParams.get("state");
+      const errorParam = url.searchParams.get("error");
 
       if (errorParam) {
         throw new Error(url.searchParams.get("error_description") || errorParam);
       }
 
       if (!code) {
-        throw new Error(provider === "xai-oauth" ? "No authorization code found" : "No authorization code found in URL");
+        throw new Error(provider === "xai" ? "Paste the callback URL or copied xAI code" : "No authorization code found in URL");
       }
 
       await exchangeTokens(code, state);
@@ -482,18 +501,22 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
   const handleClose = useCallback(() => {
     if (provider === "codex") {
       fetch("/api/oauth/codex/stop-proxy").catch(() => {});
-    }
-    if (provider === "xai-oauth") {
-      fetch("/api/oauth/xai-oauth/stop-proxy").catch(() => {});
+    } else if (provider === "xai") {
+      fetch("/api/oauth/xai/stop-proxy").catch(() => {});
     }
     onClose();
   }, [onClose, provider]);
 
   if (!provider || !providerInfo) return null;
+  const isXaiProvider = provider === "xai";
   const deviceLoginUrl = deviceData?.verification_uri_complete || deviceData?.verification_uri || "";
+  const modalTitle = isXaiProvider ? "Connect Grok Build OAuth" : `Connect ${providerInfo.name}`;
+  const manualPlaceholder = isXaiProvider
+    ? "http://127.0.0.1:56121/callback?code=... or copied code"
+    : placeholderUrl;
 
   return (
-    <Modal isOpen={isOpen} title={`Connect ${providerInfo.name}`} onClose={handleClose} size="lg">
+    <Modal isOpen={isOpen} title={modalTitle} onClose={handleClose} size="lg">
       <div className="flex flex-col gap-4">
         {/* Waiting + Manual Input combined (non-device-code) */}
         {(step === "waiting" || step === "input") && !isDeviceCode && (
@@ -503,7 +526,9 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
               <span className="material-symbols-outlined text-base text-primary animate-spin">
                 progress_activity
               </span>
-              <span className="text-sm">Waiting for popup authorization…</span>
+              <span className="text-sm">
+                {isXaiProvider ? "Waiting for Grok Build OAuth…" : "Waiting for popup authorization…"}
+              </span>
             </div>
 
             {/* Divider */}
@@ -516,7 +541,9 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
             {/* Option B: Manual paste */}
             <div className="space-y-4">
               <div>
-                <p className="text-sm font-medium mb-2">Step 1: Open this URL in your browser</p>
+                <p className="text-sm font-medium mb-2">
+                  Step 1: Open this {isXaiProvider ? "Grok Build OAuth URL" : "URL"} in your browser
+                </p>
                 <div className="flex gap-2">
                   <Input value={authData?.authUrl || ""} readOnly className="flex-1 font-mono text-xs" />
                   <Button variant="secondary" icon={copied === "auth_url" ? "check" : "content_copy"} onClick={() => copy(authData?.authUrl, "auth_url")} disabled={!authData?.authUrl}>
@@ -527,17 +554,17 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
 
               <div>
                 <p className="text-sm font-medium mb-2">
-                  Step 2: Paste the {provider === "xai-oauth" ? "callback URL or Grok Build code" : "callback URL"} here
+                  Step 2: Paste the {provider === "xai" ? "callback URL or copied code" : "callback URL"} here
                 </p>
                 <p className="text-xs text-text-muted mb-2">
-                  {provider === "xai-oauth"
-                    ? "If xAI shows 'Could not establish connection', copy the code shown on that page and paste it here."
+                  {provider === "xai"
+                    ? "If xAI shows a code instead of redirecting, paste that code here."
                     : "After authorization, copy the full URL from your browser."}
                 </p>
                 <Input
                   value={callbackUrl}
                   onChange={(e) => setCallbackUrl(e.target.value)}
-                  placeholder={provider === "xai-oauth" ? "Paste Grok Build code or callback URL..." : placeholderUrl}
+                  placeholder={manualPlaceholder}
                   className="font-mono text-xs"
                 />
               </div>

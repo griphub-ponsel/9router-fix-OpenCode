@@ -19,15 +19,12 @@ export async function GET() {
       })
       .map((m) => {
         const fullModel = `${m.provider}/${m.model}`;
-        const capabilities = getCapabilitiesForModel(m.provider, m.model);
+        const c = getCapabilitiesForModel(m.provider, m.model);
         return {
           ...m,
           fullModel,
           alias: modelAliases[fullModel] || m.model,
-          caps: {
-            vision: capabilities.vision,
-            reasoning: capabilities.reasoning,
-          },
+          caps: { vision: c.vision, search: c.search, reasoning: c.reasoning },
         };
       });
 

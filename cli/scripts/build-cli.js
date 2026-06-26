@@ -17,7 +17,6 @@ const EXCLUDE_PATTERNS = [
   "@img",           // Sharp image processing (not needed with unoptimized images)
   "sharp",          // Sharp core lib (not needed with unoptimized images)
   "detect-libc",    // Sharp dependency
-  "logs",           // Runtime logs
   ".env",           // Environment files
   ".env.local",
   ".env.*.local",
@@ -82,51 +81,6 @@ function copyRecursive(src, dest) {
   }
 }
 
-function clearDirectoryContents(dirPath) {
-  if (!fs.existsSync(dirPath)) return;
-
-  const entries = fs.readdirSync(dirPath);
-  for (const entry of entries) {
-    const target = path.join(dirPath, entry);
-    try {
-      fs.rmSync(target, { recursive: true, force: true });
-    } catch (error) {
-      // On Windows a child can still be momentarily locked; continue so rebuild can proceed.
-      console.warn(`⚠️  Could not remove ${target}: ${error.message}`);
-    }
-  }
-}
-
-function findStandaloneAppRoot(baseDir) {
-  if (!fs.existsSync(baseDir)) return null;
-
-  // Layout A: standalone/server.js
-  if (fs.existsSync(path.join(baseDir, "server.js"))) {
-    return baseDir;
-  }
-
-  // Layout B: standalone/app/server.js
-  if (fs.existsSync(path.join(baseDir, "app", "server.js"))) {
-    return path.join(baseDir, "app");
-  }
-
-  // Layout C: standalone/<project>/server.js or standalone/<project>/app/server.js
-  const children = fs.readdirSync(baseDir, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => path.join(baseDir, entry.name));
-
-  for (const child of children) {
-    if (fs.existsSync(path.join(child, "server.js"))) {
-      return child;
-    }
-    if (fs.existsSync(path.join(child, "app", "server.js"))) {
-      return path.join(child, "app");
-    }
-  }
-
-  return null;
-}
-
 console.log("📦 Building 9Router CLI package with Next.js...\n");
 
 fs.mkdirSync(buildHomeDir, { recursive: true });
@@ -171,9 +125,8 @@ try {
 // Step 2: Clean old app/cli/app if exists
 console.log("2️⃣  Cleaning old app/cli/app...");
 if (fs.existsSync(cliAppDir)) {
-  clearDirectoryContents(cliAppDir);
+  fs.rmSync(cliAppDir, { recursive: true, force: true });
 }
-fs.mkdirSync(cliAppDir, { recursive: true });
 console.log("✅ Cleaned\n");
 
 // Step 3: Copy Next.js standalone build to app/cli/app.
@@ -182,9 +135,19 @@ console.log("✅ Cleaned\n");
 console.log("3️⃣  Copying Next.js standalone build to app/cli/app...");
 const standaloneRoot = path.join(appDir, ".next", "standalone");
 const standaloneRootResolved = path.join(buildDistDir, "standalone");
-const standaloneRootToUse = fs.existsSync(standaloneRootResolved) ? standaloneRootResolved : standaloneRoot;
-const standaloneApp = findStandaloneAppRoot(standaloneRootToUse);
-if (!standaloneApp || !fs.existsSync(standaloneApp)) {
+let standaloneRootToUse = fs.existsSync(standaloneRootResolved) ? standaloneRootResolved : standaloneRoot;
+// Next.js 16 nests standalone output under the project name when NEXT_TRACING_ROOT_MODE=workspace
+// e.g. .next-cli-build/standalone/9router/server.js
+const pkgName = path.basename(appDir);
+const nestedRoot = path.join(standaloneRootToUse, pkgName);
+if (fs.existsSync(path.join(nestedRoot, "server.js")) && !fs.existsSync(path.join(standaloneRootToUse, "server.js"))) {
+  console.log(`ℹ️  Detected nested standalone output: ${pkgName}/`);
+  standaloneRootToUse = nestedRoot;
+}
+const standaloneApp = fs.existsSync(path.join(standaloneRootToUse, "server.js"))
+  ? standaloneRootToUse
+  : path.join(standaloneRootToUse, "app");
+if (!fs.existsSync(standaloneApp)) {
   console.error("❌ Next.js standalone build not found under .next/standalone");
   console.error("Expected either .next/standalone/server.js or .next/standalone/app/");
   process.exit(1);

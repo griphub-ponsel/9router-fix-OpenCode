@@ -1,4 +1,4 @@
-﻿const REFRESH_RESULT_TTL_MS = 10_000;
+const REFRESH_RESULT_TTL_MS = 10_000;
 const refreshDedupCache = new Map();
 
 export async function dedupRefresh(provider, oldToken, fn, log) {
