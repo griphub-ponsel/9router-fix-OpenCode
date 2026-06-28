@@ -264,7 +264,7 @@ export default function MemoryDashboard() {
         <div className="relative flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <div className="flex items-start gap-4">
             <div className="flex size-12 shrink-0 items-center justify-center rounded-[14px] bg-gradient-to-br from-brand-500 to-brand-700 text-white shadow-[var(--shadow-warm)]">
-              <span className="material-symbols-outlined text-[22px]">bookmark</span>
+              <span className="material-symbols-outlined text-[22px]">memory</span>
             </div>
             <div>
               <h1 className="text-3xl font-bold tracking-tight text-text-main">Memory System</h1>

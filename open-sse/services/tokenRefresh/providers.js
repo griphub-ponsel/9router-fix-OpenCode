@@ -4,16 +4,42 @@ import { proxyAwareFetch } from "../../utils/proxyFetch.js";
 import { dedupRefresh } from "./dedup.js";
 import { buildExternalIdpRefreshParams } from "../../../src/lib/oauth/kiroExternalIdp.js";
 
-let _xaiServiceSingleton = null;
 export async function refreshXaiToken(refreshToken, log) {
   if (!refreshToken) return null;
   return dedupRefresh("xai", refreshToken, async () => {
     try {
-      if (!_xaiServiceSingleton) {
-        const mod = await import("../../../src/lib/oauth/services/xai.js");
-        _xaiServiceSingleton = new mod.XaiService();
+      const xaiConfig = PROVIDERS.xai || PROVIDERS["xai-oauth"];
+      const tokenUrl = xaiConfig?.refreshUrl || xaiConfig?.tokenUrl;
+      const clientId = xaiConfig?.clientId;
+      if (!tokenUrl || !clientId) {
+        log?.warn?.("TOKEN_REFRESH", "xai refresh unavailable: missing provider tokenUrl/clientId");
+        return null;
       }
-      const tokens = await _xaiServiceSingleton.refreshAccessToken(refreshToken);
+
+      const response = await proxyAwareFetch(tokenUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Accept: "application/json",
+        },
+        body: new URLSearchParams({
+          grant_type: "refresh_token",
+          client_id: clientId,
+          refresh_token: refreshToken,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => "");
+        log?.warn?.("TOKEN_REFRESH", `xai refresh failed: HTTP ${response.status} ${errorText.slice(0, 200)}`);
+        const lower = errorText.toLowerCase();
+        if (lower.includes("invalid_grant") || lower.includes("invalid_request")) {
+          return { error: "invalid_grant" };
+        }
+        return null;
+      }
+
+      const tokens = await response.json();
       return {
         accessToken: tokens.access_token,
         refreshToken: tokens.refresh_token || refreshToken,

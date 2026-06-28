@@ -10,6 +10,14 @@
 
 const crypto = require('crypto');
 
+// Keep optional deps out of static bundler resolution to avoid noisy build warnings.
+function optionalRequire(moduleName) {
+  const runtimeRequire = typeof __non_webpack_require__ === 'function'
+    ? __non_webpack_require__
+    : eval('require');
+  return runtimeRequire(moduleName);
+}
+
 class EmbeddingService {
   constructor(options = {}) {
     this.provider = options.provider || 'local'; // 'local' | 'openai' | 'none'
@@ -56,8 +64,8 @@ class EmbeddingService {
 
   async _initLocal() {
     try {
-      // Lazy require — package is optional
-      const { pipeline, env } = require('@xenova/transformers');
+      // Lazy require — package is optional and may be absent in lightweight installs.
+      const { pipeline, env } = optionalRequire('@xenova/transformers');
       
       // Use a small, fast model. all-MiniLM-L6-v2 produces 384-dim vectors (matches schema hint)
       const modelName = this.model || 'Xenova/all-MiniLM-L6-v2';
