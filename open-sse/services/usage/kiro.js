@@ -6,6 +6,11 @@ import { proxyAwareFetch } from "../../utils/proxyFetch.js";
 import { resolveDefaultProfileArn } from "../../config/kiroConstants.js";
 import { U, parseResetTime } from "./shared.js";
 
+// Kiro usage endpoint rate-limits (429/throttle); cool down per-token to stop hammering it.
+// Only the quota endpoint is affected — chat with the same token still works.
+const KIRO_429_COOLDOWN_MS = 180000; // 3 minutes
+const kiroCooldown = new Map();
+
 /**
  * Kiro (AWS CodeWhisperer) Usage
  */
@@ -49,6 +54,12 @@ function parseKiroQuotaData(data) {
 }
 
 export async function getKiroUsage(accessToken, providerSpecificData, proxyOptions = null) {
+  // Skip usage call while this token is cooling down from a recent 429/throttle
+  const cooldownUntil = kiroCooldown.get(accessToken);
+  if (cooldownUntil && Date.now() < cooldownUntil) {
+    return { message: "Kiro usage endpoint cooling down (rate-limited). Chat still works.", quotas: {} };
+  }
+
   const authMethod = providerSpecificData?.authMethod || "builder-id";
   // API-key Kiro connections authenticate the quota API the same way the chat
   // executor does: a bearer token plus a `tokentype: API_KEY` header so
@@ -140,6 +151,10 @@ export async function getKiroUsage(accessToken, providerSpecificData, proxyOptio
       const response = await attempt.run();
       if (!response.ok) {
         const errorText = await response.text().catch(() => "");
+        if (response.status === 429) {
+          kiroCooldown.set(accessToken, Date.now() + KIRO_429_COOLDOWN_MS);
+          return { message: "Kiro usage endpoint rate-limited (429). Cooling down 3 min. Chat still works.", quotas: {} };
+        }
         if (response.status === 401 || response.status === 403) {
           sawAuthError = true;
         }

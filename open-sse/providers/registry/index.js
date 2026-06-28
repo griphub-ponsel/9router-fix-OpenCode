@@ -61,6 +61,7 @@ import p58 from "./mmf.js";
 import p59 from "./nanobanana.js";
 import p60 from "./nebius.js";
 import p61 from "./nvidia.js";
+import pNotion from "./notion.js";
 import p62 from "./ollama-local.js";
 import p63 from "./ollama.js";
 import p64 from "./openai.js";
@@ -160,6 +161,7 @@ export default [
   p59,
   p60,
   p61,
+  pNotion,
   p62,
   p63,
   p64,

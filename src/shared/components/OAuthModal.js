@@ -43,6 +43,10 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
   // Exchange tokens
   const exchangeTokens = useCallback(async (code, state) => {
     if (!authData) return;
+    const exchangeMeta = {
+      ...(oauthMeta || {}),
+      ...(authData.authMeta || {}),
+    };
     try {
       const res = await fetch(`/api/oauth/${provider}/exchange`, {
         method: "POST",
@@ -52,7 +56,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
           redirectUri: authData.redirectUri,
           codeVerifier: authData.codeVerifier,
           state,
-          ...(oauthMeta ? { meta: oauthMeta } : {}),
+          ...(Object.keys(exchangeMeta).length ? { meta: exchangeMeta } : {}),
         }),
       });
 
@@ -65,7 +69,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
       setError(err.message);
       setStep("error");
     }
-  }, [authData, provider, onSuccess]);
+  }, [authData, provider, onSuccess, oauthMeta]);
 
   const completeXaiManualCode = useCallback(async (code) => {
     if (!authData?.state) return;

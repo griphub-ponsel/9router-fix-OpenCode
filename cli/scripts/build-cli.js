@@ -272,10 +272,30 @@ try {
 console.log("✨ CLI package build completed!");
 console.log(`📁 Output: ${cliAppDir}`);
 
-try {
-  const { execSync: exec } = require("child_process");
-  const size = exec(`du -sh "${cliAppDir}"`, { encoding: "utf8" }).trim();
-  console.log(`📊 Package size: ${size.split("\t")[0]}`);
-} catch (e) {
-  // Silent fail on size check
+function getDirectorySize(dir) {
+  let total = 0;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const entryPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      total += getDirectorySize(entryPath);
+    } else if (entry.isFile()) {
+      total += fs.statSync(entryPath).size;
+    }
+  }
+  return total;
+}
+
+function formatBytes(bytes) {
+  const units = ["B", "KB", "MB", "GB"];
+  let size = bytes;
+  let unitIndex = 0;
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex += 1;
+  }
+  return `${size.toFixed(unitIndex === 0 ? 0 : 1)}${units[unitIndex]}`;
+}
+
+if (fs.existsSync(cliAppDir)) {
+  console.log(`📊 Package size: ${formatBytes(getDirectorySize(cliAppDir))}`);
 }

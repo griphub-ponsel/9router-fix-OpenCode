@@ -8,6 +8,7 @@ import { findModelName } from "open-sse/config/providerModels.js";
 import { getCopilotModelLimits } from "@/shared/utils/copilotModelLimits.js";
 import { supportsCopilotVision } from "@/shared/utils/copilotModelCapabilities.js";
 import { expandCopilotReasoningVariants } from "@/shared/utils/copilotReasoningVariants.js";
+import { NOTION_REMOTE_MCP_PLUGIN } from "@/shared/constants/coworkPlugins";
 
 // Resolve chatLanguageModels.json path per OS
 const getConfigPath = () => {
@@ -20,6 +21,18 @@ const getConfigPath = () => {
     return path.join(home, "Library", "Application Support", "Code", "User", "chatLanguageModels.json");
   }
   return path.join(home, ".config", "Code", "User", "chatLanguageModels.json");
+};
+
+const getMcpConfigPath = () => {
+  const home = os.homedir();
+  const platform = os.platform();
+  if (platform === "win32") {
+    return path.join(process.env.APPDATA || home, "Code", "User", "mcp.json");
+  }
+  if (platform === "darwin") {
+    return path.join(home, "Library", "Application Support", "Code", "User", "mcp.json");
+  }
+  return path.join(home, ".config", "Code", "User", "mcp.json");
 };
 
 const readConfig = async () => {
@@ -44,6 +57,34 @@ const get9RouterEntry = (config) => {
   return config.find((entry) => entry.name === "9Router") || null;
 };
 
+const readJsonFile = async (configPath, fallback) => {
+  try {
+    const content = await fs.readFile(configPath, "utf-8");
+    const stripped = content.replace(/,(\s*[}\]])/g, "$1");
+    return JSON.parse(stripped);
+  } catch {
+    return fallback;
+  }
+};
+
+const readMcpConfig = () => readJsonFile(getMcpConfigPath(), {});
+
+async function writeNotionMcpConfig() {
+  const configPath = getMcpConfigPath();
+  const config = await readMcpConfig();
+  if (!config.servers || typeof config.servers !== "object" || Array.isArray(config.servers)) config.servers = {};
+  const existing = config.servers[NOTION_REMOTE_MCP_PLUGIN.name];
+  const previous = existing && typeof existing === "object" && !Array.isArray(existing) ? existing : {};
+  config.servers[NOTION_REMOTE_MCP_PLUGIN.name] = {
+    ...previous,
+    type: "http",
+    url: NOTION_REMOTE_MCP_PLUGIN.url,
+  };
+  await fs.mkdir(path.dirname(configPath), { recursive: true });
+  await fs.writeFile(configPath, JSON.stringify(config, null, 2));
+  return configPath;
+}
+
 const getModelParts = (id) => {
   if (typeof id !== "string") return { alias: "", modelId: "" };
   const slash = id.indexOf("/");
@@ -67,6 +108,7 @@ const resolveModelDisplayName = (id, modelNames = {}) => {
 export async function GET() {
   try {
     const config = await readConfig();
+    const mcpConfig = await readMcpConfig();
     const entry = get9RouterEntry(config);
 
     return NextResponse.json({
@@ -74,6 +116,8 @@ export async function GET() {
       config,
       has9Router: has9RouterConfig(config),
       configPath: getConfigPath(),
+      mcpConfigPath: getMcpConfigPath(),
+      hasNotionMcp: !!mcpConfig?.servers?.[NOTION_REMOTE_MCP_PLUGIN.name],
       currentModel: entry?.models?.[0]?.id || null,
       currentUrl: entry?.models?.[0]?.url || null,
     });
@@ -133,11 +177,13 @@ export async function POST(request) {
     }
 
     await fs.writeFile(configPath, JSON.stringify(config, null, 2));
+    const mcpConfigPath = await writeNotionMcpConfig();
 
     return NextResponse.json({
       success: true,
-      message: "Copilot Custom Endpoint config applied. Reload VS Code to take effect.",
+      message: "Copilot Custom Endpoint and Notion MCP config applied. Reload VS Code to take effect.",
       configPath,
+      mcpConfigPath,
     });
   } catch (error) {
     console.log("Error updating copilot settings:", error);

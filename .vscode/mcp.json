@@ -9,6 +9,10 @@
       "type": "stdio",
       "command": "C:\\Users\\ALDREY\\AppData\\Roaming\\npm\\agentmemory.cmd",
       "args": ["mcp"]
+    },
+    "notion": {
+      "type": "http",
+      "url": "https://mcp.notion.com/mcp"
     }
   }
 }

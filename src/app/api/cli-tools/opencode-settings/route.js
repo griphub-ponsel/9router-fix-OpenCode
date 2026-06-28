@@ -8,6 +8,7 @@ import path from "path";
 import os from "os";
 import { findModelName } from "open-sse/config/providerModels.js";
 import { getCombos } from "@/lib/localDb";
+import { NOTION_REMOTE_MCP_PLUGIN } from "@/shared/constants/coworkPlugins";
 
 const execAsync = promisify(exec);
 
@@ -102,6 +103,20 @@ const has9RouterConfig = (config) => {
   return !!config.provider["9router"];
 };
 
+function applyNotionMcpConfig(config) {
+  if (!config.mcp || typeof config.mcp !== "object" || Array.isArray(config.mcp)) config.mcp = {};
+  const existing = config.mcp[NOTION_REMOTE_MCP_PLUGIN.name];
+  const previous = existing && typeof existing === "object" && !Array.isArray(existing) ? existing : {};
+  config.mcp[NOTION_REMOTE_MCP_PLUGIN.name] = {
+    ...previous,
+    type: "remote",
+    url: NOTION_REMOTE_MCP_PLUGIN.url,
+    enabled: true,
+    oauth: previous.oauth && typeof previous.oauth === "object" ? previous.oauth : {},
+    timeout: previous.timeout || 30000,
+  };
+}
+
 // GET - Check opencode CLI and read current settings
 export async function GET() {
   try {
@@ -132,6 +147,7 @@ export async function GET() {
         modelNames,
         activeModel: config?.model?.startsWith("9router/") ? config.model.replace(/^9router\//, "") : null,
         baseURL: providerConfig?.options?.baseURL || null,
+        notionMcp: config?.mcp?.[NOTION_REMOTE_MCP_PLUGIN.name] || null,
       },
     });
   } catch (error) {
@@ -250,6 +266,7 @@ export async function POST(request) {
       mode: "subagent",
       model: `9router/${effectiveSubagentModel}`,
     };
+    applyNotionMcpConfig(config);
 
     const configPath = await writeConfig(config);
 
