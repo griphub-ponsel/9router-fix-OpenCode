@@ -17,6 +17,7 @@ import {
   CLINE_CONFIG,
   KILOCODE_CONFIG,
   NOTION_CONFIG,
+  KIMCHI_CONFIG,
 } from "@/lib/oauth/constants/oauth";
 import { buildClineHeaders } from "@/shared/utils/clineAuth";
 import { extractNotionToken } from "@/lib/providerNormalization";
@@ -166,6 +167,17 @@ const OAUTH_TEST_CONFIG = {
     authPrefix: "Bearer ",
   },
   "codebuddy-cn": { tokenExists: true },
+  kimchi: {
+    url: KIMCHI_CONFIG.validationUrl || "https://api.cast.ai/v1/llm/openai/supported-providers",
+    method: "GET",
+    authHeader: "Authorization",
+    authPrefix: "Bearer ",
+    extraHeaders: {
+      Accept: "application/json",
+      "User-Agent": "kimchi/0.0.0",
+    },
+    refreshable: false,
+  },
 };
 
 async function probeClineAccessToken(accessToken) {
