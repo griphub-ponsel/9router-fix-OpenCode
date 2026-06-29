@@ -1,5 +1,6 @@
 export default {
   id: "notion",
+  hidden: true,
   priority: 285,
   alias: "nt",
   uiAlias: "nt",

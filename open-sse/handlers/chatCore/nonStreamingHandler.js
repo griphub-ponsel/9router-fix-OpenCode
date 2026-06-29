@@ -9,6 +9,7 @@ import { parseSSEToOpenAIResponse } from "./sseToJsonHandler.js";
 import { buildRequestDetail, extractRequestConfig, extractUsageFromResponse, saveUsageStats } from "./requestDetail.js";
 import { appendRequestLog, saveRequestDetail } from "@/lib/usageDb.js";
 import { decloakToolNames } from "../../utils/claudeCloaking.js";
+import { splitThinkTaggedContent } from "../../utils/thinkingTags.js";
 
 function parseToolArguments(value) {
   if (!value) return {};
@@ -241,6 +242,20 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
     ? translateNonStreamingResponse(responseBody, targetFormat, sourceFormat)
     : responseBody;
   const isClaudeMessageResponse = sourceFormat === FORMATS.CLAUDE && translatedResponse?.type === "message";
+
+  if (provider === "qwen" && Array.isArray(translatedResponse?.choices)) {
+    for (const choice of translatedResponse.choices) {
+      const message = choice?.message;
+      if (!message || typeof message.content !== "string" || message.content.length === 0) continue;
+      const thinkState = { inThinking: false, thinkTagCarry: "" };
+      const { content, reasoning } = splitThinkTaggedContent(message.content, thinkState);
+      message.content = content;
+      if (reasoning) {
+        const existing = typeof message.reasoning_content === "string" ? message.reasoning_content : "";
+        message.reasoning_content = `${existing}${reasoning}`;
+      }
+    }
+  }
 
   // Fix finish_reason for tool_calls: some providers return non-standard values (e.g. "other")
   if (translatedResponse?.choices?.[0]) {

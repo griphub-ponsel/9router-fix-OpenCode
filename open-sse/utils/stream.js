@@ -4,6 +4,7 @@ import { trackPendingRequest, appendRequestLog } from "@/lib/usageDb.js";
 import { extractUsage, hasValidUsage, estimateUsage, logUsage, addBufferToUsage, filterUsageForFormat, COLORS } from "./usageTracking.js";
 import { parseSSELine, hasValuableContent, fixInvalidId, formatSSE } from "./streamHelpers.js";
 import { getOpenAIResponsesEventName, isOpenAIResponsesTerminalEvent, formatIncompleteOpenAIResponsesStreamFailure } from "./responsesStreamHelpers.js";
+import { splitThinkTaggedContent } from "./thinkingTags.js";
 import { dbg, isDebugEnabled } from "./debugLog.js";
 
 import { SSE_DONE, SSE_HEADERS, SSE_HEADERS_NO_BUFFER } from "./sseConstants.js";
@@ -72,6 +73,7 @@ export function createSSEStream(options = {}) {
   let openAIResponsesTerminalSeen = false;
   let openAIResponsesDoneSent = false;
   let streamDoneSent = false;  // track duplicate [DONE] across transform + flush
+  const qwenThinkingState = { inThinking: false, thinkTagCarry: "" };
 
   return new TransformStream({
     transform(chunk, controller) {
@@ -135,6 +137,14 @@ export function createSSEStream(options = {}) {
               }
 
               const delta = parsed.choices?.[0]?.delta;
+              if (provider === "qwen" && typeof delta?.content === "string" && delta.content.length > 0) {
+                const { content, reasoning } = splitThinkTaggedContent(delta.content, qwenThinkingState);
+                if (reasoning) {
+                  const existing = typeof delta.reasoning_content === "string" ? delta.reasoning_content : "";
+                  delta.reasoning_content = `${existing}${reasoning}`;
+                }
+                delta.content = content;
+              }
               const content = delta?.content;
               const reasoning = delta?.reasoning_content;
               if (content && typeof content === "string") {
