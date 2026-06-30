@@ -35,3 +35,19 @@ export function buildClineHeaders(token, extraHeaders = {}) {
 
   return headers;
 }
+
+export function buildClineChatHeaders(token, extraHeaders = {}) {
+  const authorization = getClineAuthorizationHeader(token);
+  const headers = {
+    "HTTP-Referer": "https://cline.bot",
+    "X-Title": "Cline",
+    "User-Agent": `9Router/${APP_VERSION}`,
+    ...extraHeaders,
+  };
+
+  if (authorization) {
+    headers.Authorization = authorization;
+  }
+
+  return headers;
+}

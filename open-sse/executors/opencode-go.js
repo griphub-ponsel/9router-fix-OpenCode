@@ -1,6 +1,7 @@
 import { BaseExecutor } from "./base.js";
 import { PROVIDERS } from "../config/providers.js";
 import { injectReasoningContent } from "../utils/reasoningContentInjector.js";
+import { normalizeKimiK27CodeRequest } from "../utils/kimiRequest.js";
 import { ANTHROPIC_API_VERSION } from "../providers/shared.js";
 
 // Models that use /zen/go/v1/messages (Anthropic/Claude format + x-api-key auth)
@@ -8,6 +9,9 @@ const MESSAGES_FORMAT_MODELS = new Set([
   "minimax-m3",
   "minimax-m2.7",
   "minimax-m2.5",
+  "qwen-3.7-max",
+  "qwen-3.7-plus",
+  "qwen-3.6-plus",
   "qwen3.7-max",
   "qwen3.7-plus",
   "qwen3.6-plus",
@@ -44,6 +48,7 @@ export class OpenCodeGoExecutor extends BaseExecutor {
   }
 
   transformRequest(model, body) {
-    return injectReasoningContent({ provider: this.provider, model, body });
+    const nextBody = injectReasoningContent({ provider: this.provider, model, body });
+    return normalizeKimiK27CodeRequest(model, nextBody);
   }
 }

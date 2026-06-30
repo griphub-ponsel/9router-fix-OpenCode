@@ -4,7 +4,7 @@ import { trackPendingRequest, appendRequestLog } from "@/lib/usageDb.js";
 import { extractUsage, hasValidUsage, estimateUsage, logUsage, addBufferToUsage, filterUsageForFormat, COLORS } from "./usageTracking.js";
 import { parseSSELine, hasValuableContent, fixInvalidId, formatSSE } from "./streamHelpers.js";
 import { getOpenAIResponsesEventName, isOpenAIResponsesTerminalEvent, formatIncompleteOpenAIResponsesStreamFailure } from "./responsesStreamHelpers.js";
-import { splitThinkTaggedContent } from "./thinkingTags.js";
+import { shouldSplitThinkTags, splitThinkTaggedContent } from "./thinkingTags.js";
 import { dbg, isDebugEnabled } from "./debugLog.js";
 
 import { SSE_DONE, SSE_HEADERS, SSE_HEADERS_NO_BUFFER } from "./sseConstants.js";
@@ -22,6 +22,23 @@ const STREAM_MODE = {
   TRANSLATE: "translate",    // Full translation between formats
   PASSTHROUGH: "passthrough" // No translation, normalize output, extract usage
 };
+
+function unwrapOpenAIEnvelopePayload(payload) {
+  const data = payload?.data;
+  return data && Array.isArray(data.choices) ? data : payload;
+}
+
+function collectMessageReasoning(message) {
+  if (typeof message?.reasoning_content === "string") return message.reasoning_content;
+  if (typeof message?.reasoning === "string") return message.reasoning;
+  const parts = [];
+  if (Array.isArray(message?.reasoning_details)) {
+    for (const detail of message.reasoning_details) {
+      if (typeof detail?.text === "string") parts.push(detail.text);
+    }
+  }
+  return parts.join("");
+}
 
 /**
  * Create unified SSE transform stream
@@ -73,7 +90,77 @@ export function createSSEStream(options = {}) {
   let openAIResponsesTerminalSeen = false;
   let openAIResponsesDoneSent = false;
   let streamDoneSent = false;  // track duplicate [DONE] across transform + flush
-  const qwenThinkingState = { inThinking: false, thinkTagCarry: "" };
+  const thinkTagState = { inThinking: false, thinkTagCarry: "" };
+  const splitThinkTags = shouldSplitThinkTags(provider, model);
+
+  function emitCompletionAsSSE(payload, controller) {
+    const completion = unwrapOpenAIEnvelopePayload(payload);
+    if (!Array.isArray(completion?.choices)) return false;
+    if (!completion.choices.some((choice) => choice?.message)) return false;
+
+    const chunkChoices = [];
+    const finishChoices = [];
+    const created = completion.created || Math.floor(Date.now() / 1000);
+    const completionId = completion.id || `chatcmpl-${Date.now().toString(36)}`;
+    const completionModel = completion.model || model;
+
+    for (const choice of completion.choices) {
+      const message = choice?.message;
+      if (!message) continue;
+
+      const delta = { role: message.role || "assistant" };
+      let content = typeof message.content === "string" ? message.content : "";
+      let reasoning = collectMessageReasoning(message);
+
+      if (splitThinkTags && content.length > 0) {
+        const split = splitThinkTaggedContent(content, thinkTagState);
+        content = split.content;
+        reasoning += split.reasoning;
+      }
+
+      if (content) {
+        delta.content = content;
+        totalContentLength += content.length;
+        accumulatedContent += content;
+      }
+      if (reasoning) {
+        delta.reasoning_content = reasoning;
+        totalContentLength += reasoning.length;
+        accumulatedThinking += reasoning;
+      }
+      if (Array.isArray(message.tool_calls) && message.tool_calls.length > 0) {
+        delta.tool_calls = message.tool_calls;
+      }
+
+      chunkChoices.push({ index: choice.index || 0, delta, finish_reason: null });
+      finishChoices.push({ index: choice.index || 0, delta: {}, finish_reason: choice.finish_reason || "stop" });
+    }
+
+    if (chunkChoices.length === 0) return false;
+
+    const firstChunk = {
+      id: completionId,
+      object: "chat.completion.chunk",
+      created,
+      model: completionModel,
+      choices: chunkChoices,
+    };
+    const finishChunk = {
+      id: completionId,
+      object: "chat.completion.chunk",
+      created,
+      model: completionModel,
+      choices: finishChoices,
+      ...(completion.usage ? { usage: completion.usage } : {}),
+    };
+
+    usage = extractUsage(completion) || usage;
+    const output = `${formatSSE(firstChunk, FORMATS.OPENAI)}${formatSSE(finishChunk, FORMATS.OPENAI)}`;
+    reqLogger?.appendConvertedChunk?.(output);
+    controller.enqueue(sharedEncoder.encode(output));
+    sseEmittedCount += 2;
+    return true;
+  }
 
   return new TransformStream({
     transform(chunk, controller) {
@@ -107,7 +194,11 @@ export function createSSEStream(options = {}) {
 
           if (trimmed.startsWith("data:") && trimmed.slice(5).trim() !== "[DONE]") {
             try {
-              const parsed = JSON.parse(trimmed.slice(5).trim());
+              const parsed = unwrapOpenAIEnvelopePayload(JSON.parse(trimmed.slice(5).trim()));
+
+              if (emitCompletionAsSSE(parsed, controller)) {
+                continue;
+              }
 
               const idFixed = fixInvalidId(parsed);
 
@@ -137,8 +228,8 @@ export function createSSEStream(options = {}) {
               }
 
               const delta = parsed.choices?.[0]?.delta;
-              if (provider === "qwen" && typeof delta?.content === "string" && delta.content.length > 0) {
-                const { content, reasoning } = splitThinkTaggedContent(delta.content, qwenThinkingState);
+              if (splitThinkTags && typeof delta?.content === "string" && delta.content.length > 0) {
+                const { content, reasoning } = splitThinkTaggedContent(delta.content, thinkTagState);
                 if (reasoning) {
                   const existing = typeof delta.reasoning_content === "string" ? delta.reasoning_content : "";
                   delta.reasoning_content = `${existing}${reasoning}`;
@@ -182,6 +273,14 @@ export function createSSEStream(options = {}) {
               // Upstream providers sometimes return plain-text errors (HTML, rate-limit
               // messages) in the SSE stream that would break downstream JSON decoders.
               continue;
+            }
+          } else if (trimmed.startsWith("{")) {
+            try {
+              if (emitCompletionAsSSE(JSON.parse(trimmed), controller)) {
+                continue;
+              }
+            } catch {
+              // Fall through and forward non-OpenAI JSON-like payloads unchanged.
             }
           }
 
@@ -340,12 +439,26 @@ export function createSSEStream(options = {}) {
 
         if (mode === STREAM_MODE.PASSTHROUGH) {
           if (buffer) {
-            let output = buffer;
-            if (buffer.startsWith("data:") && !buffer.startsWith("data: ")) {
-              output = "data: " + buffer.slice(5);
+            let output = null;
+            const trimmedBuffer = buffer.trim();
+            if (trimmedBuffer.startsWith("{")) {
+              try {
+                if (emitCompletionAsSSE(JSON.parse(trimmedBuffer), controller)) {
+                  output = null;
+                }
+              } catch {
+                output = buffer;
+              }
+            } else {
+              output = buffer;
+              if (buffer.startsWith("data:") && !buffer.startsWith("data: ")) {
+                output = "data: " + buffer.slice(5);
+              }
             }
-            reqLogger?.appendConvertedChunk?.(output);
-            controller.enqueue(sharedEncoder.encode(output));
+            if (output) {
+              reqLogger?.appendConvertedChunk?.(output);
+              controller.enqueue(sharedEncoder.encode(output));
+            }
           }
 
           if (!hasValidUsage(usage) && totalContentLength > 0) {

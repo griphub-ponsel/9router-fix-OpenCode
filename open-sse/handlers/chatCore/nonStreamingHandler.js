@@ -9,7 +9,7 @@ import { parseSSEToOpenAIResponse } from "./sseToJsonHandler.js";
 import { buildRequestDetail, extractRequestConfig, extractUsageFromResponse, saveUsageStats } from "./requestDetail.js";
 import { appendRequestLog, saveRequestDetail } from "@/lib/usageDb.js";
 import { decloakToolNames } from "../../utils/claudeCloaking.js";
-import { splitThinkTaggedContent } from "../../utils/thinkingTags.js";
+import { shouldSplitThinkTags, splitThinkTaggedContent } from "../../utils/thinkingTags.js";
 
 function parseToolArguments(value) {
   if (!value) return {};
@@ -59,6 +59,12 @@ function openAICompletionToClaudeMessage(responseBody) {
       output_tokens: usage.completion_tokens || usage.output_tokens || 0,
     },
   };
+}
+
+function unwrapOpenAIEnvelope(responseBody) {
+  const data = responseBody?.data;
+  if (data && Array.isArray(data.choices)) return data;
+  return responseBody;
 }
 
 /**
@@ -223,6 +229,7 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
   }
 
   reqLogger.logProviderResponse(providerResponse.status, providerResponse.statusText, providerResponse.headers, responseBody);
+  responseBody = unwrapOpenAIEnvelope(responseBody);
   if (onRequestSuccess) {
     Promise.resolve()
       .then(onRequestSuccess)
@@ -243,7 +250,7 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
     : responseBody;
   const isClaudeMessageResponse = sourceFormat === FORMATS.CLAUDE && translatedResponse?.type === "message";
 
-  if (provider === "qwen" && Array.isArray(translatedResponse?.choices)) {
+  if (shouldSplitThinkTags(provider, model) && Array.isArray(translatedResponse?.choices)) {
     for (const choice of translatedResponse.choices) {
       const message = choice?.message;
       if (!message || typeof message.content !== "string" || message.content.length === 0) continue;

@@ -12,25 +12,28 @@ const EXACT_LIMITS = {
   "claude-opus-4.8": { contextTokens: 1000000, maxOutputTokens: 32000, reasoningEfforts: ["low", "medium", "high", "xhigh"] },
   "claude-sonnet-4.6": { contextTokens: 1000000, maxOutputTokens: 32000, reasoningEfforts: ["low", "medium", "high"] },
   "deepseek-v4-flash": { contextTokens: 262144, maxOutputTokens: 65536, reasoningEfforts: ["low", "medium", "high"] },
-  "deepseek-v4-pro": { contextTokens: 262144, maxOutputTokens: 65536, reasoningEfforts: ["low", "medium", "high"] },
+  "deepseek-v4-pro": { contextTokens: 1000000, maxOutputTokens: 65536, reasoningEfforts: ["low", "medium", "high"] },
   "glm-5.2": { contextTokens: 1000000, maxOutputTokens: 65536 },
   "glm-5.1": { contextTokens: 1000000, maxOutputTokens: 65536 },
   "glm-5": { contextTokens: 1000000, maxOutputTokens: 65536 },
   "grok-4": { contextTokens: 256000, maxOutputTokens: 32768, reasoningEfforts: ["low", "medium", "high"] },
+  "grok-composer-2.5-fast": { contextTokens: 1000000, maxOutputTokens: 65536 },
   "grok-4.20-0309-non-reasoning": { contextTokens: 256000, maxOutputTokens: 32768 },
   "grok-4.20-0309-reasoning": { contextTokens: 256000, maxOutputTokens: 32768, reasoningEfforts: ["low", "medium", "high"] },
-  "gpt-5.5": { contextTokens: 400000, maxOutputTokens: 128000, reasoningEfforts: ["low", "medium", "high", "xhigh"] },
-  "gpt-5.4": { contextTokens: 400000, maxOutputTokens: 128000, reasoningEfforts: ["low", "medium", "high", "xhigh"] },
+  "gpt-5.5": { contextTokens: 1000000, maxOutputTokens: 128000, reasoningEfforts: ["low", "medium", "high", "xhigh"] },
+  "gpt-5.4": { contextTokens: 1000000, maxOutputTokens: 128000, reasoningEfforts: ["low", "medium", "high", "xhigh"] },
   "gpt-5.3-codex": { contextTokens: 400000, maxOutputTokens: 128000, reasoningEfforts: ["low", "medium", "high", "xhigh"] },
   "kimi-k2.5": { contextTokens: 262144, maxOutputTokens: 65536 },
   "kimi-k2.6": { contextTokens: 262144, maxOutputTokens: 65536 },
+  "kimi-k2.7": { contextTokens: 1000000, maxOutputTokens: 65536 },
+  "kimi-k2.7-code": { contextTokens: 1000000, maxOutputTokens: 65536 },
   "mimo-v2.5": { contextTokens: 1048576, maxOutputTokens: 65536 },
   "mimo-v2.5-pro": { contextTokens: 1048576, maxOutputTokens: 65536 },
   "mimo-v2-omni": { contextTokens: 1048576, maxOutputTokens: 65536 },
   "mimo-v2-pro": { contextTokens: 1048576, maxOutputTokens: 65536 },
-  "minimax-m3": { contextTokens: 262144, maxOutputTokens: 131072 },
+  "minimax-m3": { contextTokens: 1000000, maxOutputTokens: 131072 },
   "minimax-m2.5": { contextTokens: 204800, maxOutputTokens: 131072 },
-  "minimax-m2.7": { contextTokens: 204800, maxOutputTokens: 131072 },
+  "minimax-m2.7": { contextTokens: 1000000, maxOutputTokens: 131072 },
   "qwen3.5-plus": { contextTokens: 1000000, maxOutputTokens: 32768 },
   "qwen3.6-plus": { contextTokens: 1000000, maxOutputTokens: 32768 },
   "qwen3.7-max": { contextTokens: 1000000, maxOutputTokens: 65536 },
@@ -45,6 +48,7 @@ function normalizeModelId(id) {
     "$1.$2"
   );
   return normalizedVersionModel
+    .replace(/^qwen-(?=\d)/, "qwen")
     .replace(/-high-combo$/, "")
     .replace(/-combo$/, "")
     .replace(/-high$/, "")

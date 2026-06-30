@@ -96,3 +96,8 @@ export function splitThinkTaggedContent(chunk, state) {
 
   return { content, reasoning };
 }
+
+export function shouldSplitThinkTags(provider, model) {
+  const normalized = `${provider || ""}/${model || ""}`.toLowerCase();
+  return /qwen|kimi|deepseek|glm|minimax|mimo/.test(normalized);
+}

@@ -2,10 +2,11 @@ import { BaseExecutor } from "./base.js";
 import { PROVIDERS, PROVIDER_OAUTH } from "../config/providers.js";
 import { ANTHROPIC_API_VERSION, OPENAI_COMPAT_BASE, ANTHROPIC_COMPAT_BASE } from "../providers/shared.js";
 import { OAUTH_ENDPOINTS, buildKimiHeaders } from "../config/appConstants.js";
-import { buildClineHeaders } from "../shared/clineAuth.js";
+import { buildClineChatHeaders, getClineAccessToken } from "../shared/clineAuth.js";
 import { getCachedClaudeHeaders } from "../utils/claudeHeaderCache.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { injectReasoningContent } from "../utils/reasoningContentInjector.js";
+import { normalizeKimiK27CodeRequest } from "../utils/kimiRequest.js";
 import { stripUnsupportedParams } from "../translator/concerns/paramSupport.js";
 
 // Auth header descriptors — derived from registry transport.auth, fallback to hardcoded defaults.
@@ -19,7 +20,9 @@ const AUTH_DESCRIPTORS = Object.fromEntries(
 
 // Apply a token to a header per scheme (matches legacy: combined always sets, even when undefined).
 function setAuth(headers, spec, token) {
-  headers[spec.header] = spec.scheme === "bearer" ? `Bearer ${token}` : token;
+  if (spec.scheme === "bearer") headers[spec.header] = `Bearer ${token}`;
+  else if (spec.scheme === "clineBearer") headers[spec.header] = `Bearer ${getClineAccessToken(token)}`;
+  else headers[spec.header] = token;
 }
 
 // Resolve auth onto headers from a descriptor.
@@ -39,7 +42,7 @@ function applyAuth(headers, desc, credentials) {
 // Provider-specific header quirks kept as small hooks (not pure auth).
 const HEADER_HOOKS = {
   kimiHeaders: (h) => Object.assign(h, buildKimiHeaders()),
-  clineHeaders: (h, c) => Object.assign(h, buildClineHeaders(c.apiKey || c.accessToken)),
+  clineHeaders: (h, c) => Object.assign(h, buildClineChatHeaders(c.apiKey || c.accessToken)),
   kilocodeOrg: (h, c) => { if (c.providerSpecificData?.orgId) h["X-Kilocode-OrganizationID"] = c.providerSpecificData.orgId; },
   claudeOverlay: (h) => {
     const cached = getCachedClaudeHeaders();
@@ -92,7 +95,8 @@ export class DefaultExecutor extends BaseExecutor {
       stripUnsupportedParams(this.provider, model, transformed);
     }
 
-    return injectReasoningContent({ provider: this.provider, model, body: transformed });
+    const normalized = normalizeKimiK27CodeRequest(model, transformed);
+    return injectReasoningContent({ provider: this.provider, model, body: normalized });
   }
 
   // Fallback json_schema → json_object for openai-compatible providers without native Structured Output.

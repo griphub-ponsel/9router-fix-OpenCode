@@ -92,6 +92,16 @@ export const MODEL_CAPABILITIES = {
   // Qwen plain coder/text (no vision) — registry "vision-model" / "coder-model" aliases
   "vision-model":      { vision: true, reasoning: true, thinkingFormat: "qwen", contextWindow: 1000000 },
   "coder-model":       { reasoning: true, thinkingFormat: "qwen", contextWindow: 1000000 },
+
+  // Cline/OpenCode Go combo ids can use dashed public names while upstream uses qwen3.7-*.
+  "qwen3.7-plus":      { vision: true, videoInput: true, reasoning: true, thinkingFormat: "qwen", contextWindow: 1000000, maxOutput: 65536 },
+  "qwen-3.7-plus":     { vision: true, videoInput: true, reasoning: true, thinkingFormat: "qwen", contextWindow: 1000000, maxOutput: 65536 },
+  "qwen3.7-max":       { vision: true, videoInput: true, reasoning: true, thinkingFormat: "qwen", contextWindow: 1000000, maxOutput: 65536 },
+  "qwen-3.7-max":      { vision: true, videoInput: true, reasoning: true, thinkingFormat: "qwen", contextWindow: 1000000, maxOutput: 65536 },
+  "kimi-k2.7":         { vision: true, pdf: true, reasoning: true, thinkingFormat: "kimi", thinkingCanDisable: false, contextWindow: 262144, maxOutput: 262144 },
+  "kimi-k2.7-code":    { vision: true, pdf: true, reasoning: true, thinkingFormat: "kimi", thinkingCanDisable: false, contextWindow: 262144, maxOutput: 262144 },
+  "minimax-m3":        { vision: true, videoInput: true, pdf: true, reasoning: true, thinkingFormat: "minimax", contextWindow: 1000000, maxOutput: 512000 },
+  "minimax-m2.7":      { vision: true, reasoning: true, thinkingFormat: "minimax", thinkingCanDisable: false, contextWindow: 204800, maxOutput: 131072 },
 };
 
 /**
@@ -119,6 +129,15 @@ export const PROVIDER_CAPABILITIES = {
     "deepseek-v4-pro":    { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: false, contextWindow: 1000000, maxOutput: 50000 },
     "deepseek-v4-flash":  { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: false, contextWindow: 1000000, maxOutput: 50000 },
     "deepseek-v3-2-volc": { reasoning: true, thinkingFormat: "openai", thinkingCanDisable: false, contextWindow: 96000, maxOutput: 32000 },
+  },
+
+  // Cline/ClinePass — overrides for models where generic patterns give wrong
+  // context window or miss vision. Other ClinePass models (kimi-k2.7-code,
+  // minimax-m3, mimo-v2.5*, deepseek-v4-*, qwen3.7-plus) resolve correctly
+  // via PATTERN_CAPABILITIES fallback after "cline-pass/" prefix stripping.
+  "cline": {
+    "cline-pass/glm-5.2":        { reasoning: true, thinkingFormat: "zai", contextWindow: 1000000, maxOutput: 131072 },
+    "cline-pass/qwen3.7-max":    { vision: true, reasoning: true, thinkingFormat: "qwen", contextWindow: 1000000, maxOutput: 65536 },
   },
 };
 

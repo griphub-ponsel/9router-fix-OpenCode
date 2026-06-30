@@ -25,21 +25,35 @@ export default {
     auth: {
       combined: true,
       header: "Authorization",
-      scheme: "bearer",
+      scheme: "clineBearer",
       hooks: [
         "clineHeaders",
       ],
     },
   },
   models: [
+    { id: "anthropic/claude-opus-4.8", name: "Claude Opus 4.8" },
     { id: "anthropic/claude-opus-4.7", name: "Claude Opus 4.7" },
-    { id: "anthropic/claude-sonnet-4.6", name: "Claude Sonnet 4.6" },
     { id: "anthropic/claude-opus-4.6", name: "Claude Opus 4.6" },
-    { id: "openai/gpt-5.3-codex", name: "GPT-5.3 Codex" },
+    { id: "anthropic/claude-sonnet-4.6", name: "Claude Sonnet 4.6" },
+    { id: "openai/gpt-5.5", name: "GPT-5.5" },
     { id: "openai/gpt-5.4", name: "GPT-5.4" },
+    { id: "openai/gpt-5.3-codex", name: "GPT-5.3 Codex" },
     { id: "google/gemini-3.1-pro-preview", name: "Gemini 3.1 Pro Preview" },
     { id: "google/gemini-3.1-flash-lite-preview", name: "Gemini 3.1 Flash Lite Preview" },
     { id: "kwaipilot/kat-coder-pro", name: "KAT Coder Pro" },
+    // ClinePass (open-weight subscription) — IDs from
+    // GET https://api.cline.bot/api/v1/ai/cline/recommended-models → clinePass[]
+    { id: "cline-pass/glm-5.2", name: "GLM-5.2 (ClinePass)" },
+    { id: "cline-pass/kimi-k2.7-code", name: "Kimi K2.7 Code (ClinePass)" },
+    { id: "cline-pass/kimi-k2.6", name: "Kimi K2.6 (ClinePass)" },
+    { id: "cline-pass/deepseek-v4-pro", name: "DeepSeek V4 Pro (ClinePass)" },
+    { id: "cline-pass/deepseek-v4-flash", name: "DeepSeek V4 Flash (ClinePass)" },
+    { id: "cline-pass/minimax-m3", name: "MiniMax M3 (ClinePass)" },
+    { id: "cline-pass/mimo-v2.5-pro", name: "MiMo V2.5 Pro (ClinePass)" },
+    { id: "cline-pass/mimo-v2.5", name: "MiMo V2.5 (ClinePass)" },
+    { id: "cline-pass/qwen3.7-max", name: "Qwen3.7 Max (ClinePass)" },
+    { id: "cline-pass/qwen3.7-plus", name: "Qwen3.7 Plus (ClinePass)" },
   ],
   oauth: {
     appBaseUrl: "https://app.cline.bot",

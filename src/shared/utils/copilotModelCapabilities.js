@@ -9,6 +9,10 @@ export function supportsCopilotVision(id) {
   const { alias, modelId } = getCopilotModelParts(id);
 
   const normalized = `${alias}/${modelId}`.toLowerCase();
+
+  // Explicit vision-capable models that would otherwise be caught by the generic blocklist
+  if (/kimi-k2\.7(?:-code)?|minimax-m2\.7|minimax-m3(?:[^a-z0-9]|$)|qwen-?3\.\d+-(?:max|plus)|qwen.*vl/.test(normalized)) return true;
+
   if (/embedding|coder|deepseek|kimi-k2|mimo-v2(?:\.5)?-pro|minimax|tts|stt/.test(normalized)) return false;
 
   return /claude|gemini|gpt-4o|gpt-5(?:\.\d+)?(?:-|$)|(?:^|[^a-z0-9])vl(?:[^a-z0-9]|$)|vision|omni|grok-4|grok-composer|glm-\d+(?:\.\d+)?v(?:[^a-z0-9]|$)/.test(normalized);

@@ -34,6 +34,8 @@ export default {
     { id: "minimax-m3", name: "MiniMax M3", targetFormat: "claude" },
     { id: "minimax-m2.7", name: "MiniMax M2.7", targetFormat: "claude" },
     { id: "minimax-m2.5", name: "MiniMax M2.5", targetFormat: "claude" },
+    { id: "qwen-3.7-max", name: "Qwen 3.7 Max", targetFormat: "claude", upstreamModelId: "qwen3.7-max" },
+    { id: "qwen-3.7-plus", name: "Qwen 3.7 Plus", targetFormat: "claude", upstreamModelId: "qwen3.7-plus" },
     { id: "qwen3.7-max", name: "Qwen 3.7 Max", targetFormat: "claude" },
     { id: "qwen3.7-plus", name: "Qwen 3.7 Plus", targetFormat: "claude" },
     { id: "qwen3.6-plus", name: "Qwen 3.6 Plus", targetFormat: "claude" },
