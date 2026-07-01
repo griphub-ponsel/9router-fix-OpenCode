@@ -8,6 +8,7 @@ import { findModelName } from "open-sse/config/providerModels.js";
 import { getCopilotModelLimits } from "@/shared/utils/copilotModelLimits.js";
 import { supportsCopilotVision } from "@/shared/utils/copilotModelCapabilities.js";
 import { expandCopilotReasoningVariants } from "@/shared/utils/copilotReasoningVariants.js";
+import { getCombos } from "@/lib/localDb";
 import { NOTION_REMOTE_MCP_PLUGIN } from "@/shared/constants/coworkPlugins";
 
 // Resolve chatLanguageModels.json path per OS
@@ -160,12 +161,14 @@ export async function POST(request) {
       ...getCopilotModelLimits(id, modelContextSizes?.[id]),
     }));
 
+    const combos = await getCombos().catch(() => []);
+
     const newEntry = {
       name: "9Router",
       vendor: "customendpoint",
       apiKey: keyToUse,
       apiType: "chat-completions",
-      models: expandCopilotReasoningVariants(baseModels),
+      models: expandCopilotReasoningVariants(baseModels, combos),
     };
 
     // Replace existing 9Router entry or append

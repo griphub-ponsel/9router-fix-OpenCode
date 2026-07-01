@@ -20,6 +20,7 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
   const [selectedApiKey, setSelectedApiKey] = useState("");
   const [customBaseUrl, setCustomBaseUrl] = useState("");
   const [modelAliases, setModelAliases] = useState({});
+  const [combos, setCombos] = useState([]);
   const [showManualConfigModal, setShowManualConfigModal] = useState(false);
   const [selectedModels, setSelectedModels] = useState([]);
   const [modelDisplayNames, setModelDisplayNames] = useState({});
@@ -125,7 +126,10 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
       checkStatus();
       fetchModelAliases();
     }
-    if (isExpanded) fetchModelAliases();
+    if (isExpanded) {
+      fetchModelAliases();
+      fetchCombos();
+    }
   }, [isExpanded]);
 
   // Pre-fill from existing config
@@ -163,6 +167,16 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
       if (res.ok) setModelAliases(data.aliases || {});
     } catch (error) {
       console.log("Error fetching model aliases:", error);
+    }
+  };
+
+  const fetchCombos = async () => {
+    try {
+      const res = await fetch("/api/combos");
+      const data = await res.json();
+      if (res.ok) setCombos(data.combos || []);
+    } catch (error) {
+      console.log("Error fetching combos:", error);
     }
   };
 
@@ -291,8 +305,7 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
       apiType: "chat-completions",
       toolCalling: true, vision: supportsCopilotVision(id),
       ...getCopilotModelLimits(id, modelContextSizes[id]),
-    })));
-
+    })), combos);
     return [{
       filename: status?.configPath || "VS Code User/chatLanguageModels.json",
       content: JSON.stringify([{

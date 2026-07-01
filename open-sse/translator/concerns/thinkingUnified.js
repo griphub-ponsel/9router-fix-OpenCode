@@ -174,7 +174,8 @@ function applyFormat(fmt, body, cfg, caps) {
     case "claude-adaptive": {
       if (none && canDisable) { body.thinking = { type: "disabled" }; break; }
       const level = toLevel(eff);
-      body.output_config = { effort: level === "xhigh" ? "high" : level };
+      // Anthropic output_config.effort only accepts low|medium|high — clamp xhigh/max → high.
+      body.output_config = { effort: level === "xhigh" || level === "max" ? "high" : level };
       break;
     }
     case "claude-budget": {

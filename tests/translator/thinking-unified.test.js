@@ -60,6 +60,12 @@ describe("applyThinking per provider format", () => {
     expect(out.output_config).toEqual({ effort: "high" });
     expect(out.thinking).toBeUndefined();
   });
+  it("claude 4.6+ clamps xhigh/max to high in output_config", () => {
+    const outXhigh = apply("claude", "claude-opus-4.7", { reasoning_effort: "xhigh" }, "claude");
+    const outMax = apply("claude", "claude-opus-4.7", { reasoning_effort: "max" }, "claude");
+    expect(outXhigh.output_config).toEqual({ effort: "high" });
+    expect(outMax.output_config).toEqual({ effort: "high" });
+  });
   it("claude haiku → enabled+budget", () => {
     const out = apply("claude", "claude-haiku-4.5", { reasoning_effort: "high" }, "claude");
     expect(out.thinking).toEqual({ type: "enabled", budget_tokens: 24576 });
