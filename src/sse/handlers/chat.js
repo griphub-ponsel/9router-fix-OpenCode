@@ -21,6 +21,27 @@ import * as log from "../utils/logger.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { getProjectIdForConnection } from "open-sse/services/projectId.js";
 import { captureChatMemory } from "@/shared/memory/capture.js";
+import { extractThinking } from "open-sse/translator/concerns/thinkingUnified.js";
+
+/**
+ * Summarize thinking/reasoning intent across all client shapes for request logs.
+ * Uses the shared extractor so Claude `thinking`, OpenAI `reasoning_effort`,
+ * `output_config.effort`, Gemini `thinkingConfig`, and Qwen `enable_thinking`
+ * are all captured — not just OpenAI-style `reasoning_effort`.
+ */
+function summarizeThinking(body) {
+  try {
+    const cfg = extractThinking(body);
+    if (!cfg) return null;
+    if (cfg.mode === "none") return "off";
+    if (cfg.mode === "auto") return "auto";
+    if (cfg.mode === "level") return cfg.level;
+    if (cfg.mode === "budget") return `${cfg.budget}tok`;
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Handle chat completion request
@@ -54,7 +75,11 @@ export async function handleChat(request, clientRawRequest = null) {
   // Count messages (support both messages[] and input[] formats)
   const msgCount = body.messages?.length || body.input?.length || 0;
   const toolCount = body.tools?.length || 0;
-  const effort = body.reasoning_effort || body.reasoning?.effort || null;
+  // Detect thinking/reasoning intent across ALL client shapes (Claude thinking,
+  // OpenAI reasoning_effort, output_config.effort, Gemini thinkingConfig, Qwen).
+  // The previous check only looked at body.reasoning_effort so Claude-shaped
+  // clients (VS Code Copilot → kr/*) never surfaced their thinking config in logs.
+  const effort = summarizeThinking(body);
   log.request("POST", `${url.pathname} | ${modelStr} | ${msgCount} msgs${toolCount ? ` | ${toolCount} tools` : ""}${effort ? ` | effort=${effort}` : ""}`);
 
   // Log API key (masked)
