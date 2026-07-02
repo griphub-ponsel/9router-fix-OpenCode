@@ -17,13 +17,18 @@
  */
 
 // Provider → vision-capable sibling model used to describe images.
+// VERIFIED 2026-07-02 (scripts/probe-grok-vision.mjs): composer/build/code get
+// 400 "Image inputs are not supported by this model." on BOTH api.x.ai AND
+// cli-chat-proxy.grok.com (the Grok CLI endpoint). grok-4.3 accepts images on
+// both. Do NOT remove these entries assuming "native vision" — re-run the
+// probe script first.
 const VISION_SIBLINGS = {
   "xai-oauth": "grok-4.3",
 };
 
 // Per-provider matcher for models that need delegation (API rejects raw images).
 const DELEGATION_MODEL_PATTERNS = {
-  "xai-oauth": /composer|build|grok-code/i,
+  "xai-oauth": /^(grok-composer|grok-build|grok-code)/i,
 };
 
 const IMAGE_PART_TYPES = new Set(["image_url", "image", "input_image"]);

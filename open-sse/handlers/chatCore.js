@@ -402,6 +402,16 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     if (result) { streamController.handleComplete(); return result; }
   }
 
+  // Responses-API request translators hardcode stream:true upstream (see
+  // request/openai-responses.js), so a non-streaming client still gets SSE
+  // back. Convert it properly here — parseSSEToOpenAIResponse in the plain
+  // non-streaming handler only understands Chat Completions chunks and would
+  // silently produce empty content (and swallow upstream error events).
+  if (!stream && !providerRequiresStreaming && PROVIDERS[provider]?.format === FORMATS.OPENAI_RESPONSES) {
+    const result = await handleForcedSSEToJson({ ...sharedCtx, providerResponse, sourceFormat, trackDone, appendLog });
+    if (result) { streamController.handleComplete(); return result; }
+  }
+
   // True non-streaming response
   if (!stream) {
     const result = await handleNonStreamingResponse({ ...sharedCtx, providerResponse, sourceFormat, targetFormat, reqLogger, toolNameMap, trackDone, appendLog });

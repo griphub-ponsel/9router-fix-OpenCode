@@ -34,8 +34,12 @@ function processSSEMessage(msg, state) {
       state.usage.output_tokens = parsed.response.usage.output_tokens || 0;
       state.usage.total_tokens = parsed.response.usage.total_tokens || 0;
     }
-  } else if (eventType === "response.failed") {
+  } else if (eventType === "error" || eventType === "response.failed") {
     state.status = "failed";
+    // Error may be nested (parsed.error / response.error) or flat on the event
+    // (xAI Responses API: { type:"error", code, message, param }).
+    const err = parsed.error || parsed.response?.error || (parsed.message ? { code: parsed.code, message: parsed.message } : null);
+    if (err && !state.error) state.error = err;
   }
 }
 
@@ -90,6 +94,17 @@ export async function convertResponsesStreamToJson(stream) {
   const maxIndex = state.items.size > 0 ? Math.max(...state.items.keys()) : -1;
   for (let i = 0; i <= maxIndex; i++) {
     output.push(state.items.get(i) || { type: "message", content: [], role: "assistant" });
+  }
+
+  // Surface upstream error (e.g. xAI "at capacity") as message text so the
+  // client sees the reason instead of a silent empty completion.
+  if (state.error) {
+    output.push({
+      type: "message",
+      role: "assistant",
+      status: "completed",
+      content: [{ type: "output_text", text: `[Error] ${state.error.message || JSON.stringify(state.error)}` }]
+    });
   }
 
   return {

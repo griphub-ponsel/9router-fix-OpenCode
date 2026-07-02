@@ -501,7 +501,9 @@ export function openaiResponsesToOpenAIResponse(chunk, state) {
     // Avoid emitting duplicate errors (error + response.failed arrive back-to-back)
     if (state.finishReasonSent) return null;
 
-    const error = data.error || data.response?.error;
+    // Error may be nested (data.error / response.error) or flat on the event
+    // (xAI Responses API: { type:"error", code, message, param }).
+    const error = data.error || data.response?.error || (data.message ? { code: data.code, message: data.message } : null);
     if (error) {
       state.error = error;
       state.finishReasonSent = true;
