@@ -3,6 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   needsVisionDelegation,
   getVisionSibling,
+  findAutoVisionTarget,
+  buildAutoVisionFallback,
+  isImageUnsupportedError,
   pickVisionFallback,
   bodyHasImages,
   collectImageParts,
@@ -117,5 +120,40 @@ describe("vision delegation", () => {
     const fallback = formatVisionMarker(null, { count: 2, delegated: false });
     expect(fallback).toContain("2 images");
     expect(fallback).toContain("grok-4.3");
+  });
+
+  it("detects upstream image-unsupported errors across providers", () => {
+    // xAI
+    expect(isImageUnsupportedError(400, 'Invalid request content: Image inputs are not supported by this model.')).toBe(true);
+    // OpenRouter-style (the xiaomi-mimo 404)
+    expect(isImageUnsupportedError(404, 'data:{"error":{"code":"404","message":"No endpoints found that support image input"')).toBe(true);
+    // Generic phrasings
+    expect(isImageUnsupportedError(400, "This model does not support image input")).toBe(true);
+    expect(isImageUnsupportedError(422, "vision is not supported for this model")).toBe(true);
+    expect(isImageUnsupportedError(400, "Unsupported content type: image_url")).toBe(true);
+    // Non-modality errors must NOT trigger a retry
+    expect(isImageUnsupportedError(429, "image rate limit: not supported plan")).toBe(false);
+    expect(isImageUnsupportedError(500, "image inputs are not supported")).toBe(false);
+    expect(isImageUnsupportedError(401, "unauthorized")).toBe(false);
+    expect(isImageUnsupportedError(400, "context length exceeded")).toBe(false);
+    expect(isImageUnsupportedError(400, "")).toBe(false);
+  });
+
+  it("auto-discovers a vision relay target on the same provider", () => {
+    // Hardcoded sibling wins
+    expect(findAutoVisionTarget("xai-oauth", "grok-code-fast-1")).toBe("grok-4.3");
+    // Never returns the model that just failed
+    expect(findAutoVisionTarget("xai-oauth", "grok-4.3")).not.toBe("grok-4.3");
+    // Unknown provider → null (no registry models)
+    expect(findAutoVisionTarget("nonexistent-provider", "x")).toBe(null);
+  });
+
+  it("builds a cross-provider auto fallback list from connected providers", () => {
+    const list = buildAutoVisionFallback(["xai-oauth", "nonexistent-provider"], null);
+    expect(list).toContain("xai-oauth/grok-4.3");
+    expect(list.some((m) => m.startsWith("nonexistent-provider/"))).toBe(false);
+    // Excludes the current provider (same-provider is handled separately)
+    expect(buildAutoVisionFallback(["xai-oauth"], "xai-oauth")).toEqual([]);
+    expect(buildAutoVisionFallback(null, "x")).toEqual([]);
   });
 });

@@ -16,6 +16,9 @@
  * by the caller (chatCore), which already owns credentials + dispatch.
  */
 
+import { getModelsByProviderId } from "../config/providerModels.js";
+import { getCapabilitiesForModel } from "../providers/capabilities.js";
+
 // Provider → vision-capable sibling model used to describe images.
 // VERIFIED 2026-07-02 (scripts/probe-grok-vision.mjs): composer/build/code get
 // 400 "Image inputs are not supported by this model." on BOTH api.x.ai AND
@@ -46,6 +49,74 @@ export function needsVisionDelegation(provider, model) {
 /** Vision-capable sibling model id for a provider, or null. */
 export function getVisionSibling(provider) {
   return VISION_SIBLINGS[provider] || null;
+}
+
+// Model kinds that can never serve as a vision-describe relay.
+const NON_RELAY_MODEL_KINDS = new Set(["imageGen", "image", "tts", "stt", "embedding", "video"]);
+
+/**
+ * Auto-discover a vision-capable relay model on the SAME provider so
+ * delegation works everywhere without any user configuration.
+ *
+ * Order: hardcoded sibling first (verified to accept images), then the first
+ * chat-capable model in the provider's registry whose capabilities declare
+ * vision. Returns a bare model id (same provider, credentials reused) or null.
+ */
+export function findAutoVisionTarget(provider, excludeModel) {
+  const sibling = getVisionSibling(provider);
+  if (sibling && sibling !== excludeModel) return sibling;
+  for (const entry of getModelsByProviderId(provider)) {
+    const id = entry?.id;
+    if (!id || id === excludeModel) continue;
+    const kind = entry.kind || entry.type || null;
+    if (kind && NON_RELAY_MODEL_KINDS.has(kind)) continue;
+    const caps = getCapabilitiesForModel(provider, id);
+    if (caps?.vision === true) return id;
+  }
+  return null;
+}
+
+/**
+ * Build a cross-provider auto-fallback list ("provider/model") from the
+ * providers the user has connected. Used when no manual vision-fallback list
+ * is configured, so image-blind models can still borrow vision from ANY
+ * connected provider.
+ */
+export function buildAutoVisionFallback(providerIds, excludeProvider) {
+  const out = [];
+  const seen = new Set();
+  for (const pid of providerIds || []) {
+    if (!pid || pid === excludeProvider || seen.has(pid)) continue;
+    seen.add(pid);
+    const target = findAutoVisionTarget(pid);
+    if (target) out.push(`${pid}/${target}`);
+  }
+  return out;
+}
+
+// Upstream error messages that mean "this model/endpoint rejects image input".
+// Matched case-insensitively against the parsed upstream error message so a
+// wrong `vision:true` capability entry can still trigger delegation reactively.
+const IMAGE_UNSUPPORTED_ERROR_PATTERNS = [
+  /image\s+inputs?\s+(?:is|are)?\s*not\s+supported/i,          // xAI, generic
+  /no endpoints? found that support image input/i,             // OpenRouter-style
+  /(?:model|endpoint)?\s*(?:does|do)\s*n[o']t\s+support\s+(?:image|vision|multimodal)/i,
+  /(?:image|vision|multimodal)[^.]{0,40}\bnot\s+supported\b/i,
+  /unsupported\s+(?:content|input|message)?\s*type[^.]{0,40}image/i,
+  /invalid\s+(?:request\s+)?content[^.]{0,60}image/i,
+];
+
+/**
+ * True when an upstream error indicates the model rejected image input, so
+ * the caller should delegate the image(s) and retry once. Server-side/auth/
+ * rate-limit statuses are excluded — those are not modality errors.
+ */
+export function isImageUnsupportedError(status, message) {
+  const code = Number(status);
+  if (code >= 500 || code === 401 || code === 403 || code === 429) return false;
+  const text = String(message || "");
+  if (!text) return false;
+  return IMAGE_UNSUPPORTED_ERROR_PATTERNS.some((re) => re.test(text));
 }
 
 /**

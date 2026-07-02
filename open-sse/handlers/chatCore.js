@@ -30,13 +30,14 @@ import { captureChatMemory, injectMemoryContext } from "@/shared/memory/capture.
 import { parseModel } from "../services/model.js";
 import {
   needsVisionDelegation,
-  getVisionSibling,
+  findAutoVisionTarget,
   pickVisionFallback,
   bodyHasImages,
   collectImageParts,
   replaceImagesWithText,
   buildVisionProbeBody,
   formatVisionMarker,
+  isImageUnsupportedError,
 } from "../services/visionDelegation.js";
 
 /**
@@ -117,6 +118,28 @@ async function relayVisionDescription({ target, images, provider, credentials, l
   return collectTextFromResponse(result.response);
 }
 
+/**
+ * Delegate every image in `body` to a vision relay and replace them with the
+ * resulting text marker (mutates body). Fail-safe: on relay failure the images
+ * are replaced with an honest note instead of hard-failing the request.
+ */
+async function delegateImagesInBody({ body, target, model, provider, credentials, log, connectionId, onCredentialsRefreshed, resolveVisionCredentials }) {
+  const images = collectImageParts(body);
+  let description = null;
+  try {
+    description = await relayVisionDescription({
+      target, images, provider, credentials, log, connectionId,
+      onCredentialsRefreshed, resolveVisionCredentials,
+    });
+  } catch (err) {
+    log?.warn?.("VISION", `delegation failed: ${err?.message || err}`);
+  }
+  const marker = formatVisionMarker(description, { count: images.length, delegated: !!description, sibling: target });
+  replaceImagesWithText(body, marker);
+  log?.debug?.("VISION", `${images.length} image(s) ${description ? `relayed via ${target}` : "replaced with note"} for ${model}`);
+  return !!description;
+}
+
 function getHeader(headers = {}, name) {
   const wanted = name.toLowerCase();
   for (const [key, value] of Object.entries(headers || {})) {
@@ -151,7 +174,9 @@ async function applyMemoryContext({ body, provider, model, apiKey, clientRawRequ
  * @param {object} options.credentials - Provider credentials
  * @param {string} options.sourceFormatOverride - Override detected source format (e.g. "openai-responses")
  */
-export async function handleChatCore({ body, modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, clientRawRequest, connectionId, userAgent, apiKey, ccFilterNaming, rtkEnabled, headroomEnabled, headroomUrl, headroomCompressUserMessages, cavemanEnabled, cavemanLevel, ponytailEnabled, ponytailLevel, sourceFormatOverride, providerThinking, internalVisionRelay, visionFallbackModels, resolveVisionCredentials }) {
+export async function handleChatCore(options) {
+  const { modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, clientRawRequest, connectionId, userAgent, apiKey, ccFilterNaming, rtkEnabled, headroomEnabled, headroomUrl, headroomCompressUserMessages, cavemanEnabled, cavemanLevel, ponytailEnabled, ponytailLevel, sourceFormatOverride, providerThinking, internalVisionRelay, visionFallbackModels, autoVisionFallbackModels, resolveVisionCredentials, visionRetryAttempted } = options;
+  let body = options.body;
   const { provider, model } = modelInfo;
   const requestStartTime = Date.now();
 
@@ -161,7 +186,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   const bypassResponse = handleBypassRequest(body, model, userAgent, ccFilterNaming);
   if (bypassResponse) return bypassResponse;
 
-  if (!internalVisionRelay) {
+  if (!internalVisionRelay && !visionRetryAttempted) {
     await applyMemoryContext({ body, provider, model, apiKey, clientRawRequest, log });
   }
 
@@ -178,39 +203,35 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   // image understanding to a vision-capable model, then injecting the resulting
   // description as text (mirroring the Grok Build CLI harness).
   //
-  // Two triggers:
+  // Two proactive triggers (plus a reactive retry further down when the
+  // upstream rejects images despite capabilities saying otherwise):
   //   1. needsVisionDelegation(provider, model) — models whose family looks
   //      vision-capable but whose upstream API rejects raw images (xAI Grok
   //      Composer/Build/Code). Always delegates.
-  //   2. Any model that simply can't read images (caps.vision === false) when
-  //      the user has configured vision-fallback relays. This generalizes the
-  //      same trick to Chinese/other text-only coding models.
+  //   2. Any model that simply can't read images (caps.vision === false).
   //
-  // Target selection prefers a user-configured fallback (picked at random for
-  // load balance across accounts/providers, and may point at ANOTHER provider);
-  // otherwise the hardcoded per-provider sibling. Fail-safe: on any error the
-  // image is replaced with an honest note instead of hard-failing the request.
-  if (!internalVisionRelay && bodyHasImages(body)) {
+  // Target selection order: user-configured fallback (random pick for load
+  // balance, may point at ANOTHER provider) → same-provider vision model
+  // (hardcoded sibling or auto-discovered from capabilities) → auto-derived
+  // cross-provider fallback from the user's connected providers. Fail-safe: on
+  // any error the image is replaced with an honest note instead of hard-failing
+  // the request.
+  const pickVisionTarget = () =>
+    pickVisionFallback(visionFallbackModels) ||
+    findAutoVisionTarget(provider, model) ||
+    pickVisionFallback(autoVisionFallbackModels);
+
+  if (!internalVisionRelay && !visionRetryAttempted && bodyHasImages(body)) {
     const visionCaps = getCapabilitiesForModel(provider, model);
     const forcedDelegation = needsVisionDelegation(provider, model);
     const genericDelegation = visionCaps?.vision === false;
-    const fallbackTarget = pickVisionFallback(visionFallbackModels);
-    const target = fallbackTarget || getVisionSibling(provider);
+    const target = pickVisionTarget();
 
     if ((forcedDelegation || genericDelegation) && target) {
-      const images = collectImageParts(body);
-      let description = null;
-      try {
-        description = await relayVisionDescription({
-          target, images, provider, credentials, log, connectionId,
-          onCredentialsRefreshed, resolveVisionCredentials,
-        });
-      } catch (err) {
-        log?.warn?.("VISION", `delegation failed: ${err?.message || err}`);
-      }
-      const marker = formatVisionMarker(description, { count: images.length, delegated: !!description, sibling: target });
-      replaceImagesWithText(body, marker);
-      log?.debug?.("VISION", `${images.length} image(s) ${description ? `relayed via ${target}` : "replaced with note"} for ${model}`);
+      await delegateImagesInBody({
+        body, target, model, provider, credentials, log, connectionId,
+        onCredentialsRefreshed, resolveVisionCredentials,
+      });
     }
   }
 
@@ -466,6 +487,25 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     const errMsg = formatProviderError(new Error(message), provider, model, statusCode);
     console.log(`${COLORS.red}[ERROR] ${errMsg}${COLORS.reset}`);
     reqLogger.logError(new Error(message), finalBody || translatedBody);
+
+    // Reactive vision fallback (ALL providers): the upstream rejected image
+    // input even though capabilities didn't predict it (wrong/missing caps
+    // entry, per-endpoint gating like OpenRouter's "No endpoints found that
+    // support image input"). Delegate the images to a vision relay and retry
+    // the whole request ONCE with the images replaced by text.
+    if (!internalVisionRelay && !visionRetryAttempted && bodyHasImages(body) && isImageUnsupportedError(statusCode, message)) {
+      const target = pickVisionTarget();
+      if (target) {
+        log?.warn?.("VISION", `upstream rejected images (${statusCode}); delegating to ${target} and retrying`);
+        await delegateImagesInBody({
+          body, target, model, provider, credentials, log, connectionId,
+          onCredentialsRefreshed, resolveVisionCredentials,
+        });
+        return handleChatCore({ ...options, body, visionRetryAttempted: true });
+      }
+      log?.warn?.("VISION", `upstream rejected images (${statusCode}) but no vision relay target available`);
+    }
+
     return createErrorResult(statusCode, errMsg, resetsAtMs);
   }
 

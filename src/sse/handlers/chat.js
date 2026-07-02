@@ -8,9 +8,10 @@ import {
   isValidApiKey,
 } from "../services/auth.js";
 import { cacheClaudeHeaders } from "open-sse/utils/claudeHeaderCache.js";
-import { getSettings } from "@/lib/localDb";
+import { getSettings, getProviderConnections } from "@/lib/localDb";
 import { getModelInfo, getComboModels } from "../services/model.js";
 import { handleChatCore } from "open-sse/handlers/chatCore.js";
+import { bodyHasImages, buildAutoVisionFallback } from "open-sse/services/visionDelegation.js";
 import { DEFAULT_HEADROOM_URL } from "@/lib/headroom/detect";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
 import { handleComboChat, handleFusionChat } from "open-sse/services/combo.js";
@@ -224,6 +225,21 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   // Extract userAgent from request
   const userAgent = request?.headers?.get("user-agent") || "";
 
+  // Auto vision fallback (all providers): when the request carries images,
+  // derive vision-relay candidates from the user's OTHER connected providers.
+  // Used by chatCore only after user-configured fallbacks and same-provider
+  // vision models, so this is a best-effort last resort.
+  let autoVisionFallbackModels = [];
+  if (bodyHasImages(body)) {
+    try {
+      const activeConns = await getProviderConnections({ isActive: true });
+      autoVisionFallbackModels = buildAutoVisionFallback(
+        [...new Set(activeConns.map((c) => c.provider))],
+        provider
+      );
+    } catch { /* best-effort; delegation falls back to same-provider targets */ }
+  }
+
   // Try with available accounts (fallback on errors)
   const excludeConnectionIds = new Set();
   let lastError = null;
@@ -311,6 +327,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       // when the requested model can't read images. resolveVisionCredentials
       // lets the relay target a DIFFERENT provider on its own account.
       visionFallbackModels: Array.isArray(chatSettings.visionFallbackModels) ? chatSettings.visionFallbackModels : [],
+      autoVisionFallbackModels,
       resolveVisionCredentials,
       // Detect source format by endpoint + body
       sourceFormatOverride: request?.url ? detectFormatByEndpoint(new URL(request.url).pathname, body) : null,
