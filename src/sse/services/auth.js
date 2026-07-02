@@ -60,19 +60,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       return null;
     }
 
-    // Notion is dual-auth: OAuth connections only enable Remote MCP tools
-    // (consumed by VS Code/OpenCode directly), they cannot drive chat. Chat
-    // requires a cookie session (token_v2 + notion_user_id). So for notion
-    // chat credential selection, skip OAuth-only ("mcp-oauth") connections.
     let selectableConnections = connections;
-    if (providerId === "notion") {
-      const cookieConnections = connections.filter((c) => {
-        const psd = c?.providerSpecificData || {};
-        if (psd.authKind === "mcp-oauth") return false;
-        return !!(psd.fullCookie || psd.cookie || psd.token_v2 || c.apiKey || c.accessToken);
-      });
-      if (cookieConnections.length > 0) selectableConnections = cookieConnections;
-    }
 
     // Filter out model-locked and excluded connections
     const availableConnections = selectableConnections.filter(c => {

@@ -461,11 +461,30 @@ describe('MemorySystem', () => {
       expect(results.some(memory => memory.title === 'User phones: 5')).toBe(true);
     });
 
+    it('should remember file count from an explicit prompt', async () => {
+      await captureChatMemory({
+        model: 'test/model',
+        messages: [
+          { role: 'user', content: 'bro tolong ingetin jumlah file ini ada 5' }
+        ]
+      }, {
+        sessionId: 'capture-session-files',
+        userId: 'local-user'
+      });
+
+      const results = await memoryService.searchMemories('files', {
+        userId: 'local-user'
+      });
+
+      expect(results.some(memory => memory.title === 'User files: 5')).toBe(true);
+    });
+
     it('should extract possession from various phrasings', () => {
       expect(extractRememberedPossession('hape gw ada 5')).toEqual({ item: 'phones', count: 5 });
       expect(extractRememberedPossession('gw punya 2 mobil')).toEqual({ item: 'cars', count: 2 });
       expect(extractRememberedPossession('my laptop ada 3')).toEqual({ item: 'laptops', count: 3 });
       expect(extractRememberedPossession('inget, hape gw ada 5')).toEqual({ item: 'phones', count: 5 });
+      expect(extractRememberedPossession('tolong ingetin jumlah file ini ada 5')).toEqual({ item: 'files', count: 5 });
     });
   });
 });

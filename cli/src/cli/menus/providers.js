@@ -146,7 +146,6 @@ const OAUTH_PROVIDERS = {
   iflow: { id: "iflow", alias: "if", name: "iFlow AI" },
   qwen: { id: "qwen", alias: "qw", name: "Qwen Code" },
   kiro: { id: "kiro", alias: "kr", name: "Kiro AI" },
-  notion: { id: "notion", alias: "nt", name: "Notion MCP" },
   "xai-oauth": { id: "xai-oauth", alias: "xog", name: "xAI Grok" },
 };
 

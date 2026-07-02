@@ -48,6 +48,25 @@ export function getVisionSibling(provider) {
   return VISION_SIBLINGS[provider] || null;
 }
 
+/**
+ * Pick one vision-fallback model id from a user-configured list. Chooses at
+ * random for basic load balancing across the configured relays. Returns null
+ * when the list is missing, empty, or holds no usable entries.
+ *
+ * Entries are full model ids ("alias/model", e.g. "xog/grok-4.3") so the relay
+ * can target a vision-capable model on any provider, not just the current one.
+ *
+ * @param {string[]} fallbackModels
+ * @returns {string|null}
+ */
+export function pickVisionFallback(fallbackModels) {
+  if (!Array.isArray(fallbackModels)) return null;
+  const valid = fallbackModels.filter((m) => typeof m === "string" && m.trim());
+  if (valid.length === 0) return null;
+  const idx = Math.floor(Math.random() * valid.length);
+  return valid[idx].trim();
+}
+
 /** True if the request body carries any image content parts. */
 export function bodyHasImages(body) {
   return collectImageParts(body).length > 0;

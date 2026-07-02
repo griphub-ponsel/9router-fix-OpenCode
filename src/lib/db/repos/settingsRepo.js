@@ -42,6 +42,10 @@ const DEFAULT_SETTINGS = {
   cavemanLevel: "full",
   ponytailEnabled: false,
   ponytailLevel: "full",
+  // Vision fallback: model ids (e.g. "xog/grok-4.3") used to relay image
+  // understanding for models that can't read images. One is picked at random
+  // per request (load balance). Empty = feature off.
+  visionFallbackModels: [],
 };
 
 async function readRaw() {

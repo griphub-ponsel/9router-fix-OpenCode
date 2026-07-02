@@ -1,30 +1,3 @@
-const NOTION_MCP_URL = "https://mcp.notion.com/mcp";
-
-const NOTION_REMOTE_MCP_PLUGIN = {
-  name: "notion",
-  title: "Notion",
-  description: "Official Notion workspace tools via OAuth MCP",
-  url: NOTION_MCP_URL,
-  transport: "http",
-  oauth: true,
-  toolNames: [
-    "notion-search",
-    "notion-fetch",
-    "notion-create-pages",
-    "notion-update-page",
-    "notion-move-page",
-    "notion-duplicate-page",
-    "notion-create-database",
-    "notion-update-database",
-    "notion-query-database",
-    "notion-create-comment",
-    "notion-get-comments",
-    "notion-get-users",
-    "notion-get-teams",
-    "notion-query-meeting-notes",
-  ],
-};
-
 // Default remote plugins for Claude Cowork (3p managedMcpServers, HTTPS only).
 const DEFAULT_PLUGINS = [
   {
@@ -45,7 +18,6 @@ const DEFAULT_PLUGINS = [
     oauth: true,
     toolNames: ["tavily_search", "tavily_extract", "tavily_crawl", "tavily_map"],
   },
-  NOTION_REMOTE_MCP_PLUGIN,
 ];
 
 // Local stdio plugins bridged via inline SSE endpoint on the app's port.
@@ -97,4 +69,4 @@ function buildManagedMcpServers(plugins) {
   return out;
 }
 
-module.exports = { DEFAULT_PLUGINS, LOCAL_STDIO_PLUGINS, NOTION_MCP_URL, NOTION_REMOTE_MCP_PLUGIN, buildManagedMcpServers };
+module.exports = { DEFAULT_PLUGINS, LOCAL_STDIO_PLUGINS, buildManagedMcpServers };

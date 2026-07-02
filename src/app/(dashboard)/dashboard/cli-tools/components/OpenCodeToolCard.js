@@ -7,7 +7,6 @@ import BaseUrlSelect from "./BaseUrlSelect";
 import ApiKeySelect from "./ApiKeySelect";
 import { matchKnownEndpoint } from "./cliEndpointMatch";
 import { findModelName } from "@/shared/constants/models";
-import { NOTION_REMOTE_MCP_PLUGIN } from "@/shared/constants/coworkPlugins";
 
 export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, apiKeys, activeProviders, cloudEnabled, initialStatus, tunnelEnabled, tunnelPublicUrl, tailscaleEnabled, tailscaleUrl }) {
   const [status, setStatus] = useState(initialStatus || null);
@@ -307,15 +306,6 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
             description: "Fast explorer subagent for codebase exploration",
             mode: "subagent",
             model: `9router/${effectiveSubagentModel}`
-          }
-        },
-        mcp: {
-          [NOTION_REMOTE_MCP_PLUGIN.name]: {
-            type: "remote",
-            url: NOTION_REMOTE_MCP_PLUGIN.url,
-            enabled: true,
-            oauth: {},
-            timeout: 30000,
           }
         }
       }, null, 2),

@@ -91,7 +91,6 @@ import p88 from "./vertex-partner.js";
 import p89 from "./vertex.js";
 import p90 from "./volcengine-ark.js";
 import p91 from "./voyage-ai.js";
-import pNotion from "./notion.js";
 import p92 from "./xiaomi-mimo.js";
 import p93 from "./xiaomi-tokenplan.js";
 import p94 from "./youcom.js";
@@ -162,7 +161,6 @@ export default [
   p59,
   p60,
   p61,
-  pNotion,
   p62,
   p63,
   p64,
@@ -193,7 +191,6 @@ export default [
   p89,
   p90,
   p91,
-  pNotion,
   p92,
   p93,
   p94,

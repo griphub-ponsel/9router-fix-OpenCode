@@ -26,9 +26,12 @@ import { compressWithHeadroom, formatHeadroomLog, formatHeadroomSizeLog, isHeadr
 import { getCapabilitiesForModel } from "../providers/capabilities.js";
 import { stripUnsupportedModalities } from "../translator/concerns/modality.js";
 import { prefetchRemoteImages } from "../translator/concerns/prefetch.js";
+import { captureChatMemory, injectMemoryContext } from "@/shared/memory/capture.js";
+import { parseModel } from "../services/model.js";
 import {
   needsVisionDelegation,
   getVisionSibling,
+  pickVisionFallback,
   bodyHasImages,
   collectImageParts,
   replaceImagesWithText,
@@ -68,23 +71,77 @@ async function collectTextFromResponse(response) {
 }
 
 /**
- * Relay image understanding to a vision-capable sibling model on the same
- * account, returning a factual text description. Used to give coding models
- * (whose API rejects raw images) effective vision, mirroring Grok Build CLI.
+ * Relay image understanding to a vision-capable model, returning a factual
+ * text description. Gives image-blind coding models effective vision, mirroring
+ * Grok Build CLI.
+ *
+ * `target` is a full model id ("alias/model", e.g. "xog/grok-4.3"). When it
+ * resolves to the SAME provider as the caller, credentials are reused; a
+ * cross-provider target is resolved through `resolveVisionCredentials`.
  */
-async function relayVisionDescription({ sibling, images, provider, credentials, log, connectionId, onCredentialsRefreshed }) {
-  const probe = buildVisionProbeBody(sibling, images);
+async function relayVisionDescription({ target, images, provider, credentials, log, connectionId, onCredentialsRefreshed, resolveVisionCredentials }) {
+  const parsed = parseModel(target);
+  const targetProvider = parsed.provider || provider;
+  const targetModel = parsed.model || target;
+
+  let relayCreds = credentials;
+  let relayConnectionId = connectionId;
+  let relayOnRefreshed = onCredentialsRefreshed;
+
+  if (targetProvider !== provider) {
+    if (typeof resolveVisionCredentials !== "function") {
+      log?.warn?.("VISION", `no credential resolver for cross-provider relay → ${targetProvider}`);
+      return null;
+    }
+    const resolved = await resolveVisionCredentials(targetProvider, targetModel);
+    if (!resolved?.credentials) {
+      log?.warn?.("VISION", `no credentials for vision relay provider ${targetProvider}`);
+      return null;
+    }
+    relayCreds = resolved.credentials;
+    relayConnectionId = resolved.connectionId ?? null;
+    relayOnRefreshed = resolved.onCredentialsRefreshed;
+  }
+
+  const probe = buildVisionProbeBody(targetModel, images);
   const result = await handleChatCore({
     body: probe,
-    modelInfo: { provider, model: sibling },
-    credentials,
+    modelInfo: { provider: targetProvider, model: targetModel },
+    credentials: relayCreds,
     log,
-    connectionId,
-    onCredentialsRefreshed,
+    connectionId: relayConnectionId,
+    onCredentialsRefreshed: relayOnRefreshed,
     internalVisionRelay: true,
   });
   if (!result?.success || !result.response) return null;
   return collectTextFromResponse(result.response);
+}
+
+function getHeader(headers = {}, name) {
+  const wanted = name.toLowerCase();
+  for (const [key, value] of Object.entries(headers || {})) {
+    if (String(key).toLowerCase() === wanted) return value;
+  }
+  return null;
+}
+
+async function applyMemoryContext({ body, provider, model, apiKey, clientRawRequest, log }) {
+  try {
+    const userId = apiKey ? `api:${String(apiKey).slice(-8)}` : "local-user";
+    const sessionId = getHeader(clientRawRequest?.headers, "x-9router-session-id") || body.session_id || body.conversation_id || body.thread_id || "chat-local";
+    const captured = await captureChatMemory(body, {
+      endpoint: clientRawRequest?.endpoint,
+      provider,
+      model,
+      sessionId,
+      userId,
+    });
+    const injected = await injectMemoryContext(body, { userId });
+    if (captured?.memories) log?.debug?.("MEMORY", `Saved ${captured.memories} remembered fact(s)`);
+    if (injected?.injected) log?.debug?.("MEMORY", `Injected ${injected.injected} remembered fact(s) into prompt`);
+  } catch (error) {
+    log?.warn?.("MEMORY", `skipped: ${error?.message || error}`);
+  }
 }
 
 /**
@@ -94,7 +151,7 @@ async function relayVisionDescription({ sibling, images, provider, credentials, 
  * @param {object} options.credentials - Provider credentials
  * @param {string} options.sourceFormatOverride - Override detected source format (e.g. "openai-responses")
  */
-export async function handleChatCore({ body, modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, clientRawRequest, connectionId, userAgent, apiKey, ccFilterNaming, rtkEnabled, headroomEnabled, headroomUrl, headroomCompressUserMessages, cavemanEnabled, cavemanLevel, ponytailEnabled, ponytailLevel, sourceFormatOverride, providerThinking, internalVisionRelay }) {
+export async function handleChatCore({ body, modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, clientRawRequest, connectionId, userAgent, apiKey, ccFilterNaming, rtkEnabled, headroomEnabled, headroomUrl, headroomCompressUserMessages, cavemanEnabled, cavemanLevel, ponytailEnabled, ponytailLevel, sourceFormatOverride, providerThinking, internalVisionRelay, visionFallbackModels, resolveVisionCredentials }) {
   const { provider, model } = modelInfo;
   const requestStartTime = Date.now();
 
@@ -103,6 +160,10 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   // Check for bypass patterns (warmup, skip, cc naming)
   const bypassResponse = handleBypassRequest(body, model, userAgent, ccFilterNaming);
   if (bypassResponse) return bypassResponse;
+
+  if (!internalVisionRelay) {
+    await applyMemoryContext({ body, provider, model, apiKey, clientRawRequest, log });
+  }
 
   const alias = PROVIDER_ID_TO_ALIAS[provider] || provider;
   const modelTargetFormat = getModelTargetFormat(alias, model);
@@ -113,28 +174,44 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   const stripList = getModelStrip(alias, model);
   const upstreamModel = getModelUpstreamId(alias, model);
 
-  // Vision delegation: coding-optimized models (e.g. xAI Grok Composer/Build)
-  // reject raw image inputs at the upstream API, but the official harness lets
-  // them "see" images by relaying understanding through a vision-capable
-  // sibling. Replicate that: describe the image(s) with the sibling on the same
-  // account, then inject the description as text. Fail-safe: on any error the
+  // Vision delegation: give image-blind models effective vision by relaying
+  // image understanding to a vision-capable model, then injecting the resulting
+  // description as text (mirroring the Grok Build CLI harness).
+  //
+  // Two triggers:
+  //   1. needsVisionDelegation(provider, model) — models whose family looks
+  //      vision-capable but whose upstream API rejects raw images (xAI Grok
+  //      Composer/Build/Code). Always delegates.
+  //   2. Any model that simply can't read images (caps.vision === false) when
+  //      the user has configured vision-fallback relays. This generalizes the
+  //      same trick to Chinese/other text-only coding models.
+  //
+  // Target selection prefers a user-configured fallback (picked at random for
+  // load balance across accounts/providers, and may point at ANOTHER provider);
+  // otherwise the hardcoded per-provider sibling. Fail-safe: on any error the
   // image is replaced with an honest note instead of hard-failing the request.
-  if (!internalVisionRelay && needsVisionDelegation(provider, model) && bodyHasImages(body)) {
-    const sibling = getVisionSibling(provider);
-    const images = collectImageParts(body);
-    let description = null;
-    if (sibling) {
+  if (!internalVisionRelay && bodyHasImages(body)) {
+    const visionCaps = getCapabilitiesForModel(provider, model);
+    const forcedDelegation = needsVisionDelegation(provider, model);
+    const genericDelegation = visionCaps?.vision === false;
+    const fallbackTarget = pickVisionFallback(visionFallbackModels);
+    const target = fallbackTarget || getVisionSibling(provider);
+
+    if ((forcedDelegation || genericDelegation) && target) {
+      const images = collectImageParts(body);
+      let description = null;
       try {
         description = await relayVisionDescription({
-          sibling, images, provider, credentials, log, connectionId, onCredentialsRefreshed,
+          target, images, provider, credentials, log, connectionId,
+          onCredentialsRefreshed, resolveVisionCredentials,
         });
       } catch (err) {
         log?.warn?.("VISION", `delegation failed: ${err?.message || err}`);
       }
+      const marker = formatVisionMarker(description, { count: images.length, delegated: !!description, sibling: target });
+      replaceImagesWithText(body, marker);
+      log?.debug?.("VISION", `${images.length} image(s) ${description ? `relayed via ${target}` : "replaced with note"} for ${model}`);
     }
-    const marker = formatVisionMarker(description, { count: images.length, delegated: !!description, sibling });
-    replaceImagesWithText(body, marker);
-    log?.debug?.("VISION", `${images.length} image(s) ${description ? `relayed via ${sibling}` : "replaced with note"} for ${model}`);
   }
 
   // Inject provider-level thinking config override (only if client hasn't set)

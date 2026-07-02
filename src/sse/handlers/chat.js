@@ -20,7 +20,6 @@ import { detectFormatByEndpoint } from "open-sse/translator/formats.js";
 import * as log from "../utils/logger.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { getProjectIdForConnection } from "open-sse/services/projectId.js";
-import { captureChatMemory } from "@/shared/memory/capture.js";
 import { extractThinking } from "open-sse/translator/concerns/thinkingUnified.js";
 
 /**
@@ -109,17 +108,6 @@ export async function handleChat(request, clientRawRequest = null) {
   if (!modelStr) {
     log.warn("CHAT", "Missing model");
     return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing model");
-  }
-
-  try {
-    await captureChatMemory(body, {
-      endpoint: url.pathname,
-      model: modelStr,
-      sessionId: request.headers.get("x-9router-session-id") || body.session_id || body.conversation_id || body.thread_id || "chat-local",
-      userId: apiKey ? `api:${apiKey.slice(-8)}` : "local-user"
-    });
-  } catch (error) {
-    log.warn("MEMORY", `Failed to capture chat prompt: ${error?.message || error}`);
   }
 
   // Bypass naming/warmup requests before combo rotation to avoid wasting rotation slots
@@ -278,6 +266,28 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     // Use shared chatCore
     const chatSettings = await getSettings();
     const providerThinking = (chatSettings.providerThinking || {})[provider] || null;
+
+    // Resolver for cross-provider vision relay: fetches + refreshes credentials
+    // for a DIFFERENT provider on its own account so an image-blind model can
+    // borrow a vision-capable model elsewhere. Same-provider relays reuse the
+    // current credentials inside chatCore and never call this.
+    const resolveVisionCredentials = async (targetProvider, targetModel) => {
+      const relayCreds = await getProviderCredentials(targetProvider, new Set(), targetModel);
+      if (!relayCreds || relayCreds.allRateLimited) return null;
+      const refreshed = await checkAndRefreshToken(targetProvider, relayCreds);
+      return {
+        credentials: refreshed,
+        connectionId: relayCreds.connectionId,
+        onCredentialsRefreshed: async (newCreds) => {
+          await updateProviderCredentials(relayCreds.connectionId, {
+            ...newCreds,
+            existingProviderSpecificData: relayCreds.providerSpecificData,
+            testStatus: "active",
+          });
+        },
+      };
+    };
+
     const result = await handleChatCore({
       body: { ...body, model: `${provider}/${model}` },
       modelInfo: { provider, model },
@@ -297,6 +307,11 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       ponytailEnabled: !!chatSettings.ponytailEnabled,
       ponytailLevel: chatSettings.ponytailLevel || "full",
       providerThinking,
+      // Vision fallback: relay images through a configured vision-capable model
+      // when the requested model can't read images. resolveVisionCredentials
+      // lets the relay target a DIFFERENT provider on its own account.
+      visionFallbackModels: Array.isArray(chatSettings.visionFallbackModels) ? chatSettings.visionFallbackModels : [],
+      resolveVisionCredentials,
       // Detect source format by endpoint + body
       sourceFormatOverride: request?.url ? detectFormatByEndpoint(new URL(request.url).pathname, body) : null,
       onCredentialsRefreshed: async (newCreds) => {

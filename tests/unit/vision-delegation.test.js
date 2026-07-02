@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   needsVisionDelegation,
   getVisionSibling,
+  pickVisionFallback,
   bodyHasImages,
   collectImageParts,
   replaceImagesWithText,
@@ -23,6 +24,20 @@ describe("vision delegation", () => {
   it("resolves the vision sibling for xai-oauth", () => {
     expect(getVisionSibling("xai-oauth")).toBe("grok-4.3");
     expect(getVisionSibling("openai")).toBe(null);
+  });
+
+  it("picks a vision fallback from a configured list (or null when empty)", () => {
+    expect(pickVisionFallback(null)).toBe(null);
+    expect(pickVisionFallback([])).toBe(null);
+    expect(pickVisionFallback(["  ", ""])).toBe(null);
+    expect(pickVisionFallback(["xog/grok-4.3"])).toBe("xog/grok-4.3");
+    // trims whitespace on the chosen entry
+    expect(pickVisionFallback(["  xog/grok-4.3  "])).toBe("xog/grok-4.3");
+    // always returns one of the configured entries
+    const list = ["xog/grok-4.3", "gh/gpt-5", "cc/claude-opus-4.8"];
+    for (let i = 0; i < 50; i++) {
+      expect(list).toContain(pickVisionFallback(list));
+    }
   });
 
   it("collects images from chat and responses shapes", () => {

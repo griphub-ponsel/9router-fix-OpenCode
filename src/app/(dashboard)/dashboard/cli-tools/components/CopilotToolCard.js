@@ -27,9 +27,12 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
   const [modelContextSizes, setModelContextSizes] = useState({});
   const [newModelBadges, setNewModelBadges] = useState({});
   const [modalOpen, setModalOpen] = useState(false);
+  const [visionFallbackModels, setVisionFallbackModels] = useState([]);
+  const [fallbackModalOpen, setFallbackModalOpen] = useState(false);
   const [sortKey, setSortKey] = useState("model"); // "model" | "displayName"
   const [sortDir, setSortDir] = useState("asc"); // "asc" | "desc"
   const selectedModelsRef = useRef([]);
+  const visionFallbackRef = useRef([]);
 
   const sortModels = (models) => ([...new Set(models)].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })));
 
@@ -112,6 +115,10 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
   }, [selectedModels]);
 
   useEffect(() => {
+    visionFallbackRef.current = visionFallbackModels;
+  }, [visionFallbackModels]);
+
+  useEffect(() => {
     if (apiKeys?.length > 0 && !selectedApiKey) {
       setSelectedApiKey(apiKeys[0].key);
     }
@@ -158,6 +165,9 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
         });
       }
     }
+    if (status && Array.isArray(status.visionFallbackModels)) {
+      setVisionFallbackModels(status.visionFallbackModels);
+    }
   }, [status, modelAliases]);
 
   const fetchModelAliases = async () => {
@@ -188,7 +198,7 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
       await fetch("/api/cli-tools/copilot-settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ baseUrl: getEffectiveBaseUrl(), apiKey: keyToUse, models, modelNames: getSelectedModelNames(models), modelContextSizes: getSelectedModelContextSizes(models) }),
+        body: JSON.stringify({ baseUrl: getEffectiveBaseUrl(), apiKey: keyToUse, models, modelNames: getSelectedModelNames(models), modelContextSizes: getSelectedModelContextSizes(models), visionFallbackModels: visionFallbackRef.current }),
       });
     } catch (error) {
       console.log("Error saving models:", error);
@@ -254,7 +264,7 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
       const res = await fetch("/api/cli-tools/copilot-settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ baseUrl: getEffectiveBaseUrl(), apiKey: keyToUse, models: selectedModels, modelNames: getSelectedModelNames(), modelContextSizes: getSelectedModelContextSizes() }),
+        body: JSON.stringify({ baseUrl: getEffectiveBaseUrl(), apiKey: keyToUse, models: selectedModels, modelNames: getSelectedModelNames(), modelContextSizes: getSelectedModelContextSizes(), visionFallbackModels }),
       });
       const data = await res.json();
       if (res.ok) {
@@ -469,6 +479,48 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
                     </div>
                   </div>
                 </div>
+
+                {/* Vision Fallback */}
+                <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr] sm:items-start sm:gap-2">
+                  <span className="w-32 shrink-0 text-sm font-semibold text-text-main text-right pt-1">Vision Fallback</span>
+                  <span className="material-symbols-outlined text-text-muted text-[14px] mt-1.5">arrow_forward</span>
+                  <div className="flex-1 flex flex-col gap-2">
+                    <div className="flex items-start gap-2 rounded border border-border bg-surface/40 px-3 py-2 text-[11px] text-text-muted">
+                      <span className="material-symbols-outlined text-[14px] text-primary">visibility</span>
+                      <span>
+                        For models that can&apos;t read images, 9Router relays the image to one of these vision-capable models
+                        (chosen at random per request), then feeds the description back. Pick one or more. Leave empty to disable.
+                      </span>
+                    </div>
+                    {visionFallbackModels.length === 0 ? (
+                      <div className="px-3 py-3 rounded border border-border bg-surface/40 text-center">
+                        <span className="text-xs text-text-muted">No vision fallback models</span>
+                      </div>
+                    ) : (
+                      <div className="flex flex-wrap gap-1.5">
+                        {visionFallbackModels.map((m) => (
+                          <span key={m} className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[11px] text-primary" title={m}>
+                            <span className="material-symbols-outlined text-[12px]">visibility</span>
+                            <span className="max-w-[16rem] truncate">{m}</span>
+                            <button
+                              onClick={() => setVisionFallbackModels((prev) => prev.filter((x) => x !== m))}
+                              className="flex items-center justify-center rounded-full text-primary/60 hover:text-red-500 transition-colors"
+                              title="Remove fallback model"
+                            >
+                              <span className="material-symbols-outlined text-[12px]">close</span>
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    <div className="flex items-center gap-3">
+                      <button onClick={() => setFallbackModalOpen(true)} disabled={!activeProviders?.length} className={`px-2 py-1 rounded border text-xs transition-colors ${activeProviders?.length ? "bg-surface border-border text-text-main hover:border-primary cursor-pointer" : "opacity-50 cursor-not-allowed border-border"}`}>Add Vision Model</button>
+                      <span className="text-xs text-text-muted">
+                        {visionFallbackModels.length > 0 ? `${visionFallbackModels.length} fallback model${visionFallbackModels.length === 1 ? "" : "s"}` : "Optional"}
+                      </span>
+                    </div>
+                  </div>
+                </div>
               </div>
 
               {message && (
@@ -519,6 +571,26 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
         addedModelValues={selectedModels}
         closeOnSelect={false}
         title="Add Model for GitHub Copilot"
+      />
+
+      <ModelSelectModal
+        isOpen={fallbackModalOpen}
+        onClose={() => {
+          setFallbackModalOpen(false);
+          saveModels(selectedModelsRef.current);
+        }}
+        onSelect={(model) => {
+          setVisionFallbackModels((prev) => (prev.includes(model.value) ? prev : [...prev, model.value]));
+        }}
+        onDeselect={(model) => {
+          setVisionFallbackModels((prev) => prev.filter((x) => x !== model.value));
+        }}
+        selectedModel={null}
+        activeProviders={activeProviders}
+        modelAliases={modelAliases}
+        addedModelValues={visionFallbackModels}
+        closeOnSelect={false}
+        title="Add Vision Fallback Model"
       />
 
       <ManualConfigModal

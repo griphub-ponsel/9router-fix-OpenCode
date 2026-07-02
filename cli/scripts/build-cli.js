@@ -81,6 +81,41 @@ function copyRecursive(src, dest) {
   }
 }
 
+function cleanDirectoryContents(dir) {
+  if (!fs.existsSync(dir)) return;
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const entryPath = path.join(dir, entry.name);
+    try {
+      fs.rmSync(entryPath, { recursive: true, force: true });
+    } catch (error) {
+      const code = error && error.code ? error.code : "UNKNOWN";
+      // Keep build moving when a watcher/tray process still holds a handle.
+      if (code === "EBUSY" || code === "EPERM") {
+        console.warn(`⚠️  Could not remove locked path: ${entryPath} (${code})`);
+        continue;
+      }
+      throw error;
+    }
+  }
+}
+
+function removeDirForRebuild(dir) {
+  if (!fs.existsSync(dir)) return;
+  try {
+    fs.rmSync(dir, { recursive: true, force: true });
+    return;
+  } catch (error) {
+    const code = error && error.code ? error.code : "UNKNOWN";
+    if (code !== "EBUSY" && code !== "EPERM" && code !== "ENOTEMPTY") {
+      throw error;
+    }
+
+    console.warn(`⚠️  Could not remove ${dir} (${code}); cleaning contents instead...`);
+    cleanDirectoryContents(dir);
+  }
+}
+
 console.log("📦 Building 9Router CLI package with Next.js...\n");
 
 fs.mkdirSync(buildHomeDir, { recursive: true });
@@ -124,9 +159,8 @@ try {
 
 // Step 2: Clean old app/cli/app if exists
 console.log("2️⃣  Cleaning old app/cli/app...");
-if (fs.existsSync(cliAppDir)) {
-  fs.rmSync(cliAppDir, { recursive: true, force: true });
-}
+removeDirForRebuild(cliAppDir);
+fs.mkdirSync(cliAppDir, { recursive: true });
 console.log("✅ Cleaned\n");
 
 // Step 3: Copy Next.js standalone build to app/cli/app.
