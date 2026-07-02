@@ -101,7 +101,10 @@ export const MODEL_CAPABILITIES = {
   "kimi-k2.7":         { vision: true, pdf: true, reasoning: true, thinkingFormat: "kimi", thinkingCanDisable: false, contextWindow: 262144, maxOutput: 262144 },
   "kimi-k2.7-code":    { vision: true, pdf: true, reasoning: true, thinkingFormat: "kimi", thinkingCanDisable: false, contextWindow: 262144, maxOutput: 262144 },
   "minimax-m3":        { vision: true, videoInput: true, pdf: true, reasoning: true, thinkingFormat: "minimax", contextWindow: 1000000, maxOutput: 512000 },
-  "minimax-m2.7":      { vision: true, reasoning: true, thinkingFormat: "minimax", thinkingCanDisable: false, contextWindow: 204800, maxOutput: 131072 },
+  // NOTE: minimax-m2.7 is TEXT-ONLY (matches *minimax-m2.7* pattern below). It
+  // previously carried vision:true here, which skipped vision delegation and
+  // let raw images pass through to an upstream that can't read them.
+  "minimax-m2.7":      { reasoning: true, thinkingFormat: "minimax", thinkingCanDisable: false, contextWindow: 204800, maxOutput: 131072 },
 };
 
 /**

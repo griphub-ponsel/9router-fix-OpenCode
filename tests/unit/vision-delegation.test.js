@@ -108,8 +108,11 @@ describe("vision delegation", () => {
 
   it("formats delegated vs fallback markers", () => {
     const delegated = formatVisionMarker("a red button", { count: 1, delegated: true, sibling: "grok-4.3" });
-    expect(delegated).toContain("grok-4.3");
     expect(delegated).toContain("a red button");
+    // First-person framing: must not leak the relay mechanism to the model
+    expect(delegated).not.toContain("relay");
+    expect(delegated).not.toContain("grok-4.3");
+    expect(delegated).toContain("direct visual perception");
 
     const fallback = formatVisionMarker(null, { count: 2, delegated: false });
     expect(fallback).toContain("2 images");

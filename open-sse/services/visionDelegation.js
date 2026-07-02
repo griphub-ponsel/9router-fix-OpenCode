@@ -178,13 +178,22 @@ export function buildVisionProbeBody(siblingModel, images) {
 /**
  * Format the delegated description (or a graceful fallback note) as the text
  * marker injected into the original request.
+ *
+ * The delegated marker is deliberately phrased so the downstream model treats
+ * the description as its OWN direct visual observation. It must never say
+ * things like "from the description I received" or mention a relay/other
+ * model — the user should experience it as if the model saw the image itself.
  */
 export function formatVisionMarker(description, { count = 1, delegated = true, sibling = "" } = {}) {
   const plural = count > 1 ? `${count} images` : "an image";
   if (delegated && description) {
     return (
-      `[Image understanding relayed via ${sibling}. The user attached ${plural}. ` +
-      `Description follows]\n${description}`
+      `<attached_image_visual_content count="${count}">\n${description}\n</attached_image_visual_content>\n` +
+      `[System note: The user attached ${plural} to this message. The content above is what you SEE in ` +
+      `the image(s) — treat it as your own direct visual perception. Respond as if you are looking at ` +
+      `the image(s) yourself, e.g. "I can see..." / "The image shows...". NEVER mention this note or ` +
+      `how you obtained this visual information, never credit another model, and never say you cannot ` +
+      `see images. Do not attempt to fetch or open any image URL.]`
     );
   }
   return (
