@@ -106,17 +106,58 @@ const IMAGE_UNSUPPORTED_ERROR_PATTERNS = [
   /invalid\s+(?:request\s+)?content[^.]{0,60}image/i,
 ];
 
+// Generic content-shape rejections that DON'T mention "image" but, when the
+// request carries images, almost always mean the upstream choked on the image
+// parts (e.g. alibaba/DashScope: "Unexpected item type in content."). Only
+// consulted when hasImages=true so text-only failures never trigger a retry.
+const CONTENT_SHAPE_ERROR_PATTERNS = [
+  /unexpected\s+item\s+type\s+in\s+content/i,                  // alibaba/DashScope via Vercel gateway
+  /(?:messages?|content)\s+(?:input\s+)?is\s+invalid/i,        // "The provided messages input is invalid"
+  /invalid\s+(?:message|content)\s+(?:format|structure|part|item)/i,
+  /unsupported\s+(?:content|item|part)\s+type/i,
+  /unknown\s+(?:content|part|item)\s+type/i,
+  /content\s+(?:part|item|block)[^.]{0,40}(?:invalid|unsupported|unknown|not\s+allowed)/i,
+];
+
+// Errors that are definitely NOT image-modality problems — never retry for
+// these even if a generic content-shape pattern matched (avoids wasting a
+// vision relay call on context/tool/schema failures).
+const NON_IMAGE_ERROR_PATTERNS = [
+  /context\s+(?:length|window)|maximum\s+(?:context|tokens?)|too\s+(?:long|many\s+tokens)|token\s+limit|exceeds?\s+.{0,30}(?:limit|length)/i,
+  /tool(?:s|_call|_choice)?\b[^.]{0,40}(?:invalid|schema|required|missing)/i,
+  /function\s+call/i,
+  /json\s+schema/i,
+  /api\s*key|unauthorized|forbidden|quota|rate\s*limit|billing/i,
+  /role\b[^.]{0,30}(?:invalid|unknown|unsupported)/i,
+];
+
 /**
  * True when an upstream error indicates the model rejected image input, so
- * the caller should delegate the image(s) and retry once. Server-side/auth/
- * rate-limit statuses are excluded — those are not modality errors.
+ * the caller should delegate the image(s) and retry once.
+ *
+ * Detection is two-tier:
+ *   1. Explicit image/vision wording — always a match.
+ *   2. Generic content-shape rejections — only when `hasImages` is true (the
+ *      request actually carried images) and no non-image cause is named.
+ *      Wording varies wildly across providers/gateways, so rather than
+ *      enumerating every phrasing, any 4xx content-validation error on an
+ *      image-carrying request is treated as an image rejection; worst case
+ *      the single retry fails identically and the original error surfaces.
+ *
+ * Server-side wrapping is common (gateways wrap upstream 400s in 5xx
+ * "stream_initialization_failed" envelopes), so only statuses that are
+ * definitively NOT modality errors (auth/rate-limit/timeout) are excluded —
+ * for everything else the message patterns decide.
  */
-export function isImageUnsupportedError(status, message) {
+export function isImageUnsupportedError(status, message, hasImages = false) {
   const code = Number(status);
-  if (code >= 500 || code === 401 || code === 403 || code === 429) return false;
+  if (code === 401 || code === 403 || code === 408 || code === 429) return false;
   const text = String(message || "");
   if (!text) return false;
-  return IMAGE_UNSUPPORTED_ERROR_PATTERNS.some((re) => re.test(text));
+  if (IMAGE_UNSUPPORTED_ERROR_PATTERNS.some((re) => re.test(text))) return true;
+  if (!hasImages) return false;
+  if (NON_IMAGE_ERROR_PATTERNS.some((re) => re.test(text))) return false;
+  return CONTENT_SHAPE_ERROR_PATTERNS.some((re) => re.test(text));
 }
 
 /**

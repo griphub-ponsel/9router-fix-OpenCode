@@ -111,6 +111,19 @@ export const MODEL_CAPABILITIES = {
  * Provider-specific capability overrides. Keyed by provider alias/id.
  */
 export const PROVIDER_CAPABILITIES = {
+  // OpenCode Go — coding-plan gateway (opencode.ai → Vercel AI Gateway →
+  // alibaba/etc). Image input is REJECTED at the gateway even for models whose
+  // native APIs are vision-capable (alibaba returns 400 "Unexpected item type
+  // in content."). Full copies of the canonical entries minus vision/video so
+  // vision delegation kicks in proactively. VERIFIED 2026-07-02 (qwen3.7-max).
+  "opencode-go": {
+    "qwen3.7-max":   { reasoning: true, thinkingFormat: "qwen", contextWindow: 1000000, maxOutput: 65536 },
+    "qwen-3.7-max":  { reasoning: true, thinkingFormat: "qwen", contextWindow: 1000000, maxOutput: 65536 },
+    "qwen3.7-plus":  { reasoning: true, thinkingFormat: "qwen", contextWindow: 1000000, maxOutput: 65536 },
+    "qwen-3.7-plus": { reasoning: true, thinkingFormat: "qwen", contextWindow: 1000000, maxOutput: 65536 },
+    "qwen3.6-plus":  { reasoning: true, thinkingFormat: "qwen", contextWindow: 1000000, maxOutput: 65536 },
+  },
+
   // CodeBuddy.cn — authoritative per-model metadata from the gateway's model
   // config (contextWindow=maxInputTokens, maxOutput=maxOutputTokens, vision=
   // supportsImages). Every model reasons via OpenAI-style reasoning_effort

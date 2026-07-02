@@ -131,12 +131,31 @@ describe("vision delegation", () => {
     expect(isImageUnsupportedError(400, "This model does not support image input")).toBe(true);
     expect(isImageUnsupportedError(422, "vision is not supported for this model")).toBe(true);
     expect(isImageUnsupportedError(400, "Unsupported content type: image_url")).toBe(true);
-    // Non-modality errors must NOT trigger a retry
+    // Gateways wrap upstream 400s in 5xx envelopes — explicit image wording still matches
+    expect(isImageUnsupportedError(502, "image inputs are not supported")).toBe(true);
+    // Auth / rate-limit / timeout are never modality errors
     expect(isImageUnsupportedError(429, "image rate limit: not supported plan")).toBe(false);
-    expect(isImageUnsupportedError(500, "image inputs are not supported")).toBe(false);
     expect(isImageUnsupportedError(401, "unauthorized")).toBe(false);
     expect(isImageUnsupportedError(400, "context length exceeded")).toBe(false);
     expect(isImageUnsupportedError(400, "")).toBe(false);
+  });
+
+  it("detects generic content-shape rejections only when the request had images", () => {
+    // alibaba/DashScope via Vercel gateway (the qwen3.7-max bug) — wrapped in a
+    // stream_initialization_failed envelope, no "image" wording at all
+    const alibaba = '<400> InternalError.Algo.InvalidParameter: The provided messages input is invalid. The error info is [Unexpected item type in content.].';
+    expect(isImageUnsupportedError(400, alibaba, true)).toBe(true);
+    // gateways may surface it under a 5xx outer status
+    expect(isImageUnsupportedError(500, alibaba, true)).toBe(true);
+    // without images in the request, generic shape errors do NOT trigger
+    expect(isImageUnsupportedError(400, alibaba, false)).toBe(false);
+    // other generic phrasings
+    expect(isImageUnsupportedError(400, "unknown content type in message", true)).toBe(true);
+    expect(isImageUnsupportedError(422, "invalid message format", true)).toBe(true);
+    // named non-image causes never trigger even with images
+    expect(isImageUnsupportedError(400, "messages input is invalid: maximum context length exceeded", true)).toBe(false);
+    expect(isImageUnsupportedError(400, "invalid message format: tools schema required field missing", true)).toBe(false);
+    expect(isImageUnsupportedError(400, "some totally unrelated error", true)).toBe(false);
   });
 
   it("auto-discovers a vision relay target on the same provider", () => {

@@ -491,9 +491,10 @@ export async function handleChatCore(options) {
     // Reactive vision fallback (ALL providers): the upstream rejected image
     // input even though capabilities didn't predict it (wrong/missing caps
     // entry, per-endpoint gating like OpenRouter's "No endpoints found that
-    // support image input"). Delegate the images to a vision relay and retry
-    // the whole request ONCE with the images replaced by text.
-    if (!internalVisionRelay && !visionRetryAttempted && bodyHasImages(body) && isImageUnsupportedError(statusCode, message)) {
+    // support image input", or generic content-shape errors like alibaba's
+    // "Unexpected item type in content."). Delegate the images to a vision
+    // relay and retry the whole request ONCE with the images replaced by text.
+    if (!internalVisionRelay && !visionRetryAttempted && bodyHasImages(body) && isImageUnsupportedError(statusCode, message, true)) {
       const target = pickVisionTarget();
       if (target) {
         log?.warn?.("VISION", `upstream rejected images (${statusCode}); delegating to ${target} and retrying`);
