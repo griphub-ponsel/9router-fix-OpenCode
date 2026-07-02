@@ -303,6 +303,39 @@ export function createSSEStream(options = {}) {
         const parsed = parseSSELine(trimmed, targetFormat);
         if (!parsed) continue;
 
+        // Split model-emitted literal <think>/<thinking> tags out of upstream
+        // content BEFORE accumulation/translation, so they never leak to
+        // clients in translate mode (passthrough mode already does this above).
+        // Handles both OpenAI-shaped (delta.content) and Claude-shaped
+        // (content_block_delta text_delta) upstream chunks; reasoning is routed
+        // to reasoning_content / thinking_delta, which translators map to the
+        // client's native thinking channel.
+        if (splitThinkTags) {
+          const tDelta = parsed.choices?.[0]?.delta;
+          if (typeof tDelta?.content === "string" && tDelta.content.length > 0) {
+            const split = splitThinkTaggedContent(tDelta.content, thinkTagState);
+            if (split.reasoning) {
+              const existing = typeof tDelta.reasoning_content === "string" ? tDelta.reasoning_content : "";
+              tDelta.reasoning_content = `${existing}${split.reasoning}`;
+            }
+            tDelta.content = split.content;
+          }
+          const cDelta = parsed.type === "content_block_delta" ? parsed.delta : null;
+          if (cDelta?.type === "text_delta" && typeof cDelta.text === "string" && cDelta.text.length > 0) {
+            const split = splitThinkTaggedContent(cDelta.text, thinkTagState);
+            if (split.reasoning && !split.content) {
+              // Whole chunk is reasoning → forward as a thinking delta
+              cDelta.type = "thinking_delta";
+              cDelta.thinking = split.reasoning;
+              delete cDelta.text;
+            } else {
+              // Content (possibly with the tags stripped); mixed-chunk reasoning
+              // is vanishingly rare at stream granularity — keep content intact.
+              cDelta.text = split.content || split.reasoning;
+            }
+          }
+        }
+
         // Responses API same-format passthrough: preserve event framing + track terminal state
         const isOpenAIResponsesStream = targetFormat === FORMATS.OPENAI_RESPONSES;
         const keepsOpenAIResponsesFormat = isOpenAIResponsesStream && sourceFormat === FORMATS.OPENAI_RESPONSES;

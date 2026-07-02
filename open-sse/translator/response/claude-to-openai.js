@@ -41,9 +41,12 @@ export function claudeToOpenAIResponse(chunk, state) {
       if (block?.type === CLAUDE_BLOCK.TEXT) {
         state.textBlockStarted = true;
       } else if (block?.type === CLAUDE_BLOCK.THINKING) {
+        // Thinking streams ONLY via reasoning_content (thinking_delta below).
+        // Do NOT emit literal <think>/</think> into the content channel —
+        // clients that render reasoning_content as a proper Thinking block
+        // (VS Code Copilot) would show the raw tags as visible text.
         state.inThinkingBlock = true;
         state.currentBlockIndex = chunk.index;
-        results.push(createChunk(state, { content: "<think>" }));
       } else if (block?.type === CLAUDE_BLOCK.TOOL_USE) {
         const toolCallIndex = state.toolCallIndex++;
         // Restore original tool name from mapping (Claude OAuth)
@@ -94,7 +97,7 @@ export function claudeToOpenAIResponse(chunk, state) {
         break;
       }
       if (state.inThinkingBlock && chunk.index === state.currentBlockIndex) {
-        results.push(createChunk(state, { content: "</think>" }));
+        // No literal </think> — see content_block_start note above.
         state.inThinkingBlock = false;
       }
       state.textBlockStarted = false;

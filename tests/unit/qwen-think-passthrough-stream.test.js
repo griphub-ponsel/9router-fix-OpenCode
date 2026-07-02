@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { createPassthroughStreamWithLogger } from "../../open-sse/utils/stream.js";
 
-async function runPassthrough(provider, input) {
+async function runPassthrough(provider, input, model = "qwen-test") {
   const encoder = new TextEncoder();
   const source = new ReadableStream({
     start(controller) {
@@ -12,7 +12,7 @@ async function runPassthrough(provider, input) {
   });
 
   const output = source.pipeThrough(
-    createPassthroughStreamWithLogger(provider, null, "qwen-test"),
+    createPassthroughStreamWithLogger(provider, null, model),
   );
 
   const reader = output.getReader();
@@ -77,7 +77,8 @@ describe("Qwen passthrough think-tag compatibility", () => {
       "",
     ].join("\n");
 
-    const output = await runPassthrough("openai", sse);
+    // Neither provider nor model may look qwen-like, or shouldSplitThinkTags matches
+    const output = await runPassthrough("openai", sse, "gpt-test");
     const chunks = parseOpenAIChunks(output);
     const content = chunks.map(c => c.choices?.[0]?.delta?.content || "").join("");
 
