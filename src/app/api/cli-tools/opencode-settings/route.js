@@ -7,7 +7,7 @@ import fs from "fs/promises";
 import path from "path";
 import os from "os";
 import { findModelName } from "open-sse/config/providerModels.js";
-import { getCombos } from "@/lib/localDb";
+import { getCombos, getSettings, updateSettings } from "@/lib/localDb";
 
 const execAsync = promisify(exec);
 
@@ -122,6 +122,11 @@ export async function GET() {
       Object.entries(modelMap).map(([id, entry]) => [id, entry?.name || resolveModelDisplayName(id)])
     );
 
+    // Read persisted vision-fallback relay list so the UI can pre-populate
+    // the picker and we can keep "advertise image" + "delegate" in sync.
+    const settings = await getSettings().catch(() => ({}));
+    const visionFallbackModels = Array.isArray(settings?.visionFallbackModels) ? settings.visionFallbackModels : [];
+
     return NextResponse.json({
       installed: true,
       config,
@@ -133,6 +138,7 @@ export async function GET() {
         activeModel: config?.model?.startsWith("9router/") ? config.model.replace(/^9router\//, "") : null,
         baseURL: providerConfig?.options?.baseURL || null,
       },
+      visionFallbackModels,
     });
   } catch (error) {
     console.log("Error checking opencode settings:", error);
@@ -143,7 +149,7 @@ export async function GET() {
 // POST - Apply 9Router as openai-compatible provider (multi-model support)
 export async function POST(request) {
   try {
-    const { baseUrl, apiKey, model, models, activeModel, subagentModel, modelNames = {} } = await request.json();
+    const { baseUrl, apiKey, model, models, activeModel, subagentModel, modelNames = {}, visionFallbackModels } = await request.json();
 
     // Accept either `model` (string, legacy) or `models` (array of strings)
     const modelsArrayRaw = Array.isArray(models) ? models.slice() : (typeof model === "string" ? [model] : []);
@@ -151,6 +157,23 @@ export async function POST(request) {
 
     if (!baseUrl || modelsArray.length === 0) {
       return NextResponse.json({ error: "baseUrl and at least one model are required" }, { status: 400 });
+    }
+
+    // Persist vision-fallback relay list to settings (same store the
+    // /copilot-settings route uses). When any fallback is configured we
+    // advertise `image` in modalities.input below so OpenCode forwards
+    // attachments — server-side delegation (open-sse/services/visionDelegation)
+    // then handles models whose upstream rejects raw images.
+    let fallbackActive = false;
+    if (Array.isArray(visionFallbackModels)) {
+      const cleaned = visionFallbackModels.filter((m) => typeof m === "string" && m.trim()).map((m) => m.trim());
+      fallbackActive = cleaned.length > 0;
+      await updateSettings({ visionFallbackModels: cleaned }).catch((e) => {
+        console.log("Failed to persist visionFallbackModels:", e);
+      });
+    } else {
+      const settings = await getSettings().catch(() => ({}));
+      fallbackActive = Array.isArray(settings?.visionFallbackModels) && settings.visionFallbackModels.length > 0;
     }
 
     const configDir = getConfigDir();
@@ -201,8 +224,13 @@ export async function POST(request) {
       // shows e.g. "Claude Opus 4.7" instead of the raw id "kr/claude-opus-4.7".
       // We always recompute it on apply so users get fresh names when the
       // registry updates, but never overwrite a name a user already customized
-      // by hand (i.e. one that differs from both the id AND the resolved name).
-      const resolvedName = resolveModelDisplayName(m);
+      //// modalities.input is the field OpenCode's UI gates image attachments
+        // on ("this model does not support image input"). We only enable it
+        // when a vision-fallback relay is configured (or when the model
+        // already had image modality from a prior apply). Without a relay
+        // list we'd be promising vision the server can't actually fulfill.
+        modalities: {
+          input: existingModalities.input || (fallbackActive ? ["text", "image"] : ["text"])
       const requestedName = typeof modelNames?.[m] === "string" ? modelNames[m].trim() : "";
       const previousName = existingModel.name;
       const previousResolved = resolveModelDisplayName(m);
