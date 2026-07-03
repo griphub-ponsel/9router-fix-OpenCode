@@ -6502,7 +6502,11 @@
 [CodeGraph MCP] Auto-sync error: database disk image is malformed
 [CodeGraph] Watch sync failed { error: 'database disk image is malformed' }
 [CodeGraph MCP] Auto-sync error: database disk image is malformed
+<<<<<<< Updated upstream
 [CodeGraph daemon] Listening on \\.\pipe\codegraph-3f79506a1858aa95 (pid 22188, v0.9.9). Idle timeout 300000ms.
+=======
+[CodeGraph daemon] Listening on \\.\pipe\codegraph-b1ad95593595abd5 (pid 24320, v0.9.7). Idle timeout 300000ms.
+>>>>>>> Stashed changes
 [CodeGraph MCP] File watcher active — graph will auto-sync on changes
 [CodeGraph MCP] Catch-up sync failed: database disk image is malformed
 [CodeGraph] Watch sync failed { error: 'database disk image is malformed' }
@@ -6665,6 +6669,7 @@
 [CodeGraph MCP] Auto-sync error: database disk image is malformed
 [CodeGraph] Watch sync failed { error: 'database disk image is malformed' }
 [CodeGraph MCP] Auto-sync error: database disk image is malformed
+<<<<<<< Updated upstream
 [CodeGraph] Watch sync failed { error: 'database disk image is malformed' }
 [CodeGraph MCP] Auto-sync error: database disk image is malformed
 [CodeGraph] Watch sync failed { error: 'database disk image is malformed' }
@@ -7030,3 +7035,36 @@
 [CodeGraph MCP] Auto-sync error: database disk image is malformed
 [CodeGraph] Watch sync failed { error: 'database disk image is malformed' }
 [CodeGraph MCP] Auto-sync error: database disk image is malformed
+=======
+[CodeGraph daemon] Listening on \\.\pipe\codegraph-b1ad95593595abd5 (pid 12816, v0.9.7). Idle timeout 300000ms.
+[CodeGraph MCP] File watcher active — graph will auto-sync on changes
+[CodeGraph MCP] Catch-up sync failed: database disk image is malformed
+[CodeGraph] Watch sync failed { error: 'database disk image is malformed' }
+[CodeGraph MCP] Auto-sync error: database disk image is malformed
+[CodeGraph daemon] Listening on \\.\pipe\codegraph-b1ad95593595abd5 (pid 2904, v0.9.7). Idle timeout 300000ms.
+[CodeGraph MCP] File watcher active — graph will auto-sync on changes
+[CodeGraph daemon] Shutting down (idle timeout; clients=0).
+[CodeGraph daemon] Listening on \\.\pipe\codegraph-b1ad95593595abd5 (pid 2940, v0.9.7). Idle timeout 300000ms.
+[CodeGraph MCP] File watcher active — graph will auto-sync on changes
+[CodeGraph MCP] Caught up 3 file(s) changed since last run
+[CodeGraph MCP] Auto-synced 1 file(s) in 655ms
+[CodeGraph MCP] Auto-synced 1 file(s) in 580ms
+[CodeGraph MCP] Auto-synced 1 file(s) in 323ms
+[CodeGraph MCP] Auto-synced 1 file(s) in 341ms
+[CodeGraph MCP] Auto-synced 1 file(s) in 335ms
+[CodeGraph MCP] Auto-synced 1 file(s) in 322ms
+[CodeGraph MCP] Auto-synced 1 file(s) in 496ms
+[CodeGraph MCP] Auto-synced 1 file(s) in 349ms
+[CodeGraph MCP] Auto-synced 1 file(s) in 342ms
+[CodeGraph MCP] Auto-synced 1 file(s) in 312ms
+[CodeGraph daemon] Listening on \\.\pipe\codegraph-b1ad95593595abd5 (pid 20548, v0.9.7). Idle timeout 300000ms.
+[CodeGraph MCP] File watcher active — graph will auto-sync on changes
+[CodeGraph MCP] Caught up 2 file(s) changed since last run
+[CodeGraph MCP] Auto-synced 1 file(s) in 588ms
+[CodeGraph MCP] Auto-synced 1 file(s) in 596ms
+[CodeGraph MCP] Auto-synced 1 file(s) in 579ms
+[CodeGraph MCP] Auto-synced 1 file(s) in 589ms
+[CodeGraph MCP] Auto-synced 1 file(s) in 577ms
+[CodeGraph MCP] Auto-synced 1 file(s) in 776ms
+[CodeGraph MCP] Auto-synced 1 file(s) in 578ms
+>>>>>>> Stashed changes
