@@ -224,16 +224,10 @@ export async function POST(request) {
       // shows e.g. "Claude Opus 4.7" instead of the raw id "kr/claude-opus-4.7".
       // We always recompute it on apply so users get fresh names when the
       // registry updates, but never overwrite a name a user already customized
-      //// modalities.input is the field OpenCode's UI gates image attachments
-        // on ("this model does not support image input"). We only enable it
-        // when a vision-fallback relay is configured (or when the model
-        // already had image modality from a prior apply). Without a relay
-        // list we'd be promising vision the server can't actually fulfill.
-        modalities: {
-          input: existingModalities.input || (fallbackActive ? ["text", "image"] : ["text"])
+      const resolvedName = resolveModelDisplayName(m);
       const requestedName = typeof modelNames?.[m] === "string" ? modelNames[m].trim() : "";
       const previousName = existingModel.name;
-      const previousResolved = resolveModelDisplayName(m);
+      const previousResolved = resolvedName;
       const userCustomizedName =
         previousName &&
         previousName !== m &&
@@ -247,7 +241,7 @@ export async function POST(request) {
         reasoning: true,
         temperature: true,
         modalities: {
-          input: existingModalities.input || ["text", "image"],
+          input: existingModalities.input || (fallbackActive ? ["text", "image"] : ["text"]),
           output: existingModalities.output || ["text"],
         },
       };

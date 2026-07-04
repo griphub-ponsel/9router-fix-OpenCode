@@ -1,16 +1,67 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { restrictToVerticalAxis, restrictToParentElement } from "@dnd-kit/modifiers";
 import { Card, Button, Modal, Input, CardSkeleton, ModelSelectModal, ConfirmModal, CapacityBadges, Select } from "@/shared/components";
+import ProviderIcon from "@/shared/components/ProviderIcon";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
-import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
+import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider, getProviderByAlias, getProviderAlias } from "@/shared/constants/providers";
+import { PROVIDER_FAMILIES, detectFamily, buildOverlapGroups, isAutoCombo, autoComboModelId } from "@/shared/constants/modelFamilies";
 
 // Validate combo name: only a-z, A-Z, 0-9, -, _
 const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
+
+// Suggest a combo name from a model id, kept within VALID_NAME_REGEX and unique.
+function suggestComboName(base, existingNames) {
+  const clean = String(base)
+    .replace(/[^a-zA-Z0-9_.\-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "") || "combo";
+  if (!existingNames.has(clean)) return clean;
+  let i = 1;
+  while (existingNames.has(`${clean}-${i}`)) i++;
+  return `${clean}-${i}`;
+}
+
+// Detect overlapping model identities across the user's CONNECTED providers and
+// bucket them into brand families. Identity matching is fuzzy (normalized ids +
+// display names) because each provider names the same model differently — e.g.
+// cline "anthropic/claude-sonnet-4.6" ≡ antigravity "claude-sonnet-4-6".
+// `activeAliases` is the set of provider aliases/ids that are connected.
+function buildAutoFamilies(allModels, activeAliases) {
+  const connectedModels = (allModels || []).filter(
+    (m) => m?.provider && (!activeAliases || activeAliases.has(m.provider))
+  );
+  const overlapping = buildOverlapGroups(connectedModels);
+
+  const buckets = {};
+  for (const fam of PROVIDER_FAMILIES) buckets[fam.key] = { ...fam, groups: [] };
+  const other = { key: "other", label: "Other", logo: null, color: "#6b7280", groups: [] };
+
+  for (const group of overlapping) {
+    const famKey = detectFamily(group.id);
+    (buckets[famKey] || other).groups.push(group);
+  }
+
+  const result = PROVIDER_FAMILIES.map((f) => buckets[f.key]).filter((f) => f.groups.length > 0);
+  if (other.groups.length > 0) result.push(other);
+  return result;
+}
+
+// Find the materialized combo backing a detected group: either an auto-combo with
+// the same normalized identity, or any combo that contains all group members.
+function findComboForGroup(combos, group) {
+  return (
+    combos.find(
+      (c) =>
+        (isAutoCombo(c) && autoComboModelId(c) === group.id) ||
+        (group.members.length > 0 && group.members.every((m) => (c.models || []).includes(m)))
+    ) || null
+  );
+}
 
 export default function CombosPage() {
   const [combos, setCombos] = useState([]);
@@ -20,20 +71,72 @@ export default function CombosPage() {
   const [activeProviders, setActiveProviders] = useState([]);
   const [comboStrategies, setComboStrategies] = useState({});
   const [modelCaps, setModelCaps] = useState({});
+  const [allModels, setAllModels] = useState([]);
   const [confirmState, setConfirmState] = useState(null);
   const { copied, copy } = useCopyToClipboard();
+
+  // Aliases of providers the user has actually connected. The models list keys by
+  // alias while connections key by provider id, so include both forms.
+  const activeAliases = useMemo(() => {
+    const set = new Set();
+    for (const conn of activeProviders) {
+      if (!conn?.provider) continue;
+      set.add(conn.provider);
+      set.add(getProviderAlias(conn.provider));
+    }
+    return set;
+  }, [activeProviders]);
+
+  // Auto-detected families: model ids served by 2+ connected providers, bucketed by brand.
+  const autoFamilies = useMemo(() => buildAutoFamilies(allModels, activeAliases), [allModels, activeAliases]);
+  // Manual combos — the auto-generated ones live in the explorer section instead.
+  const manualCombos = useMemo(() => combos.filter((c) => !isAutoCombo(c)), [combos]);
 
   useEffect(() => {
     fetchData();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Auto-materialize detected groups into real combos so they're immediately
+  // usable — pickable in any model selector (config generators) without a manual
+  // create step. Covered groups are skipped; attempted ids are remembered so a
+  // failing creation doesn't retry-loop.
+  const syncAttemptedRef = useRef(new Set());
+  useEffect(() => {
+    if (loading) return;
+    const groups = autoFamilies.flatMap((f) => f.groups);
+    const uncovered = groups.filter(
+      (g) => !findComboForGroup(combos, g) && !syncAttemptedRef.current.has(g.id)
+    );
+    if (uncovered.length === 0) return;
+    (async () => {
+      const names = new Set(combos.map((c) => c.name));
+      for (const g of uncovered) {
+        syncAttemptedRef.current.add(g.id);
+        const name = suggestComboName(g.id, names);
+        names.add(name);
+        try {
+          await fetch("/api/combos", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name, models: g.members }),
+          });
+        } catch (e) {
+          console.log("Error auto-creating combo:", e);
+        }
+      }
+      await fetchData();
+    })();
+  }, [autoFamilies, combos, loading]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const fetchData = async () => {
     try {
-      const [combosRes, providersRes, settingsRes, modelsRes] = await Promise.all([
+      const [combosRes, providersRes, settingsRes, modelsRes, customRes, aliasRes] = await Promise.all([
         fetch("/api/combos"),
         fetch("/api/providers"),
         fetch("/api/settings"),
         fetch("/api/models"),
+        fetch("/api/models/custom"),
+        fetch("/api/models/alias"),
       ]);
       const combosData = await combosRes.json();
       const providersData = await providersRes.json();
@@ -50,6 +153,52 @@ export default function CombosPage() {
         const map = {};
         for (const m of md.models || []) if (m.caps) map[m.fullModel] = m.caps;
         setModelCaps(map);
+
+        // Merge registry models with user-added models so auto-detect sees
+        // EVERYTHING selectable — custom models (/api/models/custom, e.g. a
+        // hand-added gpt-5.5 on Copilot) and model aliases (/api/models/alias,
+        // the "Add Model" pattern on passthrough providers). Dedupe by fullModel.
+        const merged = [...(md.models || [])];
+        const seen = new Set(merged.map((m) => m.fullModel));
+
+        // For compatible providers, combo members use the connection's display
+        // prefix rather than the raw provider id — map it so emitted combos match.
+        const connections = providersData.connections || [];
+        const memberPrefix = (pid) => {
+          if (!isOpenAICompatibleProvider(pid) && !isAnthropicCompatibleProvider(pid)) return pid;
+          const conn = connections.find((p) => p.provider === pid);
+          return conn?.providerSpecificData?.prefix || pid;
+        };
+
+        if (customRes.ok) {
+          const cd = await customRes.json();
+          for (const m of cd.models || []) {
+            const kind = m.kind || m.type;
+            if (kind && kind !== "llm") continue;
+            if (!m.providerAlias || !m.id) continue;
+            const fullModel = `${memberPrefix(m.providerAlias)}/${m.id}`;
+            if (seen.has(fullModel)) continue;
+            seen.add(fullModel);
+            merged.push({ provider: m.providerAlias, model: m.id, fullModel, name: m.name || m.id });
+          }
+        }
+
+        if (aliasRes.ok) {
+          const ad = await aliasRes.json();
+          for (const [aliasName, target] of Object.entries(ad.aliases || {})) {
+            if (typeof target !== "string") continue;
+            const slash = target.indexOf("/");
+            if (slash <= 0) continue;
+            const provider = target.slice(0, slash);
+            const modelId = target.slice(slash + 1);
+            const fullModel = `${memberPrefix(provider)}/${modelId}`;
+            if (seen.has(fullModel)) continue;
+            seen.add(fullModel);
+            merged.push({ provider, model: modelId, fullModel, name: aliasName });
+          }
+        }
+
+        setAllModels(merged);
       }
       setComboStrategies(settingsData.comboStrategies || {});
     } catch (error) {
@@ -64,9 +213,13 @@ export default function CombosPage() {
       const res = await fetch("/api/combos", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
+        body: JSON.stringify({ name: data.name, models: data.models }),
       });
       if (res.ok) {
+        // Persist the chosen strategy (no-op entry pruning happens for "fallback")
+        if (data.strategy && data.strategy !== "fallback") {
+          await handleSetComboStrategy(data.name, { fallbackStrategy: data.strategy });
+        }
         await fetchData();
         setShowCreateModal(false);
       } else {
@@ -83,9 +236,13 @@ export default function CombosPage() {
       const res = await fetch(`/api/combos/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
+        body: JSON.stringify({ name: data.name, models: data.models }),
       });
       if (res.ok) {
+        // Sync strategy too — passing "fallback" prunes the entry (default)
+        if (data.strategy) {
+          await handleSetComboStrategy(data.name, { fallbackStrategy: data.strategy });
+        }
         await fetchData();
         setEditingCombo(null);
       } else {
@@ -169,14 +326,23 @@ export default function CombosPage() {
         </Button>
       </div>
 
-      {/* Combos List */}
-      {combos.length === 0 ? (
+      {/* Auto-detected combos — system-managed, materialized automatically */}
+      <AutoComboExplorer
+        families={autoFamilies}
+        combos={combos}
+        comboStrategies={comboStrategies}
+        onSetStrategy={handleSetComboStrategy}
+        onEditCombo={setEditingCombo}
+      />
+
+      {/* My Combos — manually authored (auto ones live in the explorer above) */}
+      {manualCombos.length === 0 ? (
         <Card>
           <div className="text-center py-12">
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 text-primary mb-4">
               <span className="material-symbols-outlined text-[32px]">layers</span>
             </div>
-            <p className="text-text-main font-medium mb-1">No combos yet</p>
+            <p className="text-text-main font-medium mb-1">No manual combos yet</p>
             <p className="text-sm text-text-muted mb-4">Create model combos with fallback support</p>
             <Button icon="add" onClick={() => setShowCreateModal(true)} className="w-full sm:w-auto">
               Create Combo
@@ -185,7 +351,12 @@ export default function CombosPage() {
         </Card>
       ) : (
         <div className="flex flex-col gap-4">
-          {combos.map((combo) => (
+          <div className="flex items-center gap-1.5 -mb-1">
+            <span className="material-symbols-outlined text-primary text-[18px]">layers</span>
+            <h2 className="text-sm font-semibold">My Combos</h2>
+            <span className="text-xs text-text-muted">({manualCombos.length})</span>
+          </div>
+          {manualCombos.map((combo) => (
             <ComboCard
               key={combo.id}
               combo={combo}
@@ -219,6 +390,7 @@ export default function CombosPage() {
         onClose={() => setEditingCombo(null)}
         onSave={(data) => handleUpdate(editingCombo.id, data)}
         activeProviders={activeProviders}
+        initialStrategy={comboStrategies[editingCombo?.name]?.fallbackStrategy || "fallback"}
       />
 
       {/* Confirm Delete Modal */}
@@ -239,6 +411,157 @@ const STRATEGY_OPTIONS = [
   { value: "round-robin", label: "Round Robin — rotate" },
   { value: "fusion", label: "Fusion — panel + judge" },
 ];
+
+// Small provider logo chip — logo files live at /public/providers/<provider id>.png
+// (NOT the short alias), so resolve the alias back to the provider id first. Falls
+// back to the 2-letter code on a tinted square when the image is missing.
+function ProviderChip({ alias, size = 18 }) {
+  const info = getProviderByAlias(alias);
+  const color = info?.color || "#888";
+  const logoId = info?.id || alias;
+  return (
+    <span
+      title={info?.name || alias}
+      className="inline-flex items-center justify-center rounded shrink-0"
+      style={{ width: size + 6, height: size + 6, backgroundColor: `${color}15` }}
+    >
+      <ProviderIcon
+        src={`/providers/${logoId}.png`}
+        alt={info?.name || alias}
+        size={size}
+        className="object-contain rounded"
+        fallbackText={info?.textIcon || alias.slice(0, 2).toUpperCase()}
+        fallbackColor={color}
+      />
+    </span>
+  );
+}
+
+// A single auto-detected group — materialized as a real combo by the auto-sync,
+// so it's directly usable in model selectors. Strategy applies live; Edit opens
+// the combo (rename, reorder, drop members).
+function AutoGroupRow({ group, combo, strategy = {}, onSetStrategy, onEdit }) {
+  const current = strategy.fallbackStrategy || "fallback";
+
+  return (
+    <div className="flex min-w-0 flex-col gap-2 rounded-lg border border-black/5 dark:border-white/5 bg-black/[0.01] dark:bg-white/[0.01] px-3 py-2 sm:flex-row sm:items-center sm:gap-3">
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <code className="truncate font-mono text-sm font-medium text-text-main">{combo?.name || group.id}</code>
+          <span className="text-[10px] text-text-muted shrink-0">{group.members.length} providers</span>
+        </div>
+        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+          {group.members.map((full) => (
+            <ProviderChip key={full} alias={String(full).split("/")[0]} />
+          ))}
+        </div>
+      </div>
+
+      {/* Live strategy + edit — the combo already exists, no create step */}
+      <div className="flex shrink-0 items-center gap-2">
+        {combo ? (
+          <>
+            <div className="w-[170px]">
+              <Select
+                options={STRATEGY_OPTIONS}
+                value={current}
+                onChange={(e) => onSetStrategy({ fallbackStrategy: e.target.value })}
+                selectClassName="py-1 text-[11px]"
+              />
+            </div>
+            <button
+              onClick={onEdit}
+              className="shrink-0 inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium text-primary transition-colors hover:bg-primary/10"
+              title="Edit this auto combo (name, members, strategy)"
+            >
+              <span className="material-symbols-outlined text-[16px]">edit</span>
+              Edit
+            </button>
+          </>
+        ) : (
+          <span className="text-[11px] italic text-text-muted">Creating…</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Explorer panel: lists provider families, each expandable to reveal the model
+// identities the system auto-detected and materialized as ready-to-use combos.
+function AutoComboExplorer({ families = [], combos = [], comboStrategies = {}, onSetStrategy, onEditCombo }) {
+  const [openKey, setOpenKey] = useState(null);
+
+  if (families.length === 0) return null;
+
+  return (
+    <Card padding="sm">
+      <div className="mb-3 flex items-center gap-2">
+        <span className="material-symbols-outlined text-primary text-[20px]">auto_awesome</span>
+        <div className="min-w-0">
+          <h2 className="text-sm font-semibold text-text-main">Auto-detected combos</h2>
+          <p className="text-xs text-text-muted">
+            Same model identity across multiple providers — auto-created as ready-to-use combos. Pick them directly in any model selector; tune strategy or edit here.
+          </p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+        {families.map((fam) => {
+          const isOpen = openKey === fam.key;
+          const total = fam.groups.length;
+          return (
+            <button
+              key={fam.key}
+              onClick={() => setOpenKey(isOpen ? null : fam.key)}
+              className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-left transition-colors ${
+                isOpen
+                  ? "border-primary/50 bg-primary/5"
+                  : "border-black/5 dark:border-white/5 hover:bg-black/[0.02] dark:hover:bg-white/[0.02]"
+              }`}
+            >
+              <span
+                className="inline-flex size-8 items-center justify-center rounded-lg shrink-0"
+                style={{ backgroundColor: `${fam.color}15` }}
+              >
+                <ProviderIcon
+                  src={fam.logo ? `/providers/${fam.logo}.png` : null}
+                  alt={fam.label}
+                  size={22}
+                  className="object-contain rounded"
+                  fallbackText={fam.label.slice(0, 2).toUpperCase()}
+                  fallbackColor={fam.color}
+                />
+              </span>
+              <div className="min-w-0">
+                <div className="truncate text-sm font-medium text-text-main">{fam.label}</div>
+                <div className="text-[10px] text-text-muted">{total} shared</div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Expanded family — its shared model identities */}
+      {openKey && (
+        <div className="mt-3 flex flex-col gap-1.5 border-t border-black/5 dark:border-white/5 pt-3">
+          {(families.find((f) => f.key === openKey)?.groups || []).map((group) => {
+            const combo = findComboForGroup(combos, group);
+            return (
+              <AutoGroupRow
+                key={group.id}
+                group={group}
+                combo={combo}
+                strategy={combo ? comboStrategies[combo.name] || {} : {}}
+                onSetStrategy={(patch) => combo && onSetStrategy(combo.name, patch)}
+                onEdit={() => combo && onEditCombo(combo)}
+              />
+            );
+          })}
+        </div>
+      )}
+    </Card>
+  );
+}
 
 function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied, onCopy, onEdit, onDelete, strategy = {}, onSetStrategy }) {
   const [showJudgeSelect, setShowJudgeSelect] = useState(false);
@@ -399,6 +722,9 @@ function ModelItem({ id, index, model, isFirst, isLast, onEdit, onMoveUp, onMove
       {/* Index badge */}
       <span className="text-[10px] font-medium text-text-muted w-3 text-center shrink-0">{index + 1}</span>
 
+      {/* Provider logo */}
+      {model.includes("/") && <ProviderChip alias={model.split("/")[0]} size={14} />}
+
       {/* Inline editable model value */}
       {editing ? (
         <input
@@ -451,10 +777,11 @@ function ModelItem({ id, index, model, isFirst, isLast, onEdit, onMoveUp, onMove
   );
 }
 
-function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindFilter = null }) {
+function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindFilter = null, initialStrategy = "fallback" }) {
   // Initialize state with combo values - key prop on parent handles reset on remount
   const [name, setName] = useState(combo?.name || "");
   const [models, setModels] = useState(combo?.models || []);
+  const [strategy, setStrategy] = useState(initialStrategy);
   const [showModelSelect, setShowModelSelect] = useState(false);
   const [saving, setSaving] = useState(false);
   const [nameError, setNameError] = useState("");
@@ -545,11 +872,12 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
   const handleSave = async () => {
     if (!validateName(name)) return;
     setSaving(true);
-    await onSave({ name: name.trim(), models });
+    await onSave({ name: name.trim(), models, strategy });
     setSaving(false);
   };
 
-  const isEdit = !!combo;
+  // A preset (auto-combo prefill) has no id yet, so it is still a "create" flow.
+  const isEdit = !!combo?.id;
 
   return (
     <>
@@ -617,6 +945,20 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
               <span className="material-symbols-outlined text-[16px]">add</span>
               Add Model
             </button>
+          </div>
+
+          {/* Strategy */}
+          <div>
+            <label className="text-sm font-medium mb-1.5 block">Strategy</label>
+            <Select
+              options={STRATEGY_OPTIONS}
+              value={strategy}
+              onChange={(e) => setStrategy(e.target.value)}
+              selectClassName="py-1.5 text-xs"
+            />
+            <p className="text-[10px] text-text-muted mt-0.5">
+              Fallback tries in order · Round Robin rotates · Fusion queries all + judge
+            </p>
           </div>
 
           {/* Actions */}

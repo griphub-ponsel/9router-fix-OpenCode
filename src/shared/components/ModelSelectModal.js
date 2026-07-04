@@ -8,6 +8,7 @@ import CapacityBadges from "./CapacityBadges";
 import { useModelCaps } from "@/shared/hooks/useModelCaps";
 import { getModelsByProviderId, getModelKind } from "@/shared/constants/models";
 import { OAUTH_PROVIDERS, APIKEY_PROVIDERS, FREE_PROVIDERS, FREE_TIER_PROVIDERS, AI_PROVIDERS, isOpenAICompatibleProvider, isAnthropicCompatibleProvider, getProviderAlias } from "@/shared/constants/providers";
+import { isAutoCombo, autoComboModelId, getFamily } from "@/shared/constants/modelFamilies";
 
 // Provider order: OAuth first, then Free Tier, then API Key (matches dashboard/providers)
 const PROVIDER_ORDER = [
@@ -359,6 +360,12 @@ export default function ModelSelectModal({
     return combos.filter(c => c.name.toLowerCase().includes(query));
   }, [combos, searchQuery, kindFilter]);
 
+  // Split combos into auto-generated (same model identity across providers) and
+  // manual (user-authored). Auto combos render with the AI brand logo of their
+  // shared model; manual combos keep the generic layers icon.
+  const autoCombos = useMemo(() => filteredCombos.filter(isAutoCombo), [filteredCombos]);
+  const manualCombos = useMemo(() => filteredCombos.filter((c) => !isAutoCombo(c)), [filteredCombos]);
+
   // Sort models alphabetically, with added models floated to top
   const sortModels = (models) => {
     const added = models.filter(m => addedModelValues.includes(m.value)).sort((a, b) => a.name.localeCompare(b.name));
@@ -443,16 +450,60 @@ export default function ModelSelectModal({
 
       {/* Models grouped by provider - compact */}
       <div className="max-h-[400px] overflow-y-auto space-y-3">
-        {/* Combos section - always first */}
-        {filteredCombos.length > 0 && (
+        {/* Auto-generated combos — same model identity across providers, shown with AI brand logo */}
+        {autoCombos.length > 0 && (
+          <div>
+            <div className="flex items-center gap-1.5 mb-1.5 sticky top-0 bg-surface py-0.5">
+              <span className="material-symbols-outlined text-primary text-[14px]">auto_awesome</span>
+              <span className="text-xs font-medium text-primary">Auto Combos</span>
+              <span className="text-[10px] text-text-muted">({autoCombos.length})</span>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {autoCombos.map((combo) => {
+                const isSelected = selectedModel === combo.name;
+                const isAdded = addedModelValues.includes(combo.name);
+                const family = getFamily(autoComboModelId(combo));
+                return (
+                  <button
+                    key={combo.id}
+                    onClick={() => handleSelect({ id: combo.name, name: combo.name, value: combo.name })}
+                    className={`
+                      px-2 py-1 rounded-xl text-xs font-medium transition-all border hover:cursor-pointer flex items-center gap-1
+                      ${isSelected || isAdded
+                        ? "bg-primary text-white border-primary hover:bg-primary-hover"
+                        : "bg-surface border-border text-text-main hover:border-primary/50 hover:bg-primary/5"
+                      }
+                    `}
+                  >
+                    {isAdded && (
+                      <span className="material-symbols-outlined leading-none" style={{ fontSize: "10px" }}>check</span>
+                    )}
+                    <ProviderIcon
+                      src={family.logo ? `/providers/${family.logo}.png` : null}
+                      alt={family.label}
+                      size={13}
+                      className="object-contain rounded-sm shrink-0"
+                      fallbackText={family.label.slice(0, 2).toUpperCase()}
+                      fallbackColor={family.color}
+                    />
+                    {combo.name}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Manual combos — user-authored, generic layers icon */}
+        {manualCombos.length > 0 && (
           <div>
             <div className="flex items-center gap-1.5 mb-1.5 sticky top-0 bg-surface py-0.5">
               <span className="material-symbols-outlined text-primary text-[14px]">layers</span>
-              <span className="text-xs font-medium text-primary">Combos</span>
-              <span className="text-[10px] text-text-muted">({filteredCombos.length})</span>
+              <span className="text-xs font-medium text-primary">My Combos</span>
+              <span className="text-[10px] text-text-muted">({manualCombos.length})</span>
             </div>
             <div className="flex flex-wrap gap-1.5">
-              {filteredCombos.map((combo) => {
+              {manualCombos.map((combo) => {
                 const isSelected = selectedModel === combo.name;
                 return (
                   <button
@@ -521,6 +572,16 @@ export default function ModelSelectModal({
                     `}
                   >
                     <span className="flex items-center gap-1">
+                      {!isPlaceholder && (
+                        <ProviderIcon
+                          src={`/providers/${providerId}.png`}
+                          alt={group.name}
+                          size={12}
+                          className="object-contain rounded-sm shrink-0"
+                          fallbackText={(group.name || providerId).slice(0, 1).toUpperCase()}
+                          fallbackColor={group.color}
+                        />
+                      )}
                       {addedModelValues.includes(model.value) && !isPlaceholder && (
                         <span className="material-symbols-outlined leading-none" style={{ fontSize: "10px" }}>check</span>
                       )}

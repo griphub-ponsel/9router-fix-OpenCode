@@ -167,10 +167,11 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
 
   const saveModels = async (models) => {
     try {
-      const keyToUse = (selectedApiKey && selectedApiKey.trim())
-          visionFallbackModels: visionFallbackRef.current,
+      const keyToUse = selectedApiKey && selectedApiKey.trim()
         ? selectedApiKey
-        : (!cloudEnabled ? "sk_9router" : selectedApiKey);
+        : !cloudEnabled
+          ? "sk_9router"
+          : selectedApiKey;
       const validActiveModel = models.includes(activeModel) ? activeModel : (models[0] || "");
       await fetch("/api/cli-tools/opencode-settings", {
         method: "POST",
@@ -182,6 +183,7 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
           modelNames: getSelectedModelNames(models),
           activeModel: validActiveModel,
           subagentModel,
+          visionFallbackModels: visionFallbackRef.current,
         }),
       });
     } catch (error) {
@@ -226,8 +228,6 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
       const keyToUse = (selectedApiKey && selectedApiKey.trim())
         ? selectedApiKey
         : (!cloudEnabled ? "sk_9router" : selectedApiKey);
-,
-          visionFallbackModels,
       const res = await fetch("/api/cli-tools/opencode-settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -237,7 +237,8 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
           models: selectedModels,
           modelNames: getSelectedModelNames(),
           activeModel: activeModel === "" ? "" : (activeModel || selectedModels[0]),
-          subagentModel: subagentModel
+          subagentModel: subagentModel,
+          visionFallbackModels,
         }),
       });
       const data = await res.json();
@@ -257,8 +258,7 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
   const handleReset = async () => {
     setRestoring(true);
     setMessage(null);
-    try setVisionFallbackModels([]);
-        {
+    try {
       const res = await fetch("/api/cli-tools/opencode-settings", { method: "DELETE" });
       const data = await res.json();
       if (res.ok) {
@@ -269,6 +269,7 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
         setModelDisplayNames({});
         setNewModelBadges({});
         setActiveModel("");
+        setVisionFallbackModels([]);
         checkStatus();
       } else {
         setMessage({ type: "error", text: data.error || "Failed to reset settings" });
