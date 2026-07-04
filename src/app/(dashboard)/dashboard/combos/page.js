@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -9,12 +9,13 @@ import { Card, Button, Modal, Input, CardSkeleton, ModelSelectModal, ConfirmModa
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider, getProviderByAlias, getProviderAlias } from "@/shared/constants/providers";
-import { PROVIDER_FAMILIES, detectFamily, buildOverlapGroups, isAutoCombo, autoComboModelId } from "@/shared/constants/modelFamilies";
+import { PROVIDER_FAMILIES, detectFamily, buildOverlapGroups, isAutoCombo, autoComboModelId, normalizeModelIdentity } from "@/shared/constants/modelFamilies";
 
-// Validate combo name: only a-z, A-Z, 0-9, -, _
-const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
+// Validate combo name: letters, numbers, spaces, -, _ and . (no leading/trailing space)
+const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-](?:[a-zA-Z0-9_.\- ]*[a-zA-Z0-9_.\-])?$/;
 
-// Suggest a combo name from a model id, kept within VALID_NAME_REGEX and unique.
+// Suggest a dash-style combo id, kept within VALID_NAME_REGEX and unique. The
+// pretty human name ("GPT 5.5") lives in the display-name alias instead.
 function suggestComboName(base, existingNames) {
   const clean = String(base)
     .replace(/[^a-zA-Z0-9_.\-]/g, "-")
@@ -72,6 +73,7 @@ export default function CombosPage() {
   const [comboStrategies, setComboStrategies] = useState({});
   const [modelCaps, setModelCaps] = useState({});
   const [allModels, setAllModels] = useState([]);
+  const [modelAliasMap, setModelAliasMap] = useState({});
   const [confirmState, setConfirmState] = useState(null);
   const { copied, copy } = useCopyToClipboard();
 
@@ -96,37 +98,30 @@ export default function CombosPage() {
     fetchData();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-materialize detected groups into real combos so they're immediately
-  // usable — pickable in any model selector (config generators) without a manual
-  // create step. Covered groups are skipped; attempted ids are remembered so a
-  // failing creation doesn't retry-loop.
-  const syncAttemptedRef = useRef(new Set());
-  useEffect(() => {
-    if (loading) return;
-    const groups = autoFamilies.flatMap((f) => f.groups);
-    const uncovered = groups.filter(
-      (g) => !findComboForGroup(combos, g) && !syncAttemptedRef.current.has(g.id)
-    );
-    if (uncovered.length === 0) return;
-    (async () => {
-      const names = new Set(combos.map((c) => c.name));
-      for (const g of uncovered) {
-        syncAttemptedRef.current.add(g.id);
-        const name = suggestComboName(g.id, names);
-        names.add(name);
-        try {
-          await fetch("/api/combos", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name, models: g.members }),
-          });
-        } catch (e) {
-          console.log("Error auto-creating combo:", e);
-        }
+  // Materialize ONE detected group into a real combo (per-row Create button).
+  // Existing combos are never touched; per-combo rescans live in the edit modal.
+  const handleCreateGroup = async (group) => {
+    const names = new Set(combos.map((c) => c.name));
+    const name = suggestComboName(group.id, names);
+    try {
+      const res = await fetch("/api/combos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, models: group.members }),
+      });
+      if (res.ok && group.name && group.name !== name && !modelAliasMap[name]) {
+        // Smart default display name; never overwrites a user-set one
+        await fetch("/api/models", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: name, alias: group.name }),
+        }).catch(() => {});
       }
       await fetchData();
-    })();
-  }, [autoFamilies, combos, loading]); // eslint-disable-line react-hooks/exhaustive-deps
+    } catch (e) {
+      console.log("Error creating combo from group:", e);
+    }
+  };
 
   const fetchData = async () => {
     try {
@@ -185,6 +180,7 @@ export default function CombosPage() {
 
         if (aliasRes.ok) {
           const ad = await aliasRes.json();
+          setModelAliasMap(ad.aliases || {});
           for (const [aliasName, target] of Object.entries(ad.aliases || {})) {
             if (typeof target !== "string") continue;
             const slash = target.indexOf("/");
@@ -208,6 +204,30 @@ export default function CombosPage() {
     }
   };
 
+  // Persist a combo's display name in the model-alias store (key = combo name,
+  // value = display name) — exactly what config generators read before falling
+  // back to the dashed id. Empty display name removes the entry.
+  const saveComboDisplayName = async (comboName, displayName, prevName) => {
+    try {
+      // Rename: drop the alias stored under the old combo name
+      if (prevName && prevName !== comboName && modelAliasMap[prevName] !== undefined) {
+        await fetch(`/api/models/alias?alias=${encodeURIComponent(prevName)}`, { method: "DELETE" });
+      }
+      const next = (displayName || "").trim();
+      if (next) {
+        await fetch("/api/models", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: comboName, alias: next }),
+        });
+      } else if (modelAliasMap[comboName] !== undefined) {
+        await fetch(`/api/models/alias?alias=${encodeURIComponent(comboName)}`, { method: "DELETE" });
+      }
+    } catch (e) {
+      console.log("Error saving combo display name:", e);
+    }
+  };
+
   const handleCreate = async (data) => {
     try {
       const res = await fetch("/api/combos", {
@@ -216,10 +236,7 @@ export default function CombosPage() {
         body: JSON.stringify({ name: data.name, models: data.models }),
       });
       if (res.ok) {
-        // Persist the chosen strategy (no-op entry pruning happens for "fallback")
-        if (data.strategy && data.strategy !== "fallback") {
-          await handleSetComboStrategy(data.name, { fallbackStrategy: data.strategy });
-        }
+        await saveComboDisplayName(data.name, data.displayName);
         await fetchData();
         setShowCreateModal(false);
       } else {
@@ -233,16 +250,14 @@ export default function CombosPage() {
 
   const handleUpdate = async (id, data) => {
     try {
+      const prev = combos.find((c) => c.id === id);
       const res = await fetch(`/api/combos/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: data.name, models: data.models }),
       });
       if (res.ok) {
-        // Sync strategy too — passing "fallback" prunes the entry (default)
-        if (data.strategy) {
-          await handleSetComboStrategy(data.name, { fallbackStrategy: data.strategy });
-        }
+        await saveComboDisplayName(data.name, data.displayName, prev?.name);
         await fetchData();
         setEditingCombo(null);
       } else {
@@ -326,13 +341,15 @@ export default function CombosPage() {
         </Button>
       </div>
 
-      {/* Auto-detected combos — system-managed, materialized automatically */}
+      {/* Auto-detected combos — system-managed; rescan per-combo lives in Edit */}
       <AutoComboExplorer
         families={autoFamilies}
         combos={combos}
         comboStrategies={comboStrategies}
+        modelAliasMap={modelAliasMap}
         onSetStrategy={handleSetComboStrategy}
         onEditCombo={setEditingCombo}
+        onCreateGroup={handleCreateGroup}
       />
 
       {/* My Combos — manually authored (auto ones live in the explorer above) */}
@@ -380,6 +397,8 @@ export default function CombosPage() {
         onClose={() => setShowCreateModal(false)}
         onSave={handleCreate}
         activeProviders={activeProviders}
+        allModels={allModels}
+        activeAliases={activeAliases}
       />
 
       {/* Edit Modal - Use key to force remount and reset state */}
@@ -390,7 +409,9 @@ export default function CombosPage() {
         onClose={() => setEditingCombo(null)}
         onSave={(data) => handleUpdate(editingCombo.id, data)}
         activeProviders={activeProviders}
-        initialStrategy={comboStrategies[editingCombo?.name]?.fallbackStrategy || "fallback"}
+        allModels={allModels}
+        activeAliases={activeAliases}
+        initialDisplayName={modelAliasMap[editingCombo?.name] || ""}
       />
 
       {/* Confirm Delete Modal */}
@@ -437,27 +458,31 @@ function ProviderChip({ alias, size = 18 }) {
   );
 }
 
-// A single auto-detected group — materialized as a real combo by the auto-sync,
-// so it's directly usable in model selectors. Strategy applies live; Edit opens
-// the combo (rename, reorder, drop members).
-function AutoGroupRow({ group, combo, strategy = {}, onSetStrategy, onEdit }) {
+// A single auto-detected group. When materialized, the row reflects the ACTUAL
+// combo (its real members — user removals stay removed) plus its display name;
+// otherwise it shows the detected members with a Create button.
+function AutoGroupRow({ group, combo, displayName, strategy = {}, onSetStrategy, onEdit, onCreate }) {
   const current = strategy.fallbackStrategy || "fallback";
+  const members = combo?.models?.length ? combo.models : group.members;
 
   return (
     <div className="flex min-w-0 flex-col gap-2 rounded-lg border border-black/5 dark:border-white/5 bg-black/[0.01] dark:bg-white/[0.01] px-3 py-2 sm:flex-row sm:items-center sm:gap-3">
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <code className="truncate font-mono text-sm font-medium text-text-main">{combo?.name || group.id}</code>
-          <span className="text-[10px] text-text-muted shrink-0">{group.members.length} providers</span>
+          {displayName && (
+            <span className="truncate text-xs text-text-muted">“{displayName}”</span>
+          )}
+          <span className="text-[10px] text-text-muted shrink-0">{members.length} providers</span>
         </div>
         <div className="mt-1 flex flex-wrap items-center gap-1.5">
-          {group.members.map((full) => (
+          {members.map((full) => (
             <ProviderChip key={full} alias={String(full).split("/")[0]} />
           ))}
         </div>
       </div>
 
-      {/* Live strategy + edit — the combo already exists, no create step */}
+      {/* Live strategy + edit; uncovered groups get an explicit Create */}
       <div className="flex shrink-0 items-center gap-2">
         {combo ? (
           <>
@@ -472,14 +497,21 @@ function AutoGroupRow({ group, combo, strategy = {}, onSetStrategy, onEdit }) {
             <button
               onClick={onEdit}
               className="shrink-0 inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium text-primary transition-colors hover:bg-primary/10"
-              title="Edit this auto combo (name, members, strategy)"
+              title="Edit this auto combo (name, display name, members, rescan providers)"
             >
               <span className="material-symbols-outlined text-[16px]">edit</span>
               Edit
             </button>
           </>
         ) : (
-          <span className="text-[11px] italic text-text-muted">Creating…</span>
+          <button
+            onClick={onCreate}
+            className="shrink-0 inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium text-primary transition-colors hover:bg-primary/10"
+            title="Create a combo from these models"
+          >
+            <span className="material-symbols-outlined text-[16px]">add</span>
+            Create
+          </button>
         )}
       </div>
     </div>
@@ -487,8 +519,9 @@ function AutoGroupRow({ group, combo, strategy = {}, onSetStrategy, onEdit }) {
 }
 
 // Explorer panel: lists provider families, each expandable to reveal the model
-// identities the system auto-detected and materialized as ready-to-use combos.
-function AutoComboExplorer({ families = [], combos = [], comboStrategies = {}, onSetStrategy, onEditCombo }) {
+// identities the system detected. Uncovered groups get a Create button; member
+// rescans happen inside the Edit modal.
+function AutoComboExplorer({ families = [], combos = [], comboStrategies = {}, modelAliasMap = {}, onSetStrategy, onEditCombo, onCreateGroup }) {
   const [openKey, setOpenKey] = useState(null);
 
   if (families.length === 0) return null;
@@ -500,7 +533,7 @@ function AutoComboExplorer({ families = [], combos = [], comboStrategies = {}, o
         <div className="min-w-0">
           <h2 className="text-sm font-semibold text-text-main">Auto-detected combos</h2>
           <p className="text-xs text-text-muted">
-            Same model identity across multiple providers — auto-created as ready-to-use combos. Pick them directly in any model selector; tune strategy or edit here.
+            Same model identity across connected providers. Create the ones you want; rescan providers per combo from Edit.
           </p>
         </div>
       </div>
@@ -551,9 +584,11 @@ function AutoComboExplorer({ families = [], combos = [], comboStrategies = {}, o
                 key={group.id}
                 group={group}
                 combo={combo}
+                displayName={combo ? modelAliasMap[combo.name] : null}
                 strategy={combo ? comboStrategies[combo.name] || {} : {}}
                 onSetStrategy={(patch) => combo && onSetStrategy(combo.name, patch)}
                 onEdit={() => combo && onEditCombo(combo)}
+                onCreate={() => onCreateGroup(group)}
               />
             );
           })}
@@ -777,12 +812,14 @@ function ModelItem({ id, index, model, isFirst, isLast, onEdit, onMoveUp, onMove
   );
 }
 
-function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindFilter = null, initialStrategy = "fallback" }) {
+function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindFilter = null, initialDisplayName = "", allModels = [], activeAliases = null }) {
   // Initialize state with combo values - key prop on parent handles reset on remount
   const [name, setName] = useState(combo?.name || "");
+  const [displayName, setDisplayName] = useState(initialDisplayName);
   const [models, setModels] = useState(combo?.models || []);
-  const [strategy, setStrategy] = useState(initialStrategy);
   const [showModelSelect, setShowModelSelect] = useState(false);
+  const [scanFound, setScanFound] = useState(null); // null = popup closed, [] = nothing found
+  const [scanSelected, setScanSelected] = useState({});
   const [saving, setSaving] = useState(false);
   const [nameError, setNameError] = useState("");
   const [modelAliases, setModelAliases] = useState({});
@@ -827,7 +864,7 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
       return false;
     }
     if (!VALID_NAME_REGEX.test(value)) {
-      setNameError("Only letters, numbers, -, _ and . allowed");
+      setNameError("Only letters, numbers, spaces, -, _ and . allowed");
       return false;
     }
     setNameError("");
@@ -872,9 +909,38 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
   const handleSave = async () => {
     if (!validateName(name)) return;
     setSaving(true);
-    await onSave({ name: name.trim(), models, strategy });
+    await onSave({ name: name.trim(), models, displayName: displayName.trim() });
     setSaving(false);
   };
+
+  // Scan CONNECTED providers for models matching this combo's identity that are
+  // not in the list yet — INCLUDING previously removed ones (explicit user action,
+  // so re-adding is allowed). Deleted/disconnected providers are excluded.
+  // Results go to a confirm popup with per-provider selection.
+  const handleScanProviders = () => {
+    const idSet = new Set(models.map((m) => normalizeModelIdentity(m)).filter(Boolean));
+    if (idSet.size === 0 && name.trim()) idSet.add(normalizeModelIdentity(name.trim()));
+    const present = new Set(models);
+    const found = [];
+    for (const m of allModels) {
+      if (!m?.fullModel || present.has(m.fullModel)) continue;
+      // Only offer providers that are still connected
+      if (activeAliases && !activeAliases.has(m.provider)) continue;
+      if (!idSet.has(normalizeModelIdentity(m.fullModel))) continue;
+      present.add(m.fullModel);
+      found.push({ fullModel: m.fullModel, name: m.name || m.model });
+    }
+    setScanFound(found);
+    setScanSelected(Object.fromEntries(found.map((f) => [f.fullModel, true])));
+  };
+
+  const addScanSelected = () => {
+    const picked = (scanFound || []).filter((f) => scanSelected[f.fullModel]).map((f) => f.fullModel);
+    if (picked.length > 0) setModels((prev) => [...prev, ...picked]);
+    setScanFound(null);
+  };
+
+  const scanPickedCount = (scanFound || []).filter((f) => scanSelected[f.fullModel]).length;
 
   // A preset (auto-combo prefill) has no id yet, so it is still a "create" flow.
   const isEdit = !!combo?.id;
@@ -897,7 +963,20 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
               error={nameError}
             />
             <p className="text-[10px] text-text-muted mt-0.5">
-              Only letters, numbers, -, _ and . allowed
+              Only letters, numbers, spaces, -, _ and . allowed
+            </p>
+          </div>
+
+          {/* Display Name — what config generators show instead of the dashed id */}
+          <div>
+            <Input
+              label="Display Name"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              placeholder="e.g. GPT 5.5"
+            />
+            <p className="text-[10px] text-text-muted mt-0.5">
+              Shown in config generators (Copilot, OpenCode, …). Leave empty to use the combo name.
             </p>
           </div>
 
@@ -937,28 +1016,24 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
             </DndContext>
             )}
 
-            {/* Add Model button */}
-            <button
-              onClick={() => setShowModelSelect(true)}
-              className="w-full mt-2 py-2 border border-dashed border-black/10 dark:border-white/10 rounded-lg text-xs text-primary font-medium hover:text-primary hover:border-primary/50 transition-colors flex items-center justify-center gap-1"
-            >
-              <span className="material-symbols-outlined text-[16px]">add</span>
-              Add Model
-            </button>
-          </div>
-
-          {/* Strategy */}
-          <div>
-            <label className="text-sm font-medium mb-1.5 block">Strategy</label>
-            <Select
-              options={STRATEGY_OPTIONS}
-              value={strategy}
-              onChange={(e) => setStrategy(e.target.value)}
-              selectClassName="py-1.5 text-xs"
-            />
-            <p className="text-[10px] text-text-muted mt-0.5">
-              Fallback tries in order · Round Robin rotates · Fusion queries all + judge
-            </p>
+            {/* Add Model + Scan Providers */}
+            <div className="mt-2 flex gap-2">
+              <button
+                onClick={() => setShowModelSelect(true)}
+                className="flex-1 py-2 border border-dashed border-black/10 dark:border-white/10 rounded-lg text-xs text-primary font-medium hover:border-primary/50 transition-colors flex items-center justify-center gap-1"
+              >
+                <span className="material-symbols-outlined text-[16px]">add</span>
+                Add Model
+              </button>
+              <button
+                onClick={handleScanProviders}
+                className="flex-1 py-2 border border-dashed border-black/10 dark:border-white/10 rounded-lg text-xs text-primary font-medium hover:border-primary/50 transition-colors flex items-center justify-center gap-1"
+                title="Find other connected providers serving this same model"
+              >
+                <span className="material-symbols-outlined text-[16px]">radar</span>
+                Scan Providers
+              </button>
+            </div>
           </div>
 
           {/* Actions */}
@@ -991,6 +1066,61 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
         addedModelValues={models}
         closeOnSelect={false}
       />
+
+      {/* Scan results — confirm which found providers to add */}
+      <Modal
+        isOpen={scanFound !== null}
+        onClose={() => setScanFound(null)}
+        title="Scan Results"
+        size="sm"
+      >
+        {(scanFound || []).length === 0 ? (
+          <div className="text-center py-6">
+            <span className="material-symbols-outlined text-text-muted text-2xl mb-1 block">search_off</span>
+            <p className="text-sm text-text-muted">No other providers serve this model.</p>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3">
+            <p className="text-xs text-text-muted">
+              Found {(scanFound || []).length} provider{(scanFound || []).length > 1 ? "s" : ""} serving this model. Select which to add:
+            </p>
+            <div className="flex max-h-[40vh] flex-col gap-1 overflow-y-auto">
+              {(scanFound || []).map((f) => {
+                const checked = !!scanSelected[f.fullModel];
+                const alias = String(f.fullModel).split("/")[0];
+                return (
+                  <button
+                    key={f.fullModel}
+                    onClick={() => setScanSelected((prev) => ({ ...prev, [f.fullModel]: !prev[f.fullModel] }))}
+                    className={`flex items-center gap-2 rounded-lg border px-2.5 py-2 text-left transition-colors ${
+                      checked
+                        ? "border-primary/50 bg-primary/5"
+                        : "border-black/5 dark:border-white/5 hover:bg-black/[0.02] dark:hover:bg-white/[0.02]"
+                    }`}
+                  >
+                    <span className={`material-symbols-outlined text-[18px] shrink-0 ${checked ? "text-primary" : "text-text-muted"}`}>
+                      {checked ? "check_box" : "check_box_outline_blank"}
+                    </span>
+                    <ProviderChip alias={alias} size={16} />
+                    <div className="min-w-0 flex-1">
+                      <code className="block truncate font-mono text-xs text-text-main">{f.fullModel}</code>
+                      <span className="block truncate text-[10px] text-text-muted">{f.name}</span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="flex flex-col gap-2 pt-1 sm:flex-row">
+              <Button onClick={() => setScanFound(null)} variant="ghost" fullWidth size="sm">
+                Cancel
+              </Button>
+              <Button onClick={addScanSelected} fullWidth size="sm" disabled={scanPickedCount === 0}>
+                Add {scanPickedCount > 0 ? `${scanPickedCount} ` : ""}Selected
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </>
   );
 }
