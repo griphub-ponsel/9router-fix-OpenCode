@@ -33,6 +33,15 @@ vi.mock("@/lib/usageDb.js", () => ({
   saveRequestDetail: vi.fn(async () => {}),
 }));
 
+// Headroom now compresses the pre-translation source body, which runs AFTER
+// applyMemoryContext. Stub the memory layer so it never mutates the body —
+// otherwise injected facts inflate the "before" snapshot and make byte-size
+// assertions (phantom-savings detection) depend on the local memory DB.
+vi.mock("@/shared/memory/capture.js", () => ({
+  captureChatMemory: vi.fn(async () => ({ memories: 0 })),
+  injectMemoryContext: vi.fn(async () => ({ injected: 0 })),
+}));
+
 const { handleChatCore } = await import("../../open-sse/handlers/chatCore.js");
 
 describe("handleChatCore Headroom diagnostics", () => {

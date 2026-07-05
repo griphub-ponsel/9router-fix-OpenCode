@@ -301,6 +301,24 @@ export async function handleChatCore(options) {
     } catch (e) { log?.warn?.("MODALITY", `image prefetch failed: ${e.message}`); }
   }
 
+  // Headroom: compress context on the SOURCE body BEFORE translation. The proxy
+  // only understands openai/claude/responses shapes; the source body is always
+  // one of those, while the translated body may be an exotic provider shape
+  // (kiro/gemini) that Headroom can't parse. Running post-translation silently
+  // skipped those targets ("unsupported <fmt> request shape"). Running here
+  // makes Headroom work for ALL providers. Fail-open: compress mutates `body`
+  // in place and returns null on any error, leaving the original body intact.
+  const headroomDiagnostics = {};
+  const headroomStats = await compressWithHeadroom(body, { enabled: headroomEnabled, url: headroomUrl, model: upstreamModel, format: sourceFormat, compressUserMessages: headroomCompressUserMessages, diagnostics: headroomDiagnostics });
+  const headroomLine = formatHeadroomLog(headroomStats);
+  const headroomSizeLine = formatHeadroomSizeLog(headroomDiagnostics);
+  if (headroomLine) {
+    log?.info?.("HEADROOM", `${headroomLine}${headroomSizeLine ? ` | ${headroomSizeLine}` : ""}`);
+    if (isHeadroomPhantomSavings(headroomStats, headroomDiagnostics)) {
+      log?.warn?.("HEADROOM", `reported token delta, but outbound JSON shrank <5%; provider may bill near-original payload | ${headroomSizeLine}`);
+    }
+  } else if (headroomEnabled) log?.warn?.("HEADROOM", `skipped: ${headroomDiagnostics.reason || "compression unavailable"}${headroomDiagnostics.endpoint ? ` (${headroomDiagnostics.endpoint})` : ""}`);
+
   let translatedBody;
   let toolNameMap;
   if (passthrough) {
@@ -343,17 +361,9 @@ export async function handleChatCore(options) {
   const rtkLine = formatRtkLog(rtkStats);
   if (rtkLine) console.log(rtkLine);
 
-  // Headroom: optional external proxy compression; fail open if proxy is absent.
-  const headroomDiagnostics = {};
-  const headroomStats = await compressWithHeadroom(translatedBody, { enabled: headroomEnabled, url: headroomUrl, model: upstreamModel, format: finalFormat, compressUserMessages: headroomCompressUserMessages, diagnostics: headroomDiagnostics });
-  const headroomLine = formatHeadroomLog(headroomStats);
-  const headroomSizeLine = formatHeadroomSizeLog(headroomDiagnostics);
-  if (headroomLine) {
-    log?.info?.("HEADROOM", `${headroomLine}${headroomSizeLine ? ` | ${headroomSizeLine}` : ""}`);
-    if (isHeadroomPhantomSavings(headroomStats, headroomDiagnostics)) {
-      log?.warn?.("HEADROOM", `reported token delta, but outbound JSON shrank <5%; provider may bill near-original payload | ${headroomSizeLine}`);
-    }
-  } else if (headroomEnabled) log?.warn?.("HEADROOM", `skipped: ${headroomDiagnostics.reason || "compression unavailable"}${headroomDiagnostics.endpoint ? ` (${headroomDiagnostics.endpoint})` : ""}`);
+  // NOTE: Headroom compression runs earlier, on the pre-translation source body
+  // (see block above), so it works for ALL provider target shapes — not just
+  // openai/claude/responses. Do not re-add a post-translation Headroom call.
 
   // Caveman: inject terse-style system prompt
   if (cavemanEnabled && cavemanLevel) {
