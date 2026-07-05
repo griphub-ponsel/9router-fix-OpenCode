@@ -92,6 +92,18 @@ export default function BulkImportCodexModal({ isOpen, onClose, onSuccess }) {
           )}
         </p>
 
+        <p className="text-xs text-text-muted">
+          {translate("Get your session tokens from:")}{" "}
+          <a
+            href="https://chatgpt.com/api/auth/session"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-primary underline hover:text-primary/80"
+          >
+            chatgpt.com/api/auth/session
+          </a>
+        </p>
+
         <textarea
           className="w-full rounded border border-accent/30 bg-sidebar p-2 text-sm font-mono resize-y min-h-[240px] focus:outline-none focus:ring-1 focus:ring-primary"
           placeholder={PLACEHOLDER}
