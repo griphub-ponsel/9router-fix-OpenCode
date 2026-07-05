@@ -19,7 +19,7 @@ import {
   NOTION_CONFIG,
   KIMCHI_CONFIG,
 } from "@/lib/oauth/constants/oauth";
-import { buildClineHeaders } from "@/shared/utils/clineAuth";
+import { buildClineApiKeyHeaders, buildClineChatHeaders } from "@/shared/utils/clineAuth";
 import { extractNotionToken } from "@/lib/providerNormalization";
 
 const NOTION_CLIENT_VERSION = "23.13.20260605.0836";
@@ -181,9 +181,13 @@ const OAUTH_TEST_CONFIG = {
 };
 
 async function probeClineAccessToken(accessToken) {
+  // Use the minimal chat-header set (same as runtime), NOT buildClineHeaders.
+  // The X-CLIENT-*/X-CORE-VERSION fingerprint can trigger a spurious 401
+  // ("latest version of Cline") on valid tokens, so validation must mirror
+  // the proven-working runtime auth path exactly.
   const res = await fetch("https://api.cline.bot/api/v1/users/me", {
     method: "GET",
-    headers: buildClineHeaders(accessToken, {
+    headers: buildClineChatHeaders(accessToken, {
       Accept: "application/json",
     }),
   });
@@ -771,6 +775,21 @@ async function testApiKeyConnection(connection, effectiveProxy = null) {
       case "deepgram": {
         const res = await fetchWithConnectionProxy("https://api.deepgram.com/v1/projects", { headers: { Authorization: `Token ${connection.apiKey}` } }, effectiveProxy);
         return { valid: res.ok, error: res.ok ? null : "Invalid API key" };
+      }
+      case "cline": {
+        // Official Cline API keys (including ClinePass) are raw Bearer keys, not
+        // OAuth `workos:` session tokens. Use the chat endpoint with an empty body:
+        // invalid keys 401 before body validation; valid keys advance to a non-auth
+        // error without consuming model quota.
+        const res = await fetchWithConnectionProxy("https://api.cline.bot/api/v1/chat/completions", {
+          method: "POST",
+          headers: buildClineApiKeyHeaders(connection.apiKey, { "Content-Type": "application/json", Accept: "application/json" }),
+          body: "{}",
+        }, effectiveProxy);
+        if (res.status === 401 || res.status === 403) {
+          return { valid: false, error: "Invalid Cline API key" };
+        }
+        return { valid: res.ok || res.status !== 404, error: res.ok ? null : `Cline API returned ${res.status}` };
       }
       case "assemblyai": {
         const res = await fetchWithConnectionProxy("https://api.assemblyai.com/v1/account", { headers: { Authorization: `Bearer ${connection.apiKey}` } }, effectiveProxy);

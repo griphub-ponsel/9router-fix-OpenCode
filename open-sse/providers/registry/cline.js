@@ -10,10 +10,14 @@ export default {
     textIcon: "CL",
     website: "https://cline.bot",
     notice: {
+      text: "Dual auth: use OAuth for browser sign-in, or paste a Cline API key from app.cline.bot Settings > API Keys. API-key mode is useful for ClinePass and avoids OAuth re-login prompts.",
       signupUrl: "https://cline.bot",
     },
   },
   category: "oauth",
+  authModes: ["oauth", "apikey"],
+  hasOAuth: true,
+  authHint: "Paste a Cline API key from app.cline.bot > Settings > API Keys. API keys are sent as raw `Authorization: Bearer <key>`; OAuth/session tokens still use the `workos:` prefix automatically.",
   transport: {
     baseUrl: "https://api.cline.bot/api/v1/chat/completions",
     headers: {
@@ -23,12 +27,17 @@ export default {
     tokenUrl: "https://api.cline.bot/api/v1/auth/token",
     refreshUrl: "https://api.cline.bot/api/v1/auth/refresh",
     auth: {
-      combined: true,
-      header: "Authorization",
-      scheme: "clineBearer",
       hooks: [
         "clineHeaders",
       ],
+      apiKey: {
+        header: "Authorization",
+        scheme: "bearer",
+      },
+      oauth: {
+        header: "Authorization",
+        scheme: "clineBearer",
+      },
     },
   },
   models: [

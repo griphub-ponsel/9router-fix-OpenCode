@@ -5,6 +5,7 @@ import { getDefaultModel } from "open-sse/config/providerModels.js";
 import { resolveOllamaLocalHost, resolveXiaomiTokenplanBaseUrl, PROVIDERS } from "open-sse/config/providers.js";
 import { openaiToCommandCodeRequest } from "open-sse/translator/request/openai-to-commandcode.js";
 import { normalizeProviderId } from "@/lib/providerNormalization";
+import { buildClineApiKeyHeaders } from "@/shared/utils/clineAuth";
 
 // Probe a webSearch/webFetch provider using its searchConfig/fetchConfig.
 // Returns true if API key is accepted (status !== 401 && !== 403).
@@ -426,6 +427,26 @@ export async function POST(request) {
             headers: { "Authorization": `Token ${apiKey}` },
           });
           isValid = res.ok;
+          break;
+        }
+
+        case "cline": {
+          // Official Cline API keys (including ClinePass) are raw Bearer keys.
+          // Do not add the OAuth-only `workos:` prefix here. Send an empty chat
+          // payload: invalid keys 401 before body validation; valid keys advance to
+          // a non-auth error without consuming model quota.
+          const res = await fetch("https://api.cline.bot/api/v1/chat/completions", {
+            method: "POST",
+            headers: buildClineApiKeyHeaders(apiKey, { "Content-Type": "application/json", Accept: "application/json" }),
+            body: "{}",
+            signal: AbortSignal.timeout(10000),
+          });
+          if (res.status === 401 || res.status === 403) {
+            isValid = false;
+            error = "Invalid Cline API key — create one from app.cline.bot Settings > API Keys";
+          } else {
+            isValid = res.ok || res.status !== 404;
+          }
           break;
         }
 
