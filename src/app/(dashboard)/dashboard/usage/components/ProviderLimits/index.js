@@ -29,6 +29,8 @@ import {
   CLAUDE_REFRESH_INTERVAL_MS,
   DEPLETED_QUOTA_THRESHOLD,
   AUTO_REFRESH_STORAGE_KEY,
+  QUOTA_SORT_STORAGE_KEY,
+  EXPIRING_FIRST_STORAGE_KEY,
   CONNECTIONS_PAGE_SIZE,
   ACCOUNT_PAGE_SIZE_OPTIONS,
   ACCOUNT_PAGE_SIZE_MAX,
@@ -481,11 +483,39 @@ export default function ProviderLimits() {
     setHasHydratedAutoRefresh(true);
   }, []);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const stored = window.localStorage.getItem(QUOTA_SORT_STORAGE_KEY);
+    if (stored && ["default", "remaining-asc", "remaining-desc"].includes(stored)) {
+      setQuotaSortMode(stored);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const stored = window.localStorage.getItem(EXPIRING_FIRST_STORAGE_KEY);
+    if (stored !== null) {
+      setExpiringFirst(stored === "true");
+    }
+  }, []);
+
   // Persist auto-refresh preference
   useEffect(() => {
     if (typeof window === "undefined" || !hasHydratedAutoRefresh) return;
     window.localStorage.setItem(AUTO_REFRESH_STORAGE_KEY, String(autoRefresh));
   }, [autoRefresh, hasHydratedAutoRefresh]);
+
+  // Persist quota sort mode
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(QUOTA_SORT_STORAGE_KEY, quotaSortMode);
+  }, [quotaSortMode]);
+
+  // Persist expiring first preference
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(EXPIRING_FIRST_STORAGE_KEY, String(expiringFirst));
+  }, [expiringFirst]);
 
   // Load auto-ping per-connection maps
   useEffect(() => {
