@@ -28,10 +28,32 @@ describe("expandCopilotReasoningVariants", () => {
   });
 
   it("leaves a combo untouched when no member supports reasoning", () => {
-    const combos = [{ name: "no-think", models: ["glm/glm-5.2", "kimi/kimi-k2.7"] }];
+    const combos = [{ name: "no-think", models: ["oai/text-embedding-3-large", "oai/dall-e-3-image"] }];
     const [model] = expandCopilotReasoningVariants([{ id: "no-think" }], combos);
     expect(model.supportsReasoningEffort).toBeUndefined();
     expect(model.thinking).toBeUndefined();
+  });
+
+  it("exposes low/medium/high for Chinese models (GLM, MiniMax, Kimi, Qwen, MiMo)", () => {
+    for (const id of [
+      "glm/glm-5.2",
+      "cbcn/minimax-m3",
+      "kimi/kimi-k2.7",
+      "oc/qwen3.7-max",
+      "oc/mimo-v2.5-pro",
+    ]) {
+      const [model] = expandCopilotReasoningVariants([{ id }]);
+      expect(model.thinking, id).toBe(true);
+      expect(model.supportsReasoningEffort, id).toEqual(["low", "medium", "high"]);
+      expect(model.reasoningEffortFormat, id).toBe("chat-completions");
+    }
+  });
+
+  it("resolves a Chinese-model combo to low/medium/high", () => {
+    const combos = [{ name: "cn-mix", models: ["glm/glm-5.2", "kimi/kimi-k2.7"] }];
+    const [model] = expandCopilotReasoningVariants([{ id: "cn-mix" }], combos);
+    expect(model.thinking).toBe(true);
+    expect(model.supportsReasoningEffort).toEqual(["low", "medium", "high"]);
   });
 
   it("treats an unmatched combo name as a plain (unknown) model", () => {

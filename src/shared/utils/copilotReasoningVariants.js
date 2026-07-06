@@ -7,9 +7,11 @@ const EFFORT_ORDER = ["low", "medium", "high", "xhigh", "max"];
 function supportsReasoningVariants(id) {
   const model = String(id || "").toLowerCase();
   if (/embedding|image|tts|stt/.test(model)) return false;
-  // Only models with configurable reasoning_effort support
-  // Qwen, GLM, Minimax, Kimi have always-on thinking (not configurable)
-  return /claude|deepseek|gpt-|grok|gemini/.test(model);
+  // Models that reason via OpenAI-style reasoning_effort / vendor-native thinking.
+  // Chinese models (GLM, MiniMax, Kimi, Qwen, MiMo) DO take reasoning_effort at the
+  // gateway (codebuddy-cn / opencode-go) and default to always-on thinking when it's
+  // omitted — which is slow. Exposing the effort picker lets Copilot pin them to "low".
+  return /claude|deepseek|gpt-|grok|gemini|glm|minimax|kimi|qwen|mimo/.test(model);
 }
 
 function reasoningEffortsForModel(id) {
