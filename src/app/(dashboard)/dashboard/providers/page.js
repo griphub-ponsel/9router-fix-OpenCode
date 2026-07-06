@@ -276,10 +276,19 @@ export default function ProvidersPage() {
     }))
     .filter((p) => matchSearch(p.name));
 
-  const oauthEntries = sortByPriority(
-    Object.entries(OAUTH_PROVIDERS).filter(([, info]) => !info.hidden && matchSearch(info.name)),
-    "oauth",
-  );
+  const oauthEntries = Object.entries(OAUTH_PROVIDERS)
+    .filter(([, info]) => !info.hidden && matchSearch(info.name))
+    .sort(([ka, a], [kb, b]) => {
+      const pa = a.priority ?? 999;
+      const pb = b.priority ?? 999;
+      if (pa !== pb) return pa - pb;
+      const authTypesA = a.authModes ?? [a.authType || "oauth"];
+      const authTypesB = b.authModes ?? [b.authType || "oauth"];
+      const ca = getProviderStats(ka, authTypesA).connected > 0 ? 1 : 0;
+      const cb = getProviderStats(kb, authTypesB).connected > 0 ? 1 : 0;
+      if (ca !== cb) return cb - ca;
+      return (a.name || "").localeCompare(b.name || "");
+    });
   const freeEntries = Object.entries(FREE_PROVIDERS)
     .filter(([, info]) => !info.hidden && matchSearch(info.name))
     .sort(([, a], [, b]) => (b.noAuth ? 1 : 0) - (a.noAuth ? 1 : 0));
@@ -423,16 +432,19 @@ export default function ProvidersPage() {
           </div>
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
-          {oauthEntries.map(([key, info]) => (
-            <ProviderCard
-              key={key}
-              providerId={key}
-              provider={info}
-              stats={getProviderStats(key, "oauth")}
-              authType="oauth"
-              onToggle={(active) => handleToggleProvider(key, "oauth", active)}
-            />
-          ))}
+          {oauthEntries.map(([key, info]) => {
+            const authTypes = info.authModes ?? [info.authType || "oauth"];
+            return (
+              <ProviderCard
+                key={key}
+                providerId={key}
+                provider={info}
+                stats={getProviderStats(key, authTypes)}
+                authType="oauth"
+                onToggle={(active) => handleToggleProvider(key, authTypes, active)}
+              />
+            );
+          })}
         </div>
       </div>
       )}
