@@ -366,6 +366,15 @@ export default function ModelSelectModal({
   const autoCombos = useMemo(() => filteredCombos.filter(isAutoCombo), [filteredCombos]);
   const manualCombos = useMemo(() => filteredCombos.filter((c) => !isAutoCombo(c)), [filteredCombos]);
 
+  // Combos store their display name in the model-alias store keyed by combo name
+  // (set from the Edit Combo modal). Surface it as `name` so config generators
+  // (Copilot, OpenCode, ...) auto-fill the friendly label instead of the dashed
+  // combo id. `value` stays the raw combo name — that's the routing key.
+  const comboDisplayName = (combo) => {
+    const dn = modelAliases?.[combo.name];
+    return typeof dn === "string" && dn.trim() ? dn.trim() : combo.name;
+  };
+
   // Sort models alphabetically, with added models floated to top
   const sortModels = (models) => {
     const added = models.filter(m => addedModelValues.includes(m.value)).sort((a, b) => a.name.localeCompare(b.name));
@@ -466,7 +475,7 @@ export default function ModelSelectModal({
                 return (
                   <button
                     key={combo.id}
-                    onClick={() => handleSelect({ id: combo.name, name: combo.name, value: combo.name })}
+                    onClick={() => handleSelect({ id: combo.name, name: comboDisplayName(combo), value: combo.name })}
                     className={`
                       px-2 py-1 rounded-xl text-xs font-medium transition-all border hover:cursor-pointer flex items-center gap-1
                       ${isSelected || isAdded
@@ -508,7 +517,7 @@ export default function ModelSelectModal({
                 return (
                   <button
                     key={combo.id}
-                    onClick={() => handleSelect({ id: combo.name, name: combo.name, value: combo.name })}
+                    onClick={() => handleSelect({ id: combo.name, name: comboDisplayName(combo), value: combo.name })}
                     className={`
                       px-2 py-1 rounded-xl text-xs font-medium transition-all border hover:cursor-pointer flex items-center gap-1
                       ${isSelected

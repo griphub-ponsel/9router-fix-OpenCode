@@ -29,6 +29,31 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
   const [activeModel, setActiveModel] = useState("");
   const [sortKey, setSortKey] = useState("model"); // "model" | "displayName"
   const [sortDir, setSortDir] = useState("asc"); // "asc" | "desc"
+
+  // Persist sort state per-card so it survives reloads. Default ("model"/"asc")
+  // is the pre-existing behavior, so existing users see no change.
+  const sortStorageKey = "cliTools:sort:opencode";
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = window.localStorage.getItem(sortStorageKey);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed?.sortKey === "model" || parsed?.sortKey === "displayName") setSortKey(parsed.sortKey);
+        if (parsed?.sortDir === "asc" || parsed?.sortDir === "desc") setSortDir(parsed.sortDir);
+      }
+    } catch {
+      // ignore corrupt storage
+    }
+  }, []);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(sortStorageKey, JSON.stringify({ sortKey, sortDir }));
+    } catch {
+      // ignore quota / disabled storage
+    }
+  }, [sortKey, sortDir]);
   const [visionFallbackModels, setVisionFallbackModels] = useState([]);
   const [fallbackModalOpen, setFallbackModalOpen] = useState(false);
   const selectedModelsRef = useRef([]);

@@ -31,6 +31,31 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
   const [fallbackModalOpen, setFallbackModalOpen] = useState(false);
   const [sortKey, setSortKey] = useState("model"); // "model" | "displayName"
   const [sortDir, setSortDir] = useState("asc"); // "asc" | "desc"
+
+  // Persist sort state per-card so it survives reloads. Default ("model"/"asc")
+  // is the pre-existing behavior, so existing users see no change.
+  const sortStorageKey = "cliTools:sort:copilot";
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = window.localStorage.getItem(sortStorageKey);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed?.sortKey === "model" || parsed?.sortKey === "displayName") setSortKey(parsed.sortKey);
+        if (parsed?.sortDir === "asc" || parsed?.sortDir === "desc") setSortDir(parsed.sortDir);
+      }
+    } catch {
+      // ignore corrupt storage
+    }
+  }, []);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(sortStorageKey, JSON.stringify({ sortKey, sortDir }));
+    } catch {
+      // ignore quota / disabled storage
+    }
+  }, [sortKey, sortDir]);
   const selectedModelsRef = useRef([]);
   const visionFallbackRef = useRef([]);
 
