@@ -179,6 +179,66 @@ export function pickVisionFallback(fallbackModels) {
   return valid[idx].trim();
 }
 
+// ── Vision description cache ────────────────────────────────────────────────
+// Coding CLIs (Copilot, OpenCode, ...) keep their own chat history and resend
+// the FULL conversation — including previously attached images — on every turn.
+// Without a cache the server re-relays the same image(s) to a vision sibling on
+// each follow-up, burning tokens + latency (the repeated grok-4.x relay call
+// the user sees in Recent Requests). We key a description on the exact set of
+// image contents in the request, so a follow-up turn carrying the same image(s)
+// reuses the earlier description and skips the relay entirely. Only a genuinely
+// new/changed image set triggers a fresh relay.
+const VISION_CACHE_MAX = 200;                 // LRU cap (entries)
+const VISION_CACHE_TTL_MS = 60 * 60 * 1000;   // 1h — images don't change within a session
+const visionCache = new Map();                // key → { description, expires }
+
+// FNV-1a 32-bit — fast, dependency-free, good enough for content keying. Data
+// URLs can be large, but this is a single O(n) pass over content we already
+// hold in memory.
+function fnv1a(str) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+  }
+  return h.toString(16).padStart(8, "0");
+}
+
+// Stable cache key from the ordered image contents + detail. Detail matters
+// because a higher-detail relay can yield a richer description.
+export function visionCacheKey(images) {
+  if (!Array.isArray(images) || images.length === 0) return null;
+  return images.map((img) => `${fnv1a(String(img.url || ""))}:${img.detail || "auto"}`).join("|");
+}
+
+/** Return a cached description for this exact image set, or null. LRU-touches on hit. */
+export function getCachedVisionDescription(images) {
+  const key = visionCacheKey(images);
+  if (!key) return null;
+  const hit = visionCache.get(key);
+  if (!hit) return null;
+  if (hit.expires < Date.now()) {
+    visionCache.delete(key);
+    return null;
+  }
+  // Re-insert to mark as most-recently-used.
+  visionCache.delete(key);
+  visionCache.set(key, hit);
+  return hit.description;
+}
+
+/** Store a description for this image set, evicting the oldest entries past the cap. */
+export function setCachedVisionDescription(images, description) {
+  const key = visionCacheKey(images);
+  if (!key || typeof description !== "string" || !description.trim()) return;
+  if (visionCache.has(key)) visionCache.delete(key);
+  visionCache.set(key, { description, expires: Date.now() + VISION_CACHE_TTL_MS });
+  while (visionCache.size > VISION_CACHE_MAX) {
+    const oldest = visionCache.keys().next().value;
+    visionCache.delete(oldest);
+  }
+}
+
 /** True if the request body carries any image content parts. */
 export function bodyHasImages(body) {
   return collectImageParts(body).length > 0;

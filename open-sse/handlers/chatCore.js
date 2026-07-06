@@ -38,6 +38,8 @@ import {
   buildVisionProbeBody,
   formatVisionMarker,
   isImageUnsupportedError,
+  getCachedVisionDescription,
+  setCachedVisionDescription,
 } from "../services/visionDelegation.js";
 
 /**
@@ -125,6 +127,17 @@ async function relayVisionDescription({ target, images, provider, credentials, l
  */
 async function delegateImagesInBody({ body, target, model, provider, credentials, log, connectionId, onCredentialsRefreshed, resolveVisionCredentials }) {
   const images = collectImageParts(body);
+
+  // Cache hit: this exact image set was already described on an earlier turn
+  // (client resent history). Reuse it and skip the relay call entirely.
+  const cached = getCachedVisionDescription(images);
+  if (cached) {
+    const marker = formatVisionMarker(cached, { count: images.length, delegated: true, sibling: target });
+    replaceImagesWithText(body, marker);
+    log?.debug?.("VISION", `${images.length} image(s) served from cache for ${model} (relay skipped)`);
+    return true;
+  }
+
   let description = null;
   try {
     description = await relayVisionDescription({
@@ -134,6 +147,8 @@ async function delegateImagesInBody({ body, target, model, provider, credentials
   } catch (err) {
     log?.warn?.("VISION", `delegation failed: ${err?.message || err}`);
   }
+  // Only cache successful descriptions — fallback notes must not be reused.
+  if (description) setCachedVisionDescription(images, description);
   const marker = formatVisionMarker(description, { count: images.length, delegated: !!description, sibling: target });
   replaceImagesWithText(body, marker);
   log?.debug?.("VISION", `${images.length} image(s) ${description ? `relayed via ${target}` : "replaced with note"} for ${model}`);
