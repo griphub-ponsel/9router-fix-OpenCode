@@ -7076,3 +7076,8 @@
 [CodeGraph MCP] Auto-synced 1 file(s) in 360ms
 [CodeGraph MCP] Auto-synced 1 file(s) in 383ms
 [CodeGraph MCP] Auto-synced 1 file(s) in 365ms
+[CodeGraph daemon] Listening on \\.\pipe\codegraph-b1ad95593595abd5 (pid 12580, v0.9.7). Idle timeout 300000ms.
+[CodeGraph MCP] File watcher active — graph will auto-sync on changes
+[CodeGraph MCP] Caught up 9 file(s) changed since last run
+[CodeGraph MCP] Auto-synced 1 file(s) in 389ms
+[CodeGraph MCP] Auto-synced 1 file(s) in 368ms
