@@ -3,7 +3,7 @@
 # detached, and logs everything to a file so the result survives even if the
 # chat connection (which routes through the server) drops mid-rebuild.
 $ErrorActionPreference = "Continue"
-$root = "C:\Users\Aldrey\Desktop\9router-fix-OpenCode"
+$root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $log  = Join-Path $env:TEMP "9router-rebuild.log"
 Set-Location $root
 "=== rebuild start $(Get-Date -Format o) ===" | Out-File $log
@@ -16,7 +16,6 @@ Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" |
     "killing PID $($_.ProcessId): $($_.CommandLine)" | Out-File $log -Append
     try { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop } catch { "  kill failed: $($_.Exception.Message)" | Out-File $log -Append }
   }
-Start-Sleep -Seconds 2
 
 # 2. Rebuild CLI (compiles src/ + open-sse/ into cli/app/)
 "--- npm --prefix cli run build ---" | Out-File $log -Append

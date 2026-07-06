@@ -83,7 +83,8 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
           next[model] = configuredName || next[model] || modelAliases?.[model] || model;
         });
         return next;
-     
+      });
+    }
 
     // Pre-populate vision-fallback relay list from persisted settings so the
     // user doesn't have to re-pick the same models every time they reopen
@@ -92,8 +93,8 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
     // delegate image understanding to a vision-capable sibling.
     if (status && Array.isArray(status.visionFallbackModels)) {
       setVisionFallbackModels(status.visionFallbackModels);
-    } });
     }
+
     if (status?.opencode?.activeModel) {
       setActiveModel(status.opencode.activeModel);
     }
