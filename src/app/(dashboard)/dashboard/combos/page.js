@@ -917,17 +917,39 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
   // not in the list yet — INCLUDING previously removed ones (explicit user action,
   // so re-adding is allowed). Deleted/disconnected providers are excluded.
   // Results go to a confirm popup with per-provider selection.
+  //
+  // Dedup across alias<->raw-id: the same provider surfaces under BOTH its short
+  // uiAlias (e.g. "ocg/deepseek-v4-flash") and raw id ("opencode-go/deepseek-v4-flash")
+  // because combo members are free-form strings. Canonicalize the prefix via the
+  // provider registry so both collapse to one entry — preventing the duplicate
+  // rows that appear when a combo was built by mixing "Add Model" (alias) and
+  // "Scan Providers" (raw id) picks for the same provider.
+  const providerKeyOf = (fullModel) => {
+    const slash = String(fullModel || "").indexOf("/");
+    if (slash <= 0) return String(fullModel || "");
+    const prefix = fullModel.slice(0, slash);
+    // Try resolving the prefix through the alias map (covers uiAlias -> id and id -> id).
+    const resolved = getProviderByAlias(prefix)?.id || prefix;
+    return getProviderAlias(resolved) || resolved;
+  };
+  const presentKeys = new Set(
+    models.map((m) => `${normalizeModelIdentity(m)}|${providerKeyOf(m)}`).filter((k) => !k.startsWith("|") && k !== "|")
+  );
   const handleScanProviders = () => {
     const idSet = new Set(models.map((m) => normalizeModelIdentity(m)).filter(Boolean));
     if (idSet.size === 0 && name.trim()) idSet.add(normalizeModelIdentity(name.trim()));
-    const present = new Set(models);
     const found = [];
+    const seenKeys = new Set(presentKeys);
     for (const m of allModels) {
-      if (!m?.fullModel || present.has(m.fullModel)) continue;
+      if (!m?.fullModel) continue;
+      const ident = normalizeModelIdentity(m.fullModel);
+      if (!idSet.has(ident)) continue;
       // Only offer providers that are still connected
       if (activeAliases && !activeAliases.has(m.provider)) continue;
-      if (!idSet.has(normalizeModelIdentity(m.fullModel))) continue;
-      present.add(m.fullModel);
+      const key = `${ident}|${providerKeyOf(m.fullModel)}`;
+      // Skip if this provider+identity combo is already in the list (alias or raw id)
+      if (seenKeys.has(key)) continue;
+      seenKeys.add(key);
       found.push({ fullModel: m.fullModel, name: m.name || m.model });
     }
     setScanFound(found);
