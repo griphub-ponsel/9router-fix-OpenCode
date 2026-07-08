@@ -2,7 +2,9 @@
  * Chat prompt capture helpers for the memory system.
  */
 
-const { memoryService, SCOPE, MEMORY_TYPE } = require('./index');
+const { memoryService, SCOPE, MEMORY_TYPE, TokenCounter } = require('./index');
+
+const tokenCounter = new TokenCounter();
 
 function extractText(content) {
   if (!content) return '';
@@ -35,6 +37,64 @@ function getUserPromptText(body = {}) {
     .map((message) => extractText(message.content || message.text || message.input))
     .filter(Boolean)
     .join('\n\n');
+}
+
+function getChatMessages(body = {}) {
+  if (Array.isArray(body.messages)) return body.messages;
+  if (Array.isArray(body.input)) return body.input;
+  return [];
+}
+
+/** Last user message only — much better retrieval query than the whole history. */
+function getLastUserText(body = {}) {
+  if (typeof body.input === 'string') return body.input;
+  const messages = getChatMessages(body);
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (!message || (message.role && message.role !== 'user')) continue;
+    const text = extractText(message.content || message.text || message.input).trim();
+    if (text) return text;
+  }
+  return '';
+}
+
+/** Latest assistant message from the (client-resent) history. */
+function getLatestAssistantText(body = {}) {
+  const messages = getChatMessages(body);
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (message?.role !== 'assistant') continue;
+    const text = extractText(message.content || message.text).trim();
+    if (text) return text;
+  }
+  return '';
+}
+
+function cheapHash(text) {
+  let hash = 5381;
+  const str = String(text || '');
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) + hash + str.charCodeAt(i)) | 0;
+  }
+  return String(hash >>> 0);
+}
+
+/**
+ * Derive a stable per-conversation session id when the client did not send one.
+ * Clients like VS Code resend the whole history each turn, so the first user
+ * message is a stable fingerprint for the conversation. This keeps each chat
+ * thread in its OWN memory session instead of one giant "chat-local" bucket.
+ */
+function deriveSessionId(body = {}, explicitId = null) {
+  if (explicitId && explicitId !== 'chat-local') return explicitId;
+
+  const messages = getChatMessages(body);
+  for (const message of messages) {
+    if (message?.role && message.role !== 'user') continue;
+    const text = extractText(message?.content || message?.text || message?.input).trim();
+    if (text) return `conv-${cheapHash(text.slice(0, 500))}`;
+  }
+  return explicitId || 'chat-local';
 }
 
 function normalizeName(name) {
@@ -322,6 +382,26 @@ async function saveGenericUserMemory(content, context) {
   });
 }
 
+// Dedupe guard so the same assistant turn (resent with every request) is
+// only captured once per session. Keyed by session, capped to avoid growth.
+const capturedAssistantHashes = new Map();
+const MAX_ASSISTANT_HASH_SESSIONS = 300;
+
+function alreadyCapturedAssistant(sessionId, hash) {
+  const seen = capturedAssistantHashes.get(sessionId);
+  if (seen?.has(hash)) return true;
+  if (!seen) {
+    if (capturedAssistantHashes.size >= MAX_ASSISTANT_HASH_SESSIONS) {
+      const oldestKey = capturedAssistantHashes.keys().next().value;
+      capturedAssistantHashes.delete(oldestKey);
+    }
+    capturedAssistantHashes.set(sessionId, new Set([hash]));
+  } else {
+    seen.add(hash);
+  }
+  return false;
+}
+
 async function captureChatMemory(body = {}, context = {}) {
   const promptText = getUserPromptText(body);
   if (!promptText.trim()) {
@@ -330,7 +410,7 @@ async function captureChatMemory(body = {}, context = {}) {
 
   await ensureInitialized();
 
-  const sessionId = context.sessionId || body.session_id || body.conversation_id || body.thread_id || 'chat-local';
+  const sessionId = deriveSessionId(body, context.sessionId || body.session_id || body.conversation_id || body.thread_id || null);
   await memoryService.saveObservation({
     sessionId,
     type: 'prompt',
@@ -341,6 +421,27 @@ async function captureChatMemory(body = {}, context = {}) {
     provider: context.provider || null,
     model: context.model || body.model || null
   });
+
+  // Capture the previous assistant answer too (clients resend full history),
+  // so "what the AI concluded/fixed" is remembered — not just what user asked.
+  let assistantObservations = 0;
+  const assistantText = getLatestAssistantText(body);
+  if (assistantText) {
+    const hash = cheapHash(assistantText);
+    if (!alreadyCapturedAssistant(sessionId, hash)) {
+      await memoryService.saveObservation({
+        sessionId,
+        type: 'assistant_response',
+        rawContent: assistantText.slice(0, 20000),
+        timestamp: new Date().toISOString(),
+        workspaceId: context.workspaceId || 'default',
+        userId: context.userId || 'local-user',
+        provider: context.provider || null,
+        model: context.model || body.model || null
+      });
+      assistantObservations = 1;
+    }
+  }
 
   const memoryIds = [];
   const identity = extractRememberedIdentity(promptText);
@@ -369,13 +470,18 @@ async function captureChatMemory(body = {}, context = {}) {
     memoryIds.push(await saveGenericUserMemory(genericFact.content, context));
   }
 
-  return { observations: 1, memories: memoryIds.length, memoryIds };
+  return { observations: 1 + assistantObservations, memories: memoryIds.length, memoryIds, sessionId };
 }
 
 /**
- * Retrieve the user's stored preference memories and inject them into the
- * outgoing chat request as a system message, so the downstream model can
- * actually USE what 9router has remembered (name, age, possessions, pin, ...).
+ * Retrieve the user's stored memories and inject them into the outgoing chat
+ * request as a system message — ChatGPT-style:
+ *
+ *   1. Core user facts (user_pref + pinned) are ALWAYS included.
+ *   2. Memories relevant to the CURRENT prompt (semantic/episodic/procedural/
+ *      project — e.g. "we solved this bug before") are retrieved via hybrid
+ *      search and included by relevance.
+ *   3. Everything is clamped to a token budget so long histories stay cheap.
  *
  * Fail-open: any error returns { injected: 0 } and leaves the body untouched.
  */
@@ -384,92 +490,137 @@ async function injectMemoryContext(body = {}, context = {}) {
     await ensureInitialized();
 
     const userId = context.userId || 'local-user';
-    const promptText = getUserPromptText(body);
+    const tokenBudget = context.tokenBudget || 1200;
+    const lastUserText = getLastUserText(body);
     const seen = new Set();
-    const memories = [];
-    const addMemories = (rows = []) => {
+    const coreFacts = [];
+    const relevantMemories = [];
+
+    const addTo = (bucket, rows = []) => {
       for (const memory of rows || []) {
         const key = String(memory.id || memory.title || memory.content || '').toLowerCase();
         if (seen.has(key)) continue;
         seen.add(key);
-        memories.push(memory);
+        bucket.push(memory);
       }
     };
+
     const userIds = userId === 'local-user' ? ['local-user'] : [userId, 'local-user'];
+
+    // 1. Core user facts: preferences/identity — always present, like ChatGPT's bio.
     for (const uid of userIds) {
       const rows = await memoryService.adapter.listMemories({
         type: MEMORY_TYPE.USER_PREF,
         scope: SCOPE.USER,
         userId: uid
-      }, { limit: 50 });
-      addMemories(rows);
+      }, { limit: 30 });
+      addTo(coreFacts, rows);
     }
 
-    if (promptText.trim()) {
+    // Pinned memories are always injected regardless of relevance.
+    try {
+      const pinned = await memoryService.getPinnedMemories({ userId }, 20);
+      addTo(coreFacts, pinned);
+    } catch { /* older adapters may not support pins */ }
+
+    // 2. Relevance-based recall for the current prompt (solved problems,
+    //    project knowledge, past session summaries).
+    if (lastUserText.trim()) {
       for (const uid of userIds) {
-        const rows = await memoryService.searchMemories(promptText, {
+        const rows = await memoryService.searchMemories(lastUserText.slice(0, 2000), {
           scope: SCOPE.USER,
           userId: uid,
-          maxResults: 12,
+          maxResults: 10,
           hybrid: true
         });
-        addMemories(rows);
+        addTo(relevantMemories, rows);
       }
     }
 
-    if (!memories || memories.length === 0) {
+    if (coreFacts.length === 0 && relevantMemories.length === 0) {
       return { injected: 0 };
     }
 
-    const lines = memories
-      .map((memory) => String(memory.content || memory.title || '').trim())
-      .filter(Boolean);
+    // 3. Token budget: core facts first, then relevant memories by order.
+    const lines = [];
+    let usedTokens = 0;
+    const pushLine = (memory, prefix = '') => {
+      const text = String(memory.content || memory.title || '').trim();
+      if (!text) return false;
+      const line = `- ${prefix}${text}`;
+      const cost = tokenCounter.count(line);
+      if (usedTokens + cost > tokenBudget) return false;
+      usedTokens += cost;
+      lines.push(line);
+      return true;
+    };
 
-    if (lines.length === 0) {
+    for (const memory of coreFacts) pushLine(memory);
+
+    const relevantLines = [];
+    for (const memory of relevantMemories) {
+      const text = String(memory.content || memory.title || '').trim();
+      if (!text) continue;
+      const isEpisodic = memory.type === MEMORY_TYPE.EPISODIC;
+      const line = `- ${isEpisodic ? '[past session] ' : ''}${text}`;
+      const cost = tokenCounter.count(line);
+      if (usedTokens + cost > tokenBudget) break;
+      usedTokens += cost;
+      relevantLines.push(line);
+    }
+
+    if (lines.length === 0 && relevantLines.length === 0) {
       return { injected: 0 };
     }
 
-    const memoryBlock = [
-      '# Known facts about the user (from 9router memory)',
-      'Use these remembered facts when relevant. If the user asks you to remember something, briefly acknowledge that it has been saved in 9router memory. Do not mention this block unless asked.',
-      '',
-      ...lines.map((line) => `- ${line}`)
-    ].join('\n');
+    const sections = [
+      '# Memory (from past conversations via 9router)',
+      'Use these remembered facts when relevant. If a past solution applies to the current problem, use it instead of rediscovering it. If the user asks you to remember something, briefly acknowledge that it has been saved. Do not mention this block unless asked.'
+    ];
+    if (lines.length) {
+      sections.push('', '## Known facts about the user', ...lines);
+    }
+    if (relevantLines.length) {
+      sections.push('', '## Possibly relevant memories for this request', ...relevantLines);
+    }
+    const memoryBlock = sections.join('\n');
+    const injectedCount = lines.length + relevantLines.length;
+    const MARKER = 'past conversations via 9router';
 
     // OpenAI / Claude chat format: messages[]
     if (Array.isArray(body.messages)) {
       const already = body.messages.some(
-        (m) => m && m.role === 'system' && typeof m.content === 'string' && m.content.includes('9router memory')
+        (m) => m && m.role === 'system' && typeof m.content === 'string' && m.content.includes(MARKER)
       );
       if (!already) {
         const firstNonSystem = body.messages.findIndex((m) => m && m.role !== 'system');
         const insertAt = firstNonSystem === -1 ? body.messages.length : firstNonSystem;
         body.messages.splice(insertAt, 0, { role: 'system', content: memoryBlock });
       }
-      return { injected: lines.length };
+      return { injected: injectedCount };
     }
 
     // OpenAI Responses API: input[]
     if (Array.isArray(body.input)) {
       const already = body.input.some(
-        (m) => m && m.role === 'system' && typeof m.content === 'string' && m.content.includes('9router memory')
+        (m) => m && m.role === 'system' && typeof m.content === 'string' && m.content.includes(MARKER)
       );
       if (!already) {
         body.input.unshift({ role: 'system', content: memoryBlock });
       }
-      return { injected: lines.length };
+      return { injected: injectedCount };
     }
 
     // Gemini format: contents[] + systemInstruction
     if (Array.isArray(body.contents)) {
       const existing = body.systemInstruction?.parts?.[0]?.text || '';
-      if (!existing.includes('9router memory')) {
+      if (!existing.includes(MARKER)) {
         body.systemInstruction = {
           role: 'system',
           parts: [{ text: existing ? `${existing}\n\n${memoryBlock}` : memoryBlock }]
         };
       }
-      return { injected: lines.length };
+      return { injected: injectedCount };
     }
 
     return { injected: 0 };
@@ -478,9 +629,82 @@ async function injectMemoryContext(body = {}, context = {}) {
   }
 }
 
+/**
+ * Rolling episodic session summaries — the "we've been here before" memory.
+ * Every `SUMMARY_EVERY_N_OBSERVATIONS` new observations in a session, the
+ * session is re-summarized (LLM self-call) and the summary memory is UPDATED
+ * in place, so each conversation leaves behind exactly one episodic memory.
+ * Designed to be fire-and-forget from the chat pipeline.
+ */
+const SUMMARY_EVERY_N_OBSERVATIONS = 10;
+const sessionSummaryState = new Map(); // sessionId → lastSummarizedCount
+const MAX_SUMMARY_STATE = 500;
+
+async function maybeUpdateSessionSummary(sessionId, context = {}) {
+  if (!sessionId || sessionId === 'chat-local') return null;
+
+  try {
+    await ensureInitialized();
+
+    const observations = await memoryService.adapter.listObservationsBySession(sessionId, { limit: 200 });
+    const count = observations?.length || 0;
+    const lastCount = sessionSummaryState.get(sessionId) || 0;
+    if (count < SUMMARY_EVERY_N_OBSERVATIONS || count - lastCount < SUMMARY_EVERY_N_OBSERVATIONS) {
+      return null;
+    }
+
+    if (sessionSummaryState.size >= MAX_SUMMARY_STATE && !sessionSummaryState.has(sessionId)) {
+      const oldestKey = sessionSummaryState.keys().next().value;
+      sessionSummaryState.delete(oldestKey);
+    }
+    sessionSummaryState.set(sessionId, count);
+
+    const blob = observations
+      .map((o) => o.raw_content || '')
+      .filter(Boolean)
+      .join('\n')
+      .slice(0, 15000);
+    if (blob.length < 200) return null;
+
+    const summary = await memoryService.summarizeWithRouter(blob, { maxLength: 850, style: 'episodic' });
+    if (!summary) return null;
+
+    const userId = context.userId || 'local-user';
+    const title = `Session summary: ${sessionId}`;
+
+    // Update in place if this session already has a summary memory.
+    const existing = await memoryService.adapter.listMemories({
+      type: MEMORY_TYPE.EPISODIC,
+      scope: SCOPE.USER,
+      userId
+    }, { limit: 200 });
+    const match = existing.find((memory) => memory.title === title);
+    if (match) {
+      await memoryService.updateMemory(match.id, { content: summary, importanceScore: 0.75 }, userId);
+      return match.id;
+    }
+
+    return await memoryService.saveMemory({
+      type: MEMORY_TYPE.EPISODIC,
+      scope: SCOPE.USER,
+      sessionId,
+      userId,
+      title,
+      content: summary,
+      importanceScore: 0.75
+    });
+  } catch {
+    return null;
+  }
+}
+
 module.exports = {
   captureChatMemory,
   injectMemoryContext,
+  deriveSessionId,
+  getLatestAssistantText,
+  getLastUserText,
+  maybeUpdateSessionSummary,
   extractRememberedAge,
   extractRememberedGeneric,
   extractRememberedIdentity,

@@ -118,7 +118,56 @@ class SqliteAdapter extends StorageInterface {
       );
     });
 
+    // Best-effort: relax observations.type CHECK to allow 'assistant_response'.
+    // Existing DBs were created with the old constraint; SQLite can't ALTER a
+    // CHECK, so rebuild the table once if the old constraint is detected.
+    await this.migrateObservationTypeConstraint();
+
     return this;
+  }
+
+  /**
+   * One-time migration: rebuild `observations` when its CHECK constraint
+   * predates the 'assistant_response' type. No-op for fresh databases.
+   */
+  async migrateObservationTypeConstraint() {
+    try {
+      const row = await this.get(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'observations'"
+      );
+      if (!row?.sql || row.sql.includes('assistant_response')) return;
+
+      await this.run('PRAGMA foreign_keys = OFF');
+      await this.run('BEGIN TRANSACTION');
+      await this.run(`
+        CREATE TABLE observations_new (
+          id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL,
+          type TEXT CHECK(type IN ('prompt', 'assistant_response', 'tool_use', 'tool_result', 'error', 'file_access')),
+          timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          content_hash TEXT,
+          raw_content TEXT NOT NULL,
+          privacy_filtered BOOLEAN DEFAULT 0,
+          is_sensitive BOOLEAN DEFAULT 0,
+          FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+        )
+      `);
+      await this.run(`
+        INSERT INTO observations_new (id, session_id, type, timestamp, content_hash, raw_content, privacy_filtered, is_sensitive)
+        SELECT id, session_id, type, timestamp, content_hash, raw_content, privacy_filtered, is_sensitive FROM observations
+      `);
+      await this.run('DROP TABLE observations');
+      await this.run('ALTER TABLE observations_new RENAME TO observations');
+      await this.run('CREATE INDEX IF NOT EXISTS idx_observations_session ON observations(session_id)');
+      await this.run('CREATE INDEX IF NOT EXISTS idx_observations_type ON observations(type)');
+      await this.run('CREATE INDEX IF NOT EXISTS idx_observations_hash ON observations(content_hash)');
+      await this.run('COMMIT');
+      await this.run('PRAGMA foreign_keys = ON');
+    } catch (error) {
+      try { await this.run('ROLLBACK'); } catch { /* not in a transaction */ }
+      try { await this.run('PRAGMA foreign_keys = ON'); } catch { /* best effort */ }
+      console.warn('[SqliteAdapter] observations type migration skipped:', error.message);
+    }
   }
 
   /**
@@ -343,6 +392,29 @@ class SqliteAdapter extends StorageInterface {
       'SELECT * FROM observations WHERE content_hash = ? ORDER BY timestamp ASC LIMIT 1',
       [contentHash]
     );
+  }
+
+  // ==================== Audit ====================
+
+  /**
+   * Persist an audit event (create/update/delete/access/consolidate/decay).
+   * Previously unimplemented in this adapter, which made every
+   * updateMemory/deleteMemory throw when privacy.auditLogging was enabled.
+   */
+  async logAudit(auditEvent = {}) {
+    const query = `
+      INSERT INTO memory_audit_log (id, action, memory_id, user_id, changes, ip_address, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `;
+    await this.run(query, [
+      uuidv4(),
+      auditEvent.action,
+      auditEvent.memoryId || null,
+      auditEvent.userId || null,
+      auditEvent.changes ? JSON.stringify(auditEvent.changes) : null,
+      auditEvent.ipAddress || null,
+      auditEvent.timestamp || new Date().toISOString()
+    ]);
   }
 
   // ==================== Memory Operations ====================

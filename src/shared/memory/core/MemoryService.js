@@ -611,7 +611,12 @@ class MemoryService {
       const baseUrl = process.env.ROUTER_BASE_URL || 'http://localhost:20128';
       const res = await fetch(`${baseUrl}/v1/chat/completions`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          // Internal self-call marker: prevents the memory capture/injection
+          // pipeline from recursively processing this request.
+          'x-9router-memory-internal': '1'
+        },
         body: JSON.stringify({
           model: 'auto',
           messages: [

@@ -40,6 +40,12 @@ vi.mock("@/lib/usageDb.js", () => ({
 vi.mock("@/shared/memory/capture.js", () => ({
   captureChatMemory: vi.fn(async () => ({ memories: 0 })),
   injectMemoryContext: vi.fn(async () => ({ injected: 0 })),
+  deriveSessionId: vi.fn(() => "test-session"),
+  maybeUpdateSessionSummary: vi.fn(async () => null),
+}));
+vi.mock("@/shared/memory/autoMemory.js", () => ({
+  scheduleAutoMemoryExtraction: vi.fn(),
+  MEMORY_INTERNAL_HEADER: "x-9router-memory-internal",
 }));
 
 const { handleChatCore } = await import("../../open-sse/handlers/chatCore.js");

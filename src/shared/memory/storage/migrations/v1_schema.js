@@ -30,7 +30,7 @@ CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
 CREATE TABLE IF NOT EXISTS observations (
     id TEXT PRIMARY KEY,
     session_id TEXT NOT NULL,
-    type TEXT CHECK(type IN ('prompt', 'tool_use', 'tool_result', 'error', 'file_access')),
+    type TEXT CHECK(type IN ('prompt', 'assistant_response', 'tool_use', 'tool_result', 'error', 'file_access')),
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     content_hash TEXT, -- For deduplication
     raw_content TEXT NOT NULL,

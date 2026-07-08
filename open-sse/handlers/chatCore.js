@@ -26,7 +26,8 @@ import { compressWithHeadroom, formatHeadroomLog, formatHeadroomSizeLog, isHeadr
 import { getCapabilitiesForModel } from "../providers/capabilities.js";
 import { stripUnsupportedModalities } from "../translator/concerns/modality.js";
 import { prefetchRemoteImages } from "../translator/concerns/prefetch.js";
-import { captureChatMemory, injectMemoryContext } from "@/shared/memory/capture.js";
+import { captureChatMemory, injectMemoryContext, deriveSessionId, maybeUpdateSessionSummary } from "@/shared/memory/capture.js";
+import { scheduleAutoMemoryExtraction, MEMORY_INTERNAL_HEADER } from "@/shared/memory/autoMemory.js";
 import { parseModel } from "../services/model.js";
 import {
   needsVisionDelegation,
@@ -165,8 +166,13 @@ function getHeader(headers = {}, name) {
 
 async function applyMemoryContext({ body, provider, model, apiKey, clientRawRequest, log }) {
   try {
+    // Never capture/inject for internal memory self-calls (extraction,
+    // summarization) — prevents infinite recursion through /v1/chat/completions.
+    if (getHeader(clientRawRequest?.headers, MEMORY_INTERNAL_HEADER)) return;
+
     const userId = apiKey ? `api:${String(apiKey).slice(-8)}` : "local-user";
-    const sessionId = getHeader(clientRawRequest?.headers, "x-9router-session-id") || body.session_id || body.conversation_id || body.thread_id || "chat-local";
+    const explicitSession = getHeader(clientRawRequest?.headers, "x-9router-session-id") || body.session_id || body.conversation_id || body.thread_id || null;
+    const sessionId = deriveSessionId(body, explicitSession);
     const captured = await captureChatMemory(body, {
       endpoint: clientRawRequest?.endpoint,
       provider,
@@ -177,6 +183,13 @@ async function applyMemoryContext({ body, provider, model, apiKey, clientRawRequ
     const injected = await injectMemoryContext(body, { userId });
     if (captured?.memories) log?.debug?.("MEMORY", `Saved ${captured.memories} remembered fact(s)`);
     if (injected?.injected) log?.debug?.("MEMORY", `Injected ${injected.injected} remembered fact(s) into prompt`);
+
+    // ChatGPT-style background jobs (fire-and-forget, throttled, fail-open):
+    // LLM decides what's memory-worthy + rolling episodic session summary.
+    scheduleAutoMemoryExtraction(body, { userId, sessionId, provider, model }, log);
+    setImmediate(() => {
+      maybeUpdateSessionSummary(sessionId, { userId }).catch(() => {});
+    });
   } catch (error) {
     log?.warn?.("MEMORY", `skipped: ${error?.message || error}`);
   }
