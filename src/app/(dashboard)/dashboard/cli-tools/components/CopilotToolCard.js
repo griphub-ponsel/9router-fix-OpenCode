@@ -29,6 +29,8 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
   const [modalOpen, setModalOpen] = useState(false);
   const [visionFallbackModels, setVisionFallbackModels] = useState([]);
   const [fallbackModalOpen, setFallbackModalOpen] = useState(false);
+  const [utilityModel, setUtilityModel] = useState("");
+  const [utilitySmallModel, setUtilitySmallModel] = useState("");
   const [sortKey, setSortKey] = useState("model"); // "model" | "displayName"
   const [sortDir, setSortDir] = useState("asc"); // "asc" | "desc"
 
@@ -58,6 +60,8 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
   }, [sortKey, sortDir]);
   const selectedModelsRef = useRef([]);
   const visionFallbackRef = useRef([]);
+  const utilityModelRef = useRef("");
+  const utilitySmallModelRef = useRef("");
 
   const sortModels = (models) => ([...new Set(models)].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })));
 
@@ -135,6 +139,17 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
     return arr;
   }, [selectedModels, sortKey, sortDir, modelDisplayNames, modelAliases]);
 
+  // Utility-model dropdown options: the selected models, plus the currently
+  // configured value if it was removed from the list (so it is never silently lost).
+  const utilityModelOptions = useMemo(
+    () => (utilityModel && !sortedModels.includes(utilityModel) ? [utilityModel, ...sortedModels] : sortedModels),
+    [sortedModels, utilityModel]
+  );
+  const utilitySmallModelOptions = useMemo(
+    () => (utilitySmallModel && !sortedModels.includes(utilitySmallModel) ? [utilitySmallModel, ...sortedModels] : sortedModels),
+    [sortedModels, utilitySmallModel]
+  );
+
   useEffect(() => {
     selectedModelsRef.current = selectedModels;
   }, [selectedModels]);
@@ -142,6 +157,14 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
   useEffect(() => {
     visionFallbackRef.current = visionFallbackModels;
   }, [visionFallbackModels]);
+
+  useEffect(() => {
+    utilityModelRef.current = utilityModel;
+  }, [utilityModel]);
+
+  useEffect(() => {
+    utilitySmallModelRef.current = utilitySmallModel;
+  }, [utilitySmallModel]);
 
   useEffect(() => {
     if (apiKeys?.length > 0 && !selectedApiKey) {
@@ -193,6 +216,12 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
     if (status && Array.isArray(status.visionFallbackModels)) {
       setVisionFallbackModels(status.visionFallbackModels);
     }
+    if (status && typeof status.copilotUtilityModel === "string") {
+      setUtilityModel(status.copilotUtilityModel);
+    }
+    if (status && typeof status.copilotUtilitySmallModel === "string") {
+      setUtilitySmallModel(status.copilotUtilitySmallModel);
+    }
   }, [status, modelAliases]);
 
   const fetchModelAliases = async () => {
@@ -223,7 +252,7 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
       await fetch("/api/cli-tools/copilot-settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ baseUrl: getEffectiveBaseUrl(), apiKey: keyToUse, models, modelNames: getSelectedModelNames(models), modelContextSizes: getSelectedModelContextSizes(models), visionFallbackModels: visionFallbackRef.current }),
+        body: JSON.stringify({ baseUrl: getEffectiveBaseUrl(), apiKey: keyToUse, models, modelNames: getSelectedModelNames(models), modelContextSizes: getSelectedModelContextSizes(models), visionFallbackModels: visionFallbackRef.current, utilityModel: utilityModelRef.current, utilitySmallModel: utilitySmallModelRef.current }),
       });
     } catch (error) {
       console.log("Error saving models:", error);
@@ -248,6 +277,8 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
 
   const removeModel = (id) => {
     setSelectedModels((prev) => sortModels(prev.filter((m) => m !== id)));
+    setUtilityModel((prev) => (prev === id ? "" : prev));
+    setUtilitySmallModel((prev) => (prev === id ? "" : prev));
     setModelDisplayNames((prev) => {
       const next = { ...prev };
       delete next[id];
@@ -289,7 +320,7 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
       const res = await fetch("/api/cli-tools/copilot-settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ baseUrl: getEffectiveBaseUrl(), apiKey: keyToUse, models: selectedModels, modelNames: getSelectedModelNames(), modelContextSizes: getSelectedModelContextSizes(), visionFallbackModels }),
+        body: JSON.stringify({ baseUrl: getEffectiveBaseUrl(), apiKey: keyToUse, models: selectedModels, modelNames: getSelectedModelNames(), modelContextSizes: getSelectedModelContextSizes(), visionFallbackModels, utilityModel, utilitySmallModel }),
       });
       const data = await res.json();
       if (res.ok) {
@@ -317,6 +348,8 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
         setModelDisplayNames({});
         setModelContextSizes({});
         setNewModelBadges({});
+        setUtilityModel("");
+        setUtilitySmallModel("");
         checkStatus();
       } else {
         setMessage({ type: "error", text: data.error || "Failed to reset settings" });
@@ -350,7 +383,13 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
         apiType: "chat-completions",
         models: configModels,
       }], null, 2),
-    }];
+    }, ...((utilityModel || utilitySmallModel) ? [{
+      filename: "VS Code User/settings.json (merge these keys)",
+      content: JSON.stringify({
+        ...(utilityModel ? { "chat.utilityModel": `customendpoint/${utilityModel}` } : {}),
+        ...(utilitySmallModel ? { "chat.utilitySmallModel": `customendpoint/${utilitySmallModel}` } : {}),
+      }, null, 2),
+    }] : [])];
   };
 
   return (
@@ -544,6 +583,53 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
                         {visionFallbackModels.length > 0 ? `${visionFallbackModels.length} fallback model${visionFallbackModels.length === 1 ? "" : "s"}` : "Optional"}
                       </span>
                     </div>
+                  </div>
+                </div>
+
+                {/* Utility Models — VS Code settings.json: chat.utilityModel / chat.utilitySmallModel */}
+                <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr] sm:items-start sm:gap-2">
+                  <span className="w-32 shrink-0 text-sm font-semibold text-text-main text-right pt-1">Utility Models</span>
+                  <span className="material-symbols-outlined text-text-muted text-[14px] mt-1.5">arrow_forward</span>
+                  <div className="flex-1 flex flex-col gap-2">
+                    <div className="flex items-start gap-2 rounded border border-border bg-surface/40 px-3 py-2 text-[11px] text-text-muted">
+                      <span className="material-symbols-outlined text-[14px] text-primary">bolt</span>
+                      <span>
+                        VS Code uses lightweight models for background tasks (chat titles, commit messages, intent detection).
+                        BYOK setups have no built-in utility model, so pick ones here to write <code className="px-1 bg-black/5 dark:bg-white/10 rounded">chat.utilityModel</code> and <code className="px-1 bg-black/5 dark:bg-white/10 rounded">chat.utilitySmallModel</code> into VS Code settings. Leave as Default to keep Copilot&apos;s built-in.
+                      </span>
+                    </div>
+                    {selectedModels.length === 0 ? (
+                      <div className="px-3 py-3 rounded border border-border bg-surface/40 text-center">
+                        <span className="text-xs text-text-muted">Add models first to choose utility models</span>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        <label className="flex flex-col gap-1">
+                          <span className="text-[11px] font-medium text-text-muted">Utility Model <span className="opacity-70">(titles, summaries)</span></span>
+                          <select
+                            value={utilityModel}
+                            onChange={(e) => setUtilityModel(e.target.value)}
+                            className="w-full rounded border border-border bg-surface px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-primary/50"
+                            title="chat.utilityModel"
+                          >
+                            <option value="">Default (Copilot built-in)</option>
+                            {utilityModelOptions.map((m) => <option key={m} value={m}>{getModelDisplayName(m)}</option>)}
+                          </select>
+                        </label>
+                        <label className="flex flex-col gap-1">
+                          <span className="text-[11px] font-medium text-text-muted">Utility Small Model <span className="opacity-70">(commits, intent)</span></span>
+                          <select
+                            value={utilitySmallModel}
+                            onChange={(e) => setUtilitySmallModel(e.target.value)}
+                            className="w-full rounded border border-border bg-surface px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-primary/50"
+                            title="chat.utilitySmallModel"
+                          >
+                            <option value="">Default (Copilot built-in)</option>
+                            {utilitySmallModelOptions.map((m) => <option key={m} value={m}>{getModelDisplayName(m)}</option>)}
+                          </select>
+                        </label>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>

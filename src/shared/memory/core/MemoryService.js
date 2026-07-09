@@ -43,12 +43,20 @@ class MemoryService {
     }
 
     // Initialize storage adapter
+    // Prefer MEMORY_DB_PATH / MEMORY_STORAGE_DB_PATH, then config, then
+    // canonical repo-root path (resolveMemoryDbPath ignores process.cwd()).
+    const configuredPath =
+      process.env.MEMORY_DB_PATH ||
+      process.env.MEMORY_STORAGE_DB_PATH ||
+      this.config.get('global').get('storage.dbPath') ||
+      './data/9router-memory.sqlite';
     const storageConfig = {
-      dbPath: this.config.get('global').get('storage.dbPath') || './data/9router-memory.sqlite'
+      dbPath: configuredPath
     };
     
     this.adapter = new SqliteAdapter(storageConfig);
     await this.adapter.initialize(storageConfig);
+    console.log('[MemoryService] Using memory DB:', this.adapter.dbPath);
 
     // Initialize embedding service (Phase 2)
     const embCfg = this.config.get('global').get('embedding') || {};

@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import fs from "fs/promises";
 import path from "path";
 import os from "os";
+import { parseJSONC } from "confbox";
 import { findModelName } from "open-sse/config/providerModels.js";
 import { getCopilotModelLimits } from "@/shared/utils/copilotModelLimits.js";
 import { supportsCopilotVision } from "@/shared/utils/copilotModelCapabilities.js";
@@ -21,6 +22,87 @@ const getConfigPath = () => {
     return path.join(home, "Library", "Application Support", "Code", "User", "chatLanguageModels.json");
   }
   return path.join(home, ".config", "Code", "User", "chatLanguageModels.json");
+};
+
+// Resolve VS Code User settings.json path per OS (same folder as chatLanguageModels.json)
+const getVscodeUserSettingsPath = () => {
+  const home = os.homedir();
+  const platform = os.platform();
+  if (platform === "win32") {
+    return path.join(process.env.APPDATA || home, "Code", "User", "settings.json");
+  }
+  if (platform === "darwin") {
+    return path.join(home, "Library", "Application Support", "Code", "User", "settings.json");
+  }
+  return path.join(home, ".config", "Code", "User", "settings.json");
+};
+
+// Safely read VS Code settings.json (JSONC: comments + trailing commas + URLs).
+// Returns { settings, parsable, existed }:
+//  - existed=false: file is missing (safe to create fresh)
+//  - parsable=false: file exists but can't be parsed — callers MUST NOT overwrite
+//    it, otherwise the user's entire settings.json would be destroyed.
+const readVscodeUserSettings = async () => {
+  const filePath = getVscodeUserSettingsPath();
+  let content;
+  try {
+    content = await fs.readFile(filePath, "utf-8");
+  } catch (error) {
+    if (error.code === "ENOENT") return { settings: {}, parsable: true, existed: false };
+    throw error;
+  }
+  if (!content.trim()) return { settings: {}, parsable: true, existed: true };
+  try {
+    const parsed = parseJSONC(content);
+    return { settings: parsed && typeof parsed === "object" ? parsed : {}, parsable: true, existed: true };
+  } catch {
+    return { settings: null, parsable: false, existed: true };
+  }
+};
+
+// Write chat.utilityModel / chat.utilitySmallModel into VS Code settings.json.
+// An empty/blank value removes the key (reverts to the built-in Copilot utility
+// model). Skips the write when nothing changes (preserves the user's comments in
+// the common case) and never overwrites a settings.json we couldn't parse.
+//
+// VS Code requires the value encoded as `${vendor}/${id}` (split on the FIRST
+// slash); anything without a vendor prefix is treated as malformed and silently
+// ignored. Models from chatLanguageModels.json live under the "customendpoint"
+// vendor, so raw ids (even ones containing slashes, e.g. "xog/grok-4.5") must
+// be prefixed: "customendpoint/xog/grok-4.5".
+const COPILOT_BYOK_VENDOR = "customendpoint";
+const toUtilitySettingValue = (modelId) => {
+  const id = typeof modelId === "string" ? modelId.trim() : "";
+  if (!id) return "";
+  if (id.startsWith(`${COPILOT_BYOK_VENDOR}/`)) return id;
+  return `${COPILOT_BYOK_VENDOR}/${id}`;
+};
+
+const applyUtilityModelsToVscode = async (utilityModel, utilitySmallModel) => {
+  const { settings, parsable, existed } = await readVscodeUserSettings();
+  if (!parsable) return { applied: false, reason: "unparsable" };
+
+  const desired = new Map([
+    ["chat.utilityModel", toUtilitySettingValue(utilityModel)],
+    ["chat.utilitySmallModel", toUtilitySettingValue(utilitySmallModel)],
+  ]);
+
+  const next = { ...settings };
+  let changed = false;
+  for (const [key, value] of desired) {
+    if (value) {
+      if (next[key] !== value) { next[key] = value; changed = true; }
+    } else if (key in next) {
+      delete next[key]; changed = true;
+    }
+  }
+
+  if (!changed && existed) return { applied: true, changed: false };
+
+  const filePath = getVscodeUserSettingsPath();
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, JSON.stringify(next, null, 2));
+  return { applied: true, changed: true };
 };
 
 const readConfig = async () => {
@@ -71,6 +153,8 @@ export async function GET() {
     const entry = get9RouterEntry(config);
     const settings = await getSettings().catch(() => ({}));
     const visionFallbackModels = Array.isArray(settings?.visionFallbackModels) ? settings.visionFallbackModels : [];
+    const copilotUtilityModel = typeof settings?.copilotUtilityModel === "string" ? settings.copilotUtilityModel : "";
+    const copilotUtilitySmallModel = typeof settings?.copilotUtilitySmallModel === "string" ? settings.copilotUtilitySmallModel : "";
 
     return NextResponse.json({
       installed: true,
@@ -80,6 +164,8 @@ export async function GET() {
       currentModel: entry?.models?.[0]?.id || null,
       currentUrl: entry?.models?.[0]?.url || null,
       visionFallbackModels,
+      copilotUtilityModel,
+      copilotUtilitySmallModel,
     });
   } catch (error) {
     console.log("Error checking copilot settings:", error);
@@ -90,7 +176,7 @@ export async function GET() {
 // POST - Apply 9Router config to chatLanguageModels.json
 export async function POST(request) {
   try {
-    const { baseUrl, apiKey, models, modelNames = {}, modelContextSizes = {}, visionFallbackModels } = await request.json();
+    const { baseUrl, apiKey, models, modelNames = {}, modelContextSizes = {}, visionFallbackModels, utilityModel = "", utilitySmallModel = "" } = await request.json();
 
     if (!baseUrl || !models?.length) {
       return NextResponse.json({ error: "baseUrl and models are required" }, { status: 400 });
@@ -158,9 +244,31 @@ export async function POST(request) {
 
     await fs.writeFile(configPath, JSON.stringify(config, null, 2));
 
+    // Persist utility-model selections and mirror them into VS Code settings.json
+    // (chat.utilityModel / chat.utilitySmallModel). BYOK setups have no built-in
+    // Copilot utility model, so these power title generation, commit messages,
+    // intent detection, and other lightweight background tasks.
+    const utilityModelClean = typeof utilityModel === "string" ? utilityModel.trim() : "";
+    const utilitySmallModelClean = typeof utilitySmallModel === "string" ? utilitySmallModel.trim() : "";
+    await updateSettings({
+      copilotUtilityModel: utilityModelClean,
+      copilotUtilitySmallModel: utilitySmallModelClean,
+    }).catch((e) => console.log("Failed to persist copilot utility models:", e));
+
+    let utilityNote = "";
+    try {
+      const result = await applyUtilityModelsToVscode(utilityModelClean, utilitySmallModelClean);
+      if (!result.applied && result.reason === "unparsable") {
+        utilityNote = " Utility models were saved, but settings.json has syntax errors — set chat.utilityModel / chat.utilitySmallModel manually (see Manual Config).";
+      }
+    } catch (e) {
+      console.log("Failed to apply utility models to VS Code settings:", e);
+      utilityNote = " Utility models were saved, but VS Code settings.json could not be written — set chat.utilityModel / chat.utilitySmallModel manually (see Manual Config).";
+    }
+
     return NextResponse.json({
       success: true,
-      message: "Copilot Custom Endpoint config applied. Reload VS Code to take effect.",
+      message: `Copilot Custom Endpoint config applied. Reload VS Code to take effect.${utilityNote}`,
       configPath,
     });
   } catch (error) {
@@ -188,6 +296,11 @@ export async function DELETE() {
 
     config = config.filter((e) => e.name !== "9Router");
     await fs.writeFile(configPath, JSON.stringify(config, null, 2));
+
+    // Best-effort: drop the utility-model overrides from VS Code settings + DB so
+    // a reset fully reverts to Copilot's built-in utility model.
+    await updateSettings({ copilotUtilityModel: "", copilotUtilitySmallModel: "" }).catch(() => {});
+    await applyUtilityModelsToVscode("", "").catch((e) => console.log("Failed to clear utility models from VS Code settings:", e));
 
     return NextResponse.json({
       success: true,

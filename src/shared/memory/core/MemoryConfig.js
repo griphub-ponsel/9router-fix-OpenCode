@@ -6,8 +6,11 @@ class MemoryConfig {
   constructor() {
     this.defaults = {
       // Storage configuration
+      // Relative path is resolved against the monorepo root (NOT process.cwd())
+      // via resolveMemoryDbPath — see storage/resolveMemoryDbPath.js.
+      // Override with MEMORY_DB_PATH / MEMORY_STORAGE_DB_PATH for absolute control.
       storage: {
-        dbPath: './data/9router-memory.sqlite',
+        dbPath: process.env.MEMORY_DB_PATH || process.env.MEMORY_STORAGE_DB_PATH || './data/9router-memory.sqlite',
         maxConnections: 5,
         timeout: 30000
       },

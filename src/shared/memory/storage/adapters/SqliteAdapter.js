@@ -9,13 +9,13 @@ const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
 const { CREATE_TABLES_SQL, SCHEMA_VERSION } = require('../migrations/v1_schema');
 const StorageInterface = require('./BaseAdapter');
+const { resolveMemoryDbPath } = require('../resolveMemoryDbPath');
 
 class SqliteAdapter extends StorageInterface {
   constructor(config = {}) {
     super();
-    // Initialize dbPath immediately as absolute path
-    const rootDir = process.cwd();
-    this.dbPath = config.dbPath || `data/9router-memory.sqlite`;
+    // Always absolute + cwd-independent (see resolveMemoryDbPath)
+    this.dbPath = resolveMemoryDbPath(config.dbPath);
     this.connection = null;
     this.initializePromise = null;
   }
@@ -28,13 +28,11 @@ class SqliteAdapter extends StorageInterface {
       return this.initializePromise;
     }
 
-    // Ensure dbPath is absolute using full path module
-    const path = require('path');
     const fs = require('fs');
-    
-    const rootDir = process.cwd();
-    this.dbPath = config.dbPath || path.join(rootDir, 'data', '9router-memory.sqlite');
-    
+
+    // Re-resolve in case caller passed a different path / env changed
+    this.dbPath = resolveMemoryDbPath(config.dbPath || this.dbPath);
+
     console.log('[SqliteAdapter] DB Path:', this.dbPath);
     console.log('[SqliteAdapter] DB Dir exists:', fs.existsSync(path.dirname(this.dbPath)));
     

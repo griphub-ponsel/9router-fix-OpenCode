@@ -46,6 +46,12 @@ const DEFAULT_SETTINGS = {
   // understanding for models that can't read images. One is picked at random
   // per request (load balance). Empty = feature off.
   visionFallbackModels: [],
+  // Copilot utility models: model ids (e.g. "xog/grok-4.5") written to VS Code
+  // settings.json as chat.utilityModel / chat.utilitySmallModel. BYOK setups have
+  // no built-in Copilot utility model, so these power title generation, commit
+  // messages, intent detection, etc. Empty = leave VS Code default.
+  copilotUtilityModel: "",
+  copilotUtilitySmallModel: "",
 };
 
 async function readRaw() {
