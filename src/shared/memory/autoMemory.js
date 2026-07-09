@@ -338,8 +338,10 @@ async function runAutoMemoryExtraction(body = {}, context = {}, overrides = {}) 
 
 /**
  * Fire-and-forget wrapper used by the chat pipeline: never throws, never blocks.
+ * `overrides` lets callers pin config per-call (e.g. the dashboard-selected
+ * extraction model from settings.memoryExtractModel).
  */
-function scheduleAutoMemoryExtraction(body, context = {}, log = null) {
+function scheduleAutoMemoryExtraction(body, context = {}, log = null, overrides = {}) {
   try {
     // Clone the pieces we need — the live body gets mutated downstream
     // (memory injection, translation, compression).
@@ -349,7 +351,7 @@ function scheduleAutoMemoryExtraction(body, context = {}, log = null) {
     };
 
     setImmediate(() => {
-      runAutoMemoryExtraction(snapshot, context)
+      runAutoMemoryExtraction(snapshot, context, overrides)
         .then((result) => {
           if (result?.ran && (result.saved || result.updated)) {
             log?.debug?.('MEMORY', `auto-extract: +${result.saved} saved, ~${result.updated} updated`);

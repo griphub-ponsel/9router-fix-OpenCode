@@ -52,6 +52,10 @@ const DEFAULT_SETTINGS = {
   // messages, intent detection, etc. Empty = leave VS Code default.
   copilotUtilityModel: "",
   copilotUtilitySmallModel: "",
+  // Auto-memory extraction model (ChatGPT-style memory). 9router self-calls
+  // /v1/chat/completions with this model to decide what's memory-worthy.
+  // Empty = fall back to MEMORY_EXTRACT_MODEL env, then the "auto" alias.
+  memoryExtractModel: "",
   // ── Cloudflare Workers AI automation ──────────────────────────────
   // Ammail temp-mail — used to register Cloudflare accounts.
   ammail_base_url: "",

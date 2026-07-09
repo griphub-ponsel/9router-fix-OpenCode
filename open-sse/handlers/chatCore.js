@@ -164,7 +164,7 @@ function getHeader(headers = {}, name) {
   return null;
 }
 
-async function applyMemoryContext({ body, provider, model, apiKey, clientRawRequest, log }) {
+async function applyMemoryContext({ body, provider, model, apiKey, clientRawRequest, log, memoryExtractModel }) {
   try {
     // Never capture/inject for internal memory self-calls (extraction,
     // summarization) — prevents infinite recursion through /v1/chat/completions.
@@ -186,7 +186,9 @@ async function applyMemoryContext({ body, provider, model, apiKey, clientRawRequ
 
     // ChatGPT-style background jobs (fire-and-forget, throttled, fail-open):
     // LLM decides what's memory-worthy + rolling episodic session summary.
-    scheduleAutoMemoryExtraction(body, { userId, sessionId, provider, model }, log);
+    // Dashboard-picked extraction model (settings.memoryExtractModel) wins over
+    // the module default (MEMORY_EXTRACT_MODEL env → "auto" alias).
+    scheduleAutoMemoryExtraction(body, { userId, sessionId, provider, model }, log, memoryExtractModel ? { model: memoryExtractModel } : {});
     setImmediate(() => {
       maybeUpdateSessionSummary(sessionId, { userId }).catch(() => {});
     });
@@ -203,7 +205,7 @@ async function applyMemoryContext({ body, provider, model, apiKey, clientRawRequ
  * @param {string} options.sourceFormatOverride - Override detected source format (e.g. "openai-responses")
  */
 export async function handleChatCore(options) {
-  const { modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, clientRawRequest, connectionId, userAgent, apiKey, ccFilterNaming, rtkEnabled, headroomEnabled, headroomUrl, headroomCompressUserMessages, cavemanEnabled, cavemanLevel, ponytailEnabled, ponytailLevel, sourceFormatOverride, providerThinking, internalVisionRelay, visionFallbackModels, autoVisionFallbackModels, resolveVisionCredentials, visionRetryAttempted } = options;
+  const { modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, clientRawRequest, connectionId, userAgent, apiKey, ccFilterNaming, rtkEnabled, headroomEnabled, headroomUrl, headroomCompressUserMessages, cavemanEnabled, cavemanLevel, ponytailEnabled, ponytailLevel, memoryExtractModel, sourceFormatOverride, providerThinking, internalVisionRelay, visionFallbackModels, autoVisionFallbackModels, resolveVisionCredentials, visionRetryAttempted } = options;
   let body = options.body;
   const { provider, model } = modelInfo;
   const requestStartTime = Date.now();
@@ -215,7 +217,7 @@ export async function handleChatCore(options) {
   if (bypassResponse) return bypassResponse;
 
   if (!internalVisionRelay && !visionRetryAttempted) {
-    await applyMemoryContext({ body, provider, model, apiKey, clientRawRequest, log });
+    await applyMemoryContext({ body, provider, model, apiKey, clientRawRequest, log, memoryExtractModel });
   }
 
   const alias = PROVIDER_ID_TO_ALIAS[provider] || provider;
@@ -345,7 +347,13 @@ export async function handleChatCore(options) {
     if (isHeadroomPhantomSavings(headroomStats, headroomDiagnostics)) {
       log?.warn?.("HEADROOM", `reported token delta, but outbound JSON shrank <5%; provider may bill near-original payload | ${headroomSizeLine}`);
     }
-  } else if (headroomEnabled) log?.warn?.("HEADROOM", `skipped: ${headroomDiagnostics.reason || "compression unavailable"}${headroomDiagnostics.endpoint ? ` (${headroomDiagnostics.endpoint})` : ""}`);
+  } else if (headroomEnabled) {
+    // Circuit-open skips repeat on every request while the proxy is down —
+    // log those at debug; the initial connection failure already warned.
+    const headroomSkipMsg = `skipped: ${headroomDiagnostics.reason || "compression unavailable"}${headroomDiagnostics.endpoint ? ` (${headroomDiagnostics.endpoint})` : ""}`;
+    if (headroomDiagnostics.circuitOpen) log?.debug?.("HEADROOM", headroomSkipMsg);
+    else log?.warn?.("HEADROOM", headroomSkipMsg);
+  }
 
   let translatedBody;
   let toolNameMap;

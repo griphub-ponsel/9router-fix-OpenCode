@@ -31,6 +31,8 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
   const [fallbackModalOpen, setFallbackModalOpen] = useState(false);
   const [utilityModel, setUtilityModel] = useState("");
   const [utilitySmallModel, setUtilitySmallModel] = useState("");
+  const [utilityModalOpen, setUtilityModalOpen] = useState(false);
+  const [utilitySmallModalOpen, setUtilitySmallModalOpen] = useState(false);
   const [sortKey, setSortKey] = useState("model"); // "model" | "displayName"
   const [sortDir, setSortDir] = useState("asc"); // "asc" | "desc"
 
@@ -138,17 +140,6 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
     if (sortDir === "desc") arr.reverse();
     return arr;
   }, [selectedModels, sortKey, sortDir, modelDisplayNames, modelAliases]);
-
-  // Utility-model dropdown options: the selected models, plus the currently
-  // configured value if it was removed from the list (so it is never silently lost).
-  const utilityModelOptions = useMemo(
-    () => (utilityModel && !sortedModels.includes(utilityModel) ? [utilityModel, ...sortedModels] : sortedModels),
-    [sortedModels, utilityModel]
-  );
-  const utilitySmallModelOptions = useMemo(
-    () => (utilitySmallModel && !sortedModels.includes(utilitySmallModel) ? [utilitySmallModel, ...sortedModels] : sortedModels),
-    [sortedModels, utilitySmallModel]
-  );
 
   useEffect(() => {
     selectedModelsRef.current = selectedModels;
@@ -598,38 +589,63 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
                         BYOK setups have no built-in utility model, so pick ones here to write <code className="px-1 bg-black/5 dark:bg-white/10 rounded">chat.utilityModel</code> and <code className="px-1 bg-black/5 dark:bg-white/10 rounded">chat.utilitySmallModel</code> into VS Code settings. Leave as Default to keep Copilot&apos;s built-in.
                       </span>
                     </div>
-                    {selectedModels.length === 0 ? (
+                    {selectedModels.length === 0 && !utilityModel && !utilitySmallModel ? (
                       <div className="px-3 py-3 rounded border border-border bg-surface/40 text-center">
-                        <span className="text-xs text-text-muted">Add models first to choose utility models</span>
+                        <span className="text-xs text-text-muted">Add models first, or pick one below (it will be added automatically)</span>
                       </div>
-                    ) : (
-                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                        <label className="flex flex-col gap-1">
-                          <span className="text-[11px] font-medium text-text-muted">Utility Model <span className="opacity-70">(titles, summaries)</span></span>
-                          <select
-                            value={utilityModel}
-                            onChange={(e) => setUtilityModel(e.target.value)}
-                            className="w-full rounded border border-border bg-surface px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-primary/50"
-                            title="chat.utilityModel"
-                          >
-                            <option value="">Default (Copilot built-in)</option>
-                            {utilityModelOptions.map((m) => <option key={m} value={m}>{getModelDisplayName(m)}</option>)}
-                          </select>
-                        </label>
-                        <label className="flex flex-col gap-1">
-                          <span className="text-[11px] font-medium text-text-muted">Utility Small Model <span className="opacity-70">(commits, intent)</span></span>
-                          <select
-                            value={utilitySmallModel}
-                            onChange={(e) => setUtilitySmallModel(e.target.value)}
-                            className="w-full rounded border border-border bg-surface px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-primary/50"
-                            title="chat.utilitySmallModel"
-                          >
-                            <option value="">Default (Copilot built-in)</option>
-                            {utilitySmallModelOptions.map((m) => <option key={m} value={m}>{getModelDisplayName(m)}</option>)}
-                          </select>
-                        </label>
+                    ) : null}
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <div className="flex flex-col gap-1">
+                        <span className="text-[11px] font-medium text-text-muted">Utility Model <span className="opacity-70">(titles, summaries)</span></span>
+                        {utilityModel ? (
+                          <span className="inline-flex w-fit items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[11px] text-primary" title={utilityModel}>
+                            <span className="material-symbols-outlined text-[12px]">bolt</span>
+                            <span className="max-w-[16rem] truncate">{getModelDisplayName(utilityModel)}</span>
+                            <button
+                              onClick={() => {
+                                utilityModelRef.current = "";
+                                setUtilityModel("");
+                                saveModels(selectedModelsRef.current);
+                              }}
+                              className="flex items-center justify-center rounded-full text-primary/60 hover:text-red-500 transition-colors"
+                              title="Reset to Copilot built-in"
+                            >
+                              <span className="material-symbols-outlined text-[12px]">close</span>
+                            </button>
+                          </span>
+                        ) : (
+                          <div className="flex items-center gap-2">
+                            <button onClick={() => setUtilityModalOpen(true)} disabled={!activeProviders?.length} className={`px-2 py-1 rounded border text-xs transition-colors ${activeProviders?.length ? "bg-surface border-border text-text-main hover:border-primary cursor-pointer" : "opacity-50 cursor-not-allowed border-border"}`}>Select Model</button>
+                            <span className="text-xs text-text-muted">Default (Copilot built-in)</span>
+                          </div>
+                        )}
                       </div>
-                    )}
+                      <div className="flex flex-col gap-1">
+                        <span className="text-[11px] font-medium text-text-muted">Utility Small Model <span className="opacity-70">(commits, intent)</span></span>
+                        {utilitySmallModel ? (
+                          <span className="inline-flex w-fit items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[11px] text-primary" title={utilitySmallModel}>
+                            <span className="material-symbols-outlined text-[12px]">bolt</span>
+                            <span className="max-w-[16rem] truncate">{getModelDisplayName(utilitySmallModel)}</span>
+                            <button
+                              onClick={() => {
+                                utilitySmallModelRef.current = "";
+                                setUtilitySmallModel("");
+                                saveModels(selectedModelsRef.current);
+                              }}
+                              className="flex items-center justify-center rounded-full text-primary/60 hover:text-red-500 transition-colors"
+                              title="Reset to Copilot built-in"
+                            >
+                              <span className="material-symbols-outlined text-[12px]">close</span>
+                            </button>
+                          </span>
+                        ) : (
+                          <div className="flex items-center gap-2">
+                            <button onClick={() => setUtilitySmallModalOpen(true)} disabled={!activeProviders?.length} className={`px-2 py-1 rounded border text-xs transition-colors ${activeProviders?.length ? "bg-surface border-border text-text-main hover:border-primary cursor-pointer" : "opacity-50 cursor-not-allowed border-border"}`}>Select Model</button>
+                            <span className="text-xs text-text-muted">Default (Copilot built-in)</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -702,6 +718,68 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
         addedModelValues={visionFallbackModels}
         closeOnSelect={false}
         title="Add Vision Fallback Model"
+      />
+
+      <ModelSelectModal
+        isOpen={utilityModalOpen}
+        onClose={() => setUtilityModalOpen(false)}
+        onSelect={(model) => {
+          // Update refs synchronously: closeOnSelect fires onClose in the same
+          // tick, before React effects refresh them.
+          utilityModelRef.current = model.value;
+          setUtilityModel(model.value);
+          // chat.utilityModel only resolves against models present in
+          // chatLanguageModels.json, so auto-add missing picks to the list.
+          let nextModels = selectedModelsRef.current;
+          if (!nextModels.includes(model.value)) {
+            nextModels = sortModels([...nextModels, model.value]);
+            selectedModelsRef.current = nextModels;
+            setSelectedModels(nextModels);
+            setModelDisplayNames((prev) => ({ ...prev, [model.value]: prev[model.value] || model.name || getDefaultModelName(model.value) }));
+            setNewModelBadges((prev) => ({ ...prev, [model.value]: true }));
+          }
+          saveModels(nextModels);
+        }}
+        onDeselect={() => {
+          utilityModelRef.current = "";
+          setUtilityModel("");
+          saveModels(selectedModelsRef.current);
+        }}
+        selectedModel={null}
+        activeProviders={activeProviders}
+        modelAliases={modelAliases}
+        addedModelValues={utilityModel ? [utilityModel] : []}
+        closeOnSelect={true}
+        title="Select Utility Model (titles, summaries)"
+      />
+
+      <ModelSelectModal
+        isOpen={utilitySmallModalOpen}
+        onClose={() => setUtilitySmallModalOpen(false)}
+        onSelect={(model) => {
+          utilitySmallModelRef.current = model.value;
+          setUtilitySmallModel(model.value);
+          let nextModels = selectedModelsRef.current;
+          if (!nextModels.includes(model.value)) {
+            nextModels = sortModels([...nextModels, model.value]);
+            selectedModelsRef.current = nextModels;
+            setSelectedModels(nextModels);
+            setModelDisplayNames((prev) => ({ ...prev, [model.value]: prev[model.value] || model.name || getDefaultModelName(model.value) }));
+            setNewModelBadges((prev) => ({ ...prev, [model.value]: true }));
+          }
+          saveModels(nextModels);
+        }}
+        onDeselect={() => {
+          utilitySmallModelRef.current = "";
+          setUtilitySmallModel("");
+          saveModels(selectedModelsRef.current);
+        }}
+        selectedModel={null}
+        activeProviders={activeProviders}
+        modelAliases={modelAliases}
+        addedModelValues={utilitySmallModel ? [utilitySmallModel] : []}
+        closeOnSelect={true}
+        title="Select Utility Small Model (commits, intent)"
       />
 
       <ManualConfigModal

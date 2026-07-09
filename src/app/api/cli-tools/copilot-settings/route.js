@@ -173,6 +173,14 @@ export async function GET() {
   }
 }
 
+// Ensure the base URL targets the /v1 API root. The UI always sends ".../v1",
+// but direct API callers may pass a bare origin — without this, the generated
+// endpoint would be "<origin>/chat/completions", which the Next app 404s.
+const normalizeCopilotBaseUrl = (baseUrl) => {
+  const url = String(baseUrl || "").trim().replace(/\/+$/, "");
+  return /\/v1$/.test(url) ? url : `${url}/v1`;
+};
+
 // POST - Apply 9Router config to chatLanguageModels.json
 export async function POST(request) {
   try {
@@ -209,7 +217,7 @@ export async function POST(request) {
       config = Array.isArray(parsed) ? parsed : [];
     } catch { /* No existing config */ }
 
-    const endpointUrl = `${baseUrl}/chat/completions`;
+    const endpointUrl = `${normalizeCopilotBaseUrl(baseUrl)}/chat/completions`;
     const keyToUse = apiKey || "sk_9router";
 
     const baseModels = models.map((id) => ({

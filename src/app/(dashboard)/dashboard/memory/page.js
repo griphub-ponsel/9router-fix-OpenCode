@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Button, Card, Modal } from "@/shared/components";
+import { Button, Card, Modal, ModelSelectModal } from "@/shared/components";
 
 const scopeStyles = {
   global: "bg-zinc-500/10 text-zinc-500 border-zinc-500/20",
@@ -76,6 +76,55 @@ export default function MemoryDashboard() {
   const [consolidating, setConsolidating] = useState(false);
   const [actionMessage, setActionMessage] = useState(null); // { type: 'success'|'info', text: string }
   const [lastUpdated, setLastUpdated] = useState(null);
+  // Auto-memory extraction model (settings.memoryExtractModel)
+  const [extractModel, setExtractModel] = useState("");
+  const [extractModelModalOpen, setExtractModelModalOpen] = useState(false);
+  const [activeProviders, setActiveProviders] = useState([]);
+  const [modelAliases, setModelAliases] = useState({});
+
+  const fetchExtractionConfig = async () => {
+    try {
+      const [settingsRes, providersRes, aliasRes] = await Promise.all([
+        fetch("/api/settings"),
+        fetch("/api/providers"),
+        fetch("/api/models/alias"),
+      ]);
+      if (settingsRes.ok) {
+        const s = await settingsRes.json();
+        setExtractModel(typeof s.memoryExtractModel === "string" ? s.memoryExtractModel : "");
+      }
+      if (providersRes.ok) {
+        const p = await providersRes.json();
+        setActiveProviders(p.connections || []);
+      }
+      if (aliasRes.ok) {
+        const a = await aliasRes.json();
+        setModelAliases(a.aliases || {});
+      }
+    } catch (error) {
+      console.error("Failed to fetch extraction config:", error);
+    }
+  };
+
+  const saveExtractModel = async (model) => {
+    setExtractModel(model);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ memoryExtractModel: model }),
+      });
+      if (res.ok) {
+        setActionMessage({ type: "success", text: model ? `Extraction model set: ${model}` : "Extraction model reset to default (auto alias)" });
+      } else {
+        setActionMessage({ type: "info", text: "Failed to save extraction model" });
+      }
+    } catch (error) {
+      console.error("Failed to save extraction model:", error);
+      setActionMessage({ type: "info", text: "Failed to save extraction model" });
+    }
+    setTimeout(() => setActionMessage(null), 4000);
+  };
 
   const fetchPinned = async () => {
     try {
@@ -131,6 +180,7 @@ export default function MemoryDashboard() {
     fetchStats().catch((error) => console.error("Failed to fetch stats:", error));
     fetchPinned().catch((error) => console.error("Failed to fetch pinned:", error));
     fetchFacts().catch((error) => console.error("Failed to fetch facts:", error));
+    fetchExtractionConfig();
     fetchMemories();
   }, []);
 
@@ -300,6 +350,50 @@ export default function MemoryDashboard() {
         <StatCard icon="category" label="Memory Types" value={Object.keys(stats?.memoriesByType || {}).length} tone="blue" />
         <StatCard icon="schedule" label="Last Updated" value={lastUpdated ? lastUpdated.toLocaleTimeString("id-ID") : "-"} tone="orange" />
       </div>
+
+      {/* Auto-Memory Extraction Model */}
+      <Card padding="sm" className="border-border-subtle/80">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-3">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-primary/10 text-primary">
+              <span className="material-symbols-outlined text-[20px]">psychology_alt</span>
+            </div>
+            <div>
+              <h2 className="text-sm font-semibold text-text-main">Auto-Memory Extraction Model</h2>
+              <p className="mt-0.5 max-w-2xl text-xs text-text-muted">
+                9Router self-calls this model after each chat to decide what&apos;s worth remembering (ChatGPT-style).
+                Pick a cheap/free model — it runs in the background on every conversation. Empty = use the <code className="rounded bg-black/5 px-1 dark:bg-white/10">auto</code> alias.
+              </p>
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            {extractModel ? (
+              <span className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs text-primary" title={extractModel}>
+                <span className="material-symbols-outlined text-[13px]">psychology_alt</span>
+                <span className="max-w-[18rem] truncate">{extractModel}</span>
+                <button
+                  onClick={() => saveExtractModel("")}
+                  className="flex items-center justify-center rounded-full text-primary/60 transition-colors hover:text-red-500"
+                  title="Reset to default (auto alias)"
+                >
+                  <span className="material-symbols-outlined text-[13px]">close</span>
+                </button>
+              </span>
+            ) : (
+              <span className="text-xs text-text-muted">Default (auto alias)</span>
+            )}
+            <Button onClick={() => setExtractModelModalOpen(true)} variant="secondary" size="sm" icon="tune" disabled={!activeProviders.length}>
+              Select Model
+            </Button>
+          </div>
+        </div>
+        {actionMessage && (
+          <div className={`mt-3 flex items-center gap-2 rounded-[8px] px-3 py-1.5 text-xs ${actionMessage.type === "success" ? "bg-emerald-500/10 text-emerald-500" : "bg-amber-500/10 text-amber-500"}`}>
+            <span className="material-symbols-outlined text-[14px]">{actionMessage.type === "success" ? "check_circle" : "info"}</span>
+            <span>{actionMessage.text}</span>
+          </div>
+        )}
+      </Card>
 
       {/* Pinned Memory Slots (Phase 3) */}
       {pinnedMemories.length > 0 && (
@@ -627,6 +721,19 @@ export default function MemoryDashboard() {
           </div>
         </Modal>
       )}
+
+      <ModelSelectModal
+        isOpen={extractModelModalOpen}
+        onClose={() => setExtractModelModalOpen(false)}
+        onSelect={(model) => saveExtractModel(model.value)}
+        onDeselect={() => saveExtractModel("")}
+        selectedModel={null}
+        activeProviders={activeProviders}
+        modelAliases={modelAliases}
+        addedModelValues={extractModel ? [extractModel] : []}
+        closeOnSelect={true}
+        title="Select Auto-Memory Extraction Model"
+      />
     </div>
   );
 }

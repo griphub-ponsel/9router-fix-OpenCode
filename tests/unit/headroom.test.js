@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { compressWithHeadroom, formatHeadroomLog } from "../../open-sse/rtk/headroom.js";
+import { compressWithHeadroom, formatHeadroomLog, resetHeadroomCircuit } from "../../open-sse/rtk/headroom.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
+  resetHeadroomCircuit();
 });
 
 describe("compressWithHeadroom", () => {
@@ -62,6 +63,35 @@ describe("compressWithHeadroom", () => {
 
     expect(stats).toBeNull();
     expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("opens circuit after connection failure and skips subsequent fetches", async () => {
+    global.fetch = vi.fn(async () => {
+      throw Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:8787"), { code: "ECONNREFUSED" });
+    });
+    const body = { messages: [{ role: "user", content: "hello" }] };
+
+    const diag1 = {};
+    await compressWithHeadroom(body, { enabled: true, url: "http://localhost:8787", diagnostics: diag1 });
+    expect(diag1.reason).toContain("request failed");
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+
+    const diag2 = {};
+    const stats = await compressWithHeadroom(body, { enabled: true, url: "http://localhost:8787", diagnostics: diag2 });
+    expect(stats).toBeNull();
+    expect(global.fetch).toHaveBeenCalledTimes(1); // no second fetch
+    expect(diag2.reason).toContain("circuit open");
+    expect(diag2.circuitOpen).toBe(true);
+  });
+
+  it("does not open circuit on HTTP errors", async () => {
+    global.fetch = vi.fn(async () => new Response(JSON.stringify({ error: "bad" }), { status: 500 }));
+    const body = { messages: [{ role: "user", content: "hello" }] };
+
+    await compressWithHeadroom(body, { enabled: true, url: "http://localhost:8787" });
+    await compressWithHeadroom(body, { enabled: true, url: "http://localhost:8787" });
+
+    expect(global.fetch).toHaveBeenCalledTimes(2); // circuit stays closed
   });
 });
 

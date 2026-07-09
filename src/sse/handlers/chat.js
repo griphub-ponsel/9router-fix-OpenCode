@@ -322,6 +322,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       cavemanLevel: chatSettings.cavemanLevel || "full",
       ponytailEnabled: !!chatSettings.ponytailEnabled,
       ponytailLevel: chatSettings.ponytailLevel || "full",
+      memoryExtractModel: chatSettings.memoryExtractModel || "",
       providerThinking,
       // Vision fallback: relay images through a configured vision-capable model
       // when the requested model can't read images. resolveVisionCredentials

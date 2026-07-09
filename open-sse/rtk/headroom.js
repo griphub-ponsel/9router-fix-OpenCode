@@ -7,6 +7,40 @@ import {
 
 const DEFAULT_TIMEOUT_MS = 3000;
 
+// Circuit breaker: when the Headroom proxy is unreachable (connection-level
+// failure, not HTTP errors), skip further attempts to that URL for a cooldown
+// window instead of paying a fetch timeout + warn log on EVERY request.
+const CIRCUIT_COOLDOWN_MS = 60_000;
+const CONNECTION_ERROR_CODES = new Set([
+  "ECONNREFUSED", "ENOTFOUND", "ECONNRESET", "EHOSTUNREACH", "ENETUNREACH", "ETIMEDOUT",
+  "UND_ERR_CONNECT_TIMEOUT", "ABORT_ERR", "TimeoutError",
+]);
+const circuitOpenUntil = new Map(); // url -> epoch ms
+
+function isConnectionError(error) {
+  const code = error?.cause?.code || error?.code || error?.name;
+  return CONNECTION_ERROR_CODES.has(code);
+}
+
+function isCircuitOpen(url) {
+  const until = circuitOpenUntil.get(url);
+  if (!until) return false;
+  if (Date.now() >= until) {
+    circuitOpenUntil.delete(url);
+    return false;
+  }
+  return true;
+}
+
+function openCircuit(url) {
+  circuitOpenUntil.set(url, Date.now() + CIRCUIT_COOLDOWN_MS);
+}
+
+// Test hook: clear circuit state between test runs.
+export function resetHeadroomCircuit() {
+  circuitOpenUntil.clear();
+}
+
 function jsonBytes(value) {
   try {
     return new TextEncoder().encode(JSON.stringify(value) || "").length;
@@ -96,6 +130,9 @@ async function callCompress(url, messages, model, timeoutMs, compressUserMessage
       signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (error) {
+    // Connection-level failure: open the circuit so subsequent requests skip
+    // the fetch (and its timeout) for CIRCUIT_COOLDOWN_MS.
+    if (isConnectionError(error)) openCircuit(url);
     setDiagnostic(diagnostics, `request failed: ${describeFetchError(error)}`);
     return null;
   }
@@ -121,6 +158,11 @@ export async function compressWithHeadroom(body, { enabled, url, model, format, 
   }
   if (!url) {
     setDiagnostic(diagnostics, "missing proxy URL");
+    return null;
+  }
+  if (isCircuitOpen(url)) {
+    setDiagnostic(diagnostics, "circuit open: proxy unreachable, retry paused");
+    if (diagnostics) diagnostics.circuitOpen = true;
     return null;
   }
   if (!body) {

@@ -49,10 +49,12 @@ vi.mock("@/shared/memory/autoMemory.js", () => ({
 }));
 
 const { handleChatCore } = await import("../../open-sse/handlers/chatCore.js");
+const { resetHeadroomCircuit } = await import("../../open-sse/rtk/headroom.js");
 
 describe("handleChatCore Headroom diagnostics", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetHeadroomCircuit();
     global.fetch = vi.fn(async (url) => {
       if (String(url).includes("/v1/compress")) {
         throw Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:8787"), { code: "ECONNREFUSED" });

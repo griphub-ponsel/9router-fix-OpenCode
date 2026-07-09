@@ -617,6 +617,8 @@ class MemoryService {
     // Try to summarize via the running 9Router instance
     try {
       const baseUrl = process.env.ROUTER_BASE_URL || 'http://localhost:20128';
+      // Model priority: explicit option > MEMORY_EXTRACT_MODEL env > "auto" alias
+      const model = options.model || process.env.MEMORY_EXTRACT_MODEL || 'auto';
       const res = await fetch(`${baseUrl}/v1/chat/completions`, {
         method: 'POST',
         headers: {
@@ -626,7 +628,7 @@ class MemoryService {
           'x-9router-memory-internal': '1'
         },
         body: JSON.stringify({
-          model: 'auto',
+          model,
           messages: [
             {
               role: 'system',
