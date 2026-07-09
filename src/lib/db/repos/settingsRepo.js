@@ -52,6 +52,22 @@ const DEFAULT_SETTINGS = {
   // messages, intent detection, etc. Empty = leave VS Code default.
   copilotUtilityModel: "",
   copilotUtilitySmallModel: "",
+  // ── Cloudflare Workers AI automation ──────────────────────────────
+  // Ammail temp-mail — used to register Cloudflare accounts.
+  ammail_base_url: "",
+  ammail_api_key: "",
+  ammail_default_domain: "",
+  ammail_webhook_secret: "",
+  ammail_cf_account_id: "",
+  ammail_cf_api_token: "",
+  ammail_cf_domain: "",
+  ammail_cf_workers_dev_url: "",
+  // 2Captcha — for solving Cloudflare Turnstile during automation.
+  twocaptcha_api_key: "",
+  // Cloudflare account automation — run queue settings.
+  cf_automation_proxy_pool: "[]",
+  cf_automation_browser_headless: true,
+  cf_automation_concurrency: 1,
 };
 
 async function readRaw() {

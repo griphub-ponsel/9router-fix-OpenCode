@@ -40,6 +40,13 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
     organization: "",
   });
   const [cloudflareData, setCloudflareData] = useState({ accountId: "" });
+  const [cloudflareAuto, setCloudflareAuto] = useState({
+    email: "",
+    globalApiKey: "",
+    running: false,
+    result: null,
+    error: "",
+  });
   const [notionData, setNotionData] = useState({ userId: "" });
   const [region, setRegion] = useState(defaultRegion);
   const [validating, setValidating] = useState(false);
@@ -94,6 +101,38 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
       setValidatedProviderData(null);
     } finally {
       setValidating(false);
+    }
+  };
+
+  const handleCloudflareAutoSetup = async () => {
+    setCloudflareAuto((p) => ({ ...p, running: true, result: null, error: "" }));
+    try {
+      const res = await fetch("/api/automation/cloudflare-ai", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-9r-password": window.__9R_DASHBOARD_PASSWORD__ || "",
+        },
+        body: JSON.stringify({
+          globalApiKey: cloudflareAuto.globalApiKey,
+          email: cloudflareAuto.email,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.error || `HTTP ${res.status}`);
+      }
+      setCloudflareAuto((p) => ({ ...p, running: false, result: data }));
+      // Auto-fill accountId from result so user can also save the connection normally
+      if (data?.accountId) {
+        setCloudflareData({ accountId: data.accountId });
+      }
+    } catch (err) {
+      setCloudflareAuto((p) => ({
+        ...p,
+        running: false,
+        error: err?.message || "Auto setup failed",
+      }));
     }
   };
 
@@ -336,7 +375,7 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
           </p>
         )}
         {isCloudflareAi && (
-          <div className="bg-sidebar/50 p-4 rounded-lg border border-accent/20">
+          <div className="bg-sidebar/50 p-4 rounded-lg border border-accent/20 space-y-3">
             <h3 className="font-semibold mb-3 text-sm">Cloudflare Workers AI</h3>
             <Input
               label="Account ID"
@@ -347,6 +386,51 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
             <p className="text-xs text-text-muted mt-2">
               Find your Account ID in the right sidebar of <a href="https://dash.cloudflare.com" target="_blank" rel="noopener noreferrer" className="text-primary underline">dash.cloudflare.com</a>
             </p>
+
+            <div className="border-t border-accent/20 pt-3">
+              <p className="text-xs text-text-muted mb-2">
+                <b>Auto Setup:</b> kalau kamu punya <b>Global API Key</b> (37 hex chars) + email CF,
+                sistem bisa otomatis bikin Workers AI:Read + Workers AI:Edit scoped token dan simpan
+                langsung ke daftar Provider.
+              </p>
+              <div className="flex flex-col gap-2">
+                <Input
+                  label="Email Cloudflare"
+                  value={cloudflareAuto.email}
+                  onChange={(e) => setCloudflareAuto((p) => ({ ...p, email: e.target.value }))}
+                  placeholder="kamu@example.com"
+                />
+                <Input
+                  label="Global API Key"
+                  type="password"
+                  value={cloudflareAuto.globalApiKey}
+                  onChange={(e) => setCloudflareAuto((p) => ({ ...p, globalApiKey: e.target.value }))}
+                  placeholder="37 hex chars"
+                />
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={handleCloudflareAutoSetup}
+                  disabled={cloudflareAuto.running || !cloudflareAuto.email || !cloudflareAuto.globalApiKey}
+                >
+                  {cloudflareAuto.running ? "Membuat Token..." : "Auto Setup Token"}
+                </Button>
+                {cloudflareAuto.result && (
+                  <div className="text-xs text-emerald-600 bg-emerald-500/10 border border-emerald-500/20 rounded p-2">
+                    ✓ {cloudflareAuto.result.message}
+                    <br />
+                    <span className="font-mono text-text-muted">
+                      Account: {cloudflareAuto.result.accountName} ({cloudflareAuto.result.accountId})
+                    </span>
+                  </div>
+                )}
+                {cloudflareAuto.error && (
+                  <div className="text-xs text-red-500 bg-red-500/10 border border-red-500/20 rounded p-2">
+                    {cloudflareAuto.error}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         )}
         {isAzure && (
