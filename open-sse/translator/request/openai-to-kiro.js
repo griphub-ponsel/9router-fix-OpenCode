@@ -268,6 +268,7 @@ function convertMessages(messages, tools, model) {
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
     let role = msg.role;
+    const wasSystem = role === ROLE.SYSTEM;
 
     // Normalize: system/tool -> user
     if (role === ROLE.SYSTEM || role === ROLE.TOOL) {
@@ -338,7 +339,9 @@ function convertMessages(messages, tools, model) {
           content: [{ text: toolContent }]
         });
       } else if (content) {
-        pendingUserContent.push(content);
+        pendingUserContent.push(
+          wasSystem ? `<instructions>\n${content}\n</instructions>` : content
+        );
       }
     } else if (role === ROLE.ASSISTANT) {
       // Extract text content and tool uses
@@ -531,7 +534,9 @@ export function openaiToKiroRequest(model, body, stream, credentials) {
   // profileArn that was actually resolved for this connection — never the default.
   // OAuth/social keep the default fallback (their tokens accept it).
   const authMethod = credentials?.providerSpecificData?.authMethod;
-  const profileArn = authMethod === "api_key"
+  const accountBoundAuth =
+    authMethod === "api_key" || authMethod === "idc" || authMethod === "external_idp";
+  const profileArn = accountBoundAuth
     ? (credentials?.providerSpecificData?.profileArn || "")
     : (credentials?.providerSpecificData?.profileArn || resolveDefaultProfileArn(authMethod));
 

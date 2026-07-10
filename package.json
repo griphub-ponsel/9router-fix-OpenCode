@@ -4,7 +4,10 @@
   "description": "9Router web dashboard",
   "private": true,
   "scripts": {
-    "dev": "next dev --webpack --port 20127",
+    "dev": "node scripts/dev-live.mjs",
+    "dev:live": "node scripts/dev-live.mjs",
+    "dev:webpack": "node scripts/dev-live.mjs --webpack",
+    "dev:preview": "next dev --turbopack --port 20127 --hostname 127.0.0.1",
     "build": "next build --webpack",
     "start": "next start",
     "dev:bun": "bun --bun next dev --webpack --port 20127",

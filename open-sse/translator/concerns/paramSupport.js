@@ -1,6 +1,8 @@
 // Strip request params a given provider/model rejects upstream (e.g. HTTP 400).
 // Config-driven: add a rule instead of scattering `delete body.x` across executors.
 
+import { getCapabilitiesForModel } from "../../providers/capabilities.js";
+
 // Each rule: optional provider, regex match on model, list of params to drop.
 // A param is removed only when it is present (!== undefined).
 const STRIP_RULES = [
@@ -12,7 +14,13 @@ const STRIP_RULES = [
   { provider: "github", match: (m) => /claude/i.test(m) && !/claude.*(opus|sonnet).*4\.6/i.test(m), drop: ["thinking", "reasoning_effort"] },
   // Cloudflare Workers AI: content must be plain string, rejects OpenAI content-part array (#1926)
   { provider: "cloudflare-ai", flattenContent: true },
+  { provider: "volcengine-ark", match: /kimi/i, maxOutputCap: 32768, clampToModelMaxOutput: true },
 ];
+
+function clampNumber(body, key, ceiling) {
+  const value = Number(body[key]);
+  if (Number.isFinite(value) && value > ceiling) body[key] = ceiling;
+}
 
 // Test a rule's match (regex or predicate) against the model id.
 function matches(rule, model) {
@@ -37,6 +45,22 @@ export function stripUnsupportedParams(provider, model, body) {
             .map(b => (b?.type === "text" && typeof b.text === "string") ? b.text : "")
             .join("");
         }
+      }
+    }
+    if (rule.clampToModelMaxOutput || Number.isFinite(rule.maxOutputCap)) {
+      const modelCeiling = getCapabilitiesForModel(provider, model).maxOutput;
+      const candidates = [];
+      if (rule.clampToModelMaxOutput && Number.isFinite(modelCeiling) && modelCeiling > 0) {
+        candidates.push(modelCeiling);
+      }
+      if (Number.isFinite(rule.maxOutputCap) && rule.maxOutputCap > 0) {
+        candidates.push(rule.maxOutputCap);
+      }
+      if (candidates.length > 0) {
+        const ceiling = Math.min(...candidates);
+        clampNumber(body, "max_tokens", ceiling);
+        clampNumber(body, "max_completion_tokens", ceiling);
+        clampNumber(body, "max_output_tokens", ceiling);
       }
     }
   }

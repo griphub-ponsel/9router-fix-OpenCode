@@ -18,6 +18,11 @@ const os = require("os");
 
 const DB_BASENAME = "9router-memory.sqlite";
 
+function isSqliteVirtualPath(value) {
+  const candidate = String(value || "").trim();
+  return candidate === ":memory:" || candidate.startsWith("file::memory:");
+}
+
 function defaultUserDataDir() {
   if (process.platform === "win32") {
     return path.join(process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), "9router");
@@ -33,29 +38,32 @@ function readPkgName(pkgPath) {
   }
 }
 
+function isRepoRootCandidate(dir) {
+  const hasMemorySource = fs.existsSync(path.join(dir, "src", "shared", "memory"));
+  const hasOpenSse = fs.existsSync(path.join(dir, "open-sse"));
+  if (hasOpenSse && hasMemorySource) return true;
+
+  const pkgPath = path.join(dir, "package.json");
+  if (!fs.existsSync(pkgPath)) return false;
+  const name = readPkgName(pkgPath);
+  return name === "9router" && hasMemorySource;
+}
+
 /**
  * Walk up from startDir looking for the 9router monorepo root.
- * Markers: package.json name 9router-app / 9router, or open-sse/ sibling.
+ * Prefer the highest valid monorepo candidate so nested app packages such as
+ * cli/app (also named 9router-app) cannot become their own memory root.
  */
 function findRepoRoot(startDir) {
   let dir = path.resolve(startDir || process.cwd());
+  let best = null;
   for (let i = 0; i < 12; i++) {
-    const pkgPath = path.join(dir, "package.json");
-    if (fs.existsSync(pkgPath)) {
-      const name = readPkgName(pkgPath);
-      if (name === "9router-app" || name === "9router" || fs.existsSync(path.join(dir, "open-sse"))) {
-        return dir;
-      }
-    }
-    // Built CLI lives under cli/app — still treat monorepo parent as root when present
-    if (fs.existsSync(path.join(dir, "open-sse")) && fs.existsSync(path.join(dir, "src", "shared", "memory"))) {
-      return dir;
-    }
+    if (isRepoRootCandidate(dir)) best = dir;
     const parent = path.dirname(dir);
     if (parent === dir) break;
     dir = parent;
   }
-  return null;
+  return best;
 }
 
 /**
@@ -166,8 +174,11 @@ function healCanonicalFromLegacy(canonicalPath, repoRoot) {
 function resolveMemoryDbPath(configDbPath) {
   const envPath = process.env.MEMORY_DB_PATH || process.env.MEMORY_STORAGE_DB_PATH;
   if (envPath && String(envPath).trim()) {
-    return path.resolve(String(envPath).trim());
+    const value = String(envPath).trim();
+    return isSqliteVirtualPath(value) ? value : path.resolve(value);
   }
+
+  if (isSqliteVirtualPath(configDbPath)) return String(configDbPath).trim();
 
   if (configDbPath && path.isAbsolute(configDbPath)) {
     return configDbPath;
@@ -206,5 +217,6 @@ module.exports = {
   resolveMemoryDbPath,
   findRepoRoot,
   listLegacyDbCandidates,
+  isSqliteVirtualPath,
   DB_BASENAME,
 };

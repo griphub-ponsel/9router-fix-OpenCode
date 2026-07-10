@@ -24,6 +24,8 @@ export default function TokenSaverClient() {
     useState(false);
   const [headroomActionLoading, setHeadroomActionLoading] = useState(false);
   const [headroomActionError, setHeadroomActionError] = useState("");
+  const [headroomCodeAware, setHeadroomCodeAware] = useState(false);
+  const [headroomKompress, setHeadroomKompress] = useState(true);
   const [cavemanEnabled, setCavemanEnabled] = useState(false);
   const [cavemanLevel, setCavemanLevel] = useState("full");
   const [ponytailEnabled, setPonytailEnabled] = useState(false);
@@ -137,6 +139,45 @@ export default function TokenSaverClient() {
     }
   }, [refreshHeadroomStatus]);
 
+  const updateHeadroomRuntime = useCallback(async (patch) => {
+    setHeadroomActionError("");
+    setHeadroomActionLoading(true);
+    try {
+      await patchSetting(patch);
+      if (patch.headroomCodeAware !== undefined) setHeadroomCodeAware(patch.headroomCodeAware);
+      if (patch.headroomKompress !== undefined) setHeadroomKompress(patch.headroomKompress);
+      if (headroomStatus.managedPid) {
+        const res = await fetch("/api/headroom/restart", { method: "POST" });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || "Failed to restart Headroom");
+      }
+      await refreshHeadroomStatus();
+    } catch (error) {
+      setHeadroomActionError(error.message);
+    } finally {
+      setHeadroomActionLoading(false);
+    }
+  }, [headroomStatus.managedPid, refreshHeadroomStatus]);
+
+  const changeHeadroomExtra = useCallback(async (extra, install) => {
+    setHeadroomActionError("");
+    setHeadroomActionLoading(true);
+    try {
+      const res = await fetch("/api/headroom/extras", {
+        method: install ? "POST" : "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ extras: [extra] }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `Failed to ${install ? "install" : "remove"} ${extra}`);
+      await refreshHeadroomStatus();
+    } catch (error) {
+      setHeadroomActionError(error.message);
+    } finally {
+      setHeadroomActionLoading(false);
+    }
+  }, [refreshHeadroomStatus]);
+
   const handleCavemanLevel = (level) => {
     setCavemanLevel(level);
     patchSetting({ cavemanLevel: level });
@@ -161,6 +202,8 @@ export default function TokenSaverClient() {
           setRtkEnabledState(data.rtkEnabled !== false);
           setHeadroomEnabled(!!data.headroomEnabled);
           setHeadroomUrl(data.headroomUrl || "http://localhost:8787");
+          setHeadroomCodeAware(data.headroomCodeAware === true);
+          setHeadroomKompress(data.headroomKompress !== false);
           setCavemanEnabled(!!data.cavemanEnabled);
           setCavemanLevel(data.cavemanLevel || "full");
           setPonytailEnabled(!!data.ponytailEnabled);
@@ -374,6 +417,21 @@ export default function TokenSaverClient() {
               {headroomStatusLabel}
             </span>
           </div>
+          {headroomStatus.version && (
+            <p className="text-xs text-text-muted">
+              headroom-ai v{headroomStatus.version}
+            </p>
+          )}
+          {headroomRunning && (
+            <a
+              href="/api/headroom/proxy/dashboard"
+              target="_blank"
+              rel="noreferrer"
+              className="w-full rounded border border-border px-4 py-2 text-center text-sm hover:bg-surface"
+            >
+              Open Headroom Dashboard
+            </a>
+          )}
           <div className="flex flex-col gap-1">
             <p className="text-sm font-medium">Proxy URL</p>
             <Input
@@ -434,6 +492,73 @@ export default function TokenSaverClient() {
                 >
                   {copied ? "Copied" : "Copy"}
                 </Button>
+              </div>
+            </div>
+          )}
+          {headroomStatus.installed && headroomStatus.localUrl !== false && (
+            <div className="flex flex-col gap-3 rounded border border-border p-3">
+              <p className="text-sm font-medium">Compression extras</p>
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm">Code-aware</p>
+                  <p className="text-xs text-text-muted">AST compression via tree-sitter.</p>
+                </div>
+                {headroomStatus.extras?.code ? (
+                  <div className="flex items-center gap-2">
+                    <Toggle
+                      checked={headroomCodeAware}
+                      onChange={() => updateHeadroomRuntime({ headroomCodeAware: !headroomCodeAware })}
+                    />
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={headroomActionLoading}
+                      onClick={() => changeHeadroomExtra("code", false)}
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={headroomActionLoading}
+                    onClick={() => changeHeadroomExtra("code", true)}
+                  >
+                    Install
+                  </Button>
+                )}
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm">Kompress ML</p>
+                  <p className="text-xs text-text-muted">ML compression via Torch/Hugging Face.</p>
+                </div>
+                {headroomStatus.extras?.ml ? (
+                  <div className="flex items-center gap-2">
+                    <Toggle
+                      checked={headroomKompress}
+                      onChange={() => updateHeadroomRuntime({ headroomKompress: !headroomKompress })}
+                    />
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={headroomActionLoading}
+                      onClick={() => changeHeadroomExtra("ml", false)}
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={headroomActionLoading}
+                    onClick={() => changeHeadroomExtra("ml", true)}
+                  >
+                    Install
+                  </Button>
+                )}
               </div>
             </div>
           )}

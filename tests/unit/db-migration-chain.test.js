@@ -60,10 +60,34 @@ describe("Schema migrations", () => {
     expect(JSON.parse(settings.data)).toEqual({ foo: "bar" });
   });
 
+  it("removes retired Automation settings while preserving normal settings", async () => {
+    const { getAdapter } = await import("@/lib/db/driver.js");
+    const db = await getAdapter();
+    db.run(
+      `INSERT INTO settings(id, data) VALUES(1, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data`,
+      [JSON.stringify({
+        comboStrategy: "round-robin",
+        ammail_api_key: "retired-secret",
+        twocaptcha_api_key: "retired-captcha-secret",
+        cf_automation_concurrency: 4,
+      })]
+    );
+    db.run(`UPDATE _meta SET value = '1' WHERE key = 'schemaVersion'`);
+    db.close?.();
+
+    delete global._dbAdapter;
+    vi.resetModules();
+    const { getAdapter: getAdapter2 } = await import("@/lib/db/driver.js");
+    const db2 = await getAdapter2();
+    const settings = JSON.parse(db2.get(`SELECT data FROM settings WHERE id=1`).data);
+
+    expect(settings).toEqual({ comboStrategy: "round-robin" });
+  });
+
   it("fresh DB + legacy db.json → imports data automatically", async () => {
     // Simulate user upgrading: place legacy JSON in DATA_DIR before first boot
     const legacy = {
-      settings: { foo: "legacy-value" },
+      settings: { foo: "legacy-value", ammail_api_key: "retired-secret" },
       apiKeys: [{ id: "k1", key: "abc", name: "test", createdAt: new Date().toISOString() }],
       modelAliases: { "gpt-4": "gpt-4-turbo" },
     };

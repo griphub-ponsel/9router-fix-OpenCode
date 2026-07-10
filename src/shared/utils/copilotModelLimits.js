@@ -21,6 +21,9 @@ const EXACT_LIMITS = {
   "grok-4.20-0309-non-reasoning": { contextTokens: 256000, maxOutputTokens: 32768 },
   "grok-4.20-0309-reasoning": { contextTokens: 256000, maxOutputTokens: 32768, reasoningEfforts: ["low", "medium", "high"] },
   "gpt-5.5": { contextTokens: 1000000, maxOutputTokens: 128000, reasoningEfforts: ["low", "medium", "high", "xhigh"] },
+  "gpt-5.6-luna": { contextTokens: 1000000, maxOutputTokens: 128000, reasoningEfforts: ["low", "medium", "high", "xhigh"] },
+  "gpt-5.6-sol": { contextTokens: 1000000, maxOutputTokens: 128000, reasoningEfforts: ["low", "medium", "high", "xhigh"] },
+  "gpt-5.6-terra": { contextTokens: 1000000, maxOutputTokens: 128000, reasoningEfforts: ["low", "medium", "high", "xhigh"] },
   "gpt-5.4": { contextTokens: 1000000, maxOutputTokens: 128000, reasoningEfforts: ["low", "medium", "high", "xhigh"] },
   "gpt-5.3-codex": { contextTokens: 400000, maxOutputTokens: 128000, reasoningEfforts: ["low", "medium", "high", "xhigh"] },
   "kimi-k2.5": { contextTokens: 262144, maxOutputTokens: 65536 },
@@ -73,6 +76,7 @@ function resolveBaseLimits(id) {
   return EXACT_LIMITS[model] || (() => {
     if (/^claude-(opus|sonnet)-/.test(model)) return { contextTokens: 1000000, maxOutputTokens: 32000 };
     if (/^claude-haiku-/.test(model)) return { contextTokens: 200000, maxOutputTokens: 32000 };
+    if (/^gpt-5\.6(?:-|$)/.test(model)) return { contextTokens: 1000000, maxOutputTokens: 128000 };
     if (/^grok-4/.test(model)) return { contextTokens: 256000, maxOutputTokens: 32768 };
     return DEFAULT_LIMITS;
   })();
@@ -98,8 +102,15 @@ export function getCopilotReasoningEfforts(modelId) {
   return exact?.reasoningEfforts ?? null;
 }
 
+export function isLegacyCopilotContextDefault(id, contextTokens) {
+  return /^gpt-5\.6(?:-|$)/.test(normalizeModelId(id)) && Number(contextTokens) === 256000;
+}
+
 export function getCopilotModelLimits(id, contextTokensOverride = null) {
-  return normalizeLimits(resolveBaseLimits(id), contextTokensOverride);
+  const effectiveOverride = isLegacyCopilotContextDefault(id, contextTokensOverride)
+    ? null
+    : contextTokensOverride;
+  return normalizeLimits(resolveBaseLimits(id), effectiveOverride);
 }
 
 export function getCopilotContextTokens(id, contextTokensOverride = null) {

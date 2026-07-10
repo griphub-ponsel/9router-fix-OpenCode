@@ -1,5 +1,13 @@
-import { execSync } from "child_process";
+import { execFileSync, execSync } from "child_process";
 import path from "path";
+
+export const HEADROOM_COMPRESSION_EXTRAS = ["code", "ml"];
+export const EXTRA_MARKERS = {
+  code: ["tree-sitter", "tree-sitter-language-pack"],
+  ml: ["torch", "huggingface-hub"],
+};
+
+const HEADROOM_PIP_TIMEOUT_MS = 8000;
 
 const IS_WIN = process.platform === "win32";
 const WHICH_CMD = IS_WIN ? "where" : "which";
@@ -49,8 +57,27 @@ export function findHeadroomBinary() {
 }
 
 // Find a Python interpreter >= 3.10 (headroom-ai requires it). Returns null if none.
+function pythonCandidates() {
+  const candidates = [];
+  const binary = findHeadroomBinary();
+  if (binary) {
+    const dir = path.dirname(binary);
+    const names = IS_WIN ? ["python.exe", "python3.exe"] : ["python3", "python3.13", "python"];
+    for (const name of names) candidates.push(path.join(dir, name));
+  }
+  for (const dir of EXTRA_BINS) {
+    if (!dir) continue;
+    for (const name of PYTHON_CANDIDATES) {
+      candidates.push(path.join(dir, IS_WIN ? `${name}.exe` : name));
+    }
+  }
+  candidates.push(...PYTHON_CANDIDATES);
+  return [...new Set(candidates)];
+}
+
 export function findPython310() {
-  for (const candidate of PYTHON_CANDIDATES) {
+  let fallback = null;
+  for (const candidate of pythonCandidates()) {
     try {
       const ver = execSync(`${candidate} --version`, {
         stdio: ["ignore", "pipe", "ignore"],
@@ -60,14 +87,22 @@ export function findPython310() {
       const match = ver.match(/(\d+)\.(\d+)/);
       if (!match) continue;
       const [major, minor] = [parseInt(match[1], 10), parseInt(match[2], 10)];
-      if (major > MIN_VERSION[0] || (major === MIN_VERSION[0] && minor >= MIN_VERSION[1])) {
+      if (!(major > MIN_VERSION[0] || (major === MIN_VERSION[0] && minor >= MIN_VERSION[1]))) continue;
+      if (!fallback) fallback = candidate;
+      try {
+        execFileSync(candidate, ["-m", "pip", "show", "headroom-ai"], {
+          stdio: ["ignore", "pipe", "ignore"],
+          windowsHide: true,
+          timeout: HEADROOM_PIP_TIMEOUT_MS,
+          env: { ...process.env, PATH: EXTENDED_PATH },
+        });
         return candidate;
-      }
+      } catch { /* try interpreter that owns headroom-ai */ }
     } catch {
       // candidate not present, try next
     }
   }
-  return null;
+  return fallback;
 }
 
 // Probe whether a Headroom proxy is reachable at the given URL by hitting /health.
@@ -98,5 +133,49 @@ export async function getHeadroomStatus(url) {
   const installed = Boolean(path);
   const running = await probeProxyRunning(url);
   const localUrl = isLoopbackHeadroomUrl(url);
-  return { installed, path, running, python, localUrl, canStart: installed && localUrl };
+  const extrasStatus = installed
+    ? getInstalledHeadroomExtras(python)
+    : { installed: false, version: null, extras: { code: false, ml: false } };
+  return {
+    installed,
+    path,
+    running,
+    python,
+    localUrl,
+    canStart: installed && localUrl,
+    version: extrasStatus.version,
+    extras: extrasStatus.extras,
+  };
+}
+
+export function getInstalledHeadroomExtras(python) {
+  const py = python || findPython310();
+  if (!py) return { installed: false, version: null, extras: { code: false, ml: false } };
+  try {
+    const output = execFileSync(
+      py,
+      ["-m", "pip", "list", "--format=json", "--disable-pip-version-check"],
+      {
+        stdio: ["ignore", "pipe", "ignore"],
+        windowsHide: true,
+        timeout: HEADROOM_PIP_TIMEOUT_MS,
+        env: { ...process.env, PATH: EXTENDED_PATH },
+      }
+    ).toString();
+    const packages = JSON.parse(output);
+    const names = new Set(packages.map((pkg) => String(pkg.name || "").toLowerCase()));
+    if (!names.has("headroom-ai")) {
+      return { installed: false, version: null, extras: { code: false, ml: false } };
+    }
+    const version = packages.find((pkg) => String(pkg.name).toLowerCase() === "headroom-ai")?.version || null;
+    const extras = Object.fromEntries(
+      HEADROOM_COMPRESSION_EXTRAS.map((extra) => [
+        extra,
+        EXTRA_MARKERS[extra].some((marker) => names.has(marker)),
+      ])
+    );
+    return { installed: true, version, extras };
+  } catch {
+    return { installed: false, version: null, extras: { code: false, ml: false } };
+  }
 }

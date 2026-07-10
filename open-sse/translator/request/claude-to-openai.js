@@ -136,7 +136,7 @@ function systemReminderText(content) {
     : [typeof content === "string" ? content : ""];
   const text = parts.filter(Boolean).join("\n");
   if (!text.trim()) return "";
-  return `<system-reminder>\n${text}\n</system-reminder>`;
+  return `<instructions>\n${text}\n</instructions>`;
 }
 
 // Convert single Claude message - returns single message or array of messages

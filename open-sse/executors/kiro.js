@@ -64,9 +64,25 @@ export class KiroExecutor extends BaseExecutor {
   getOrderedBaseUrls(credentials) {
     const baseUrls = this.getBaseUrls();
     const authMethod = credentials?.providerSpecificData?.authMethod;
-    const isCodeWhispererSurface = authMethod === "api_key" || authMethod === "external_idp";
+    const isCodeWhispererSurface =
+      authMethod === "api_key" || authMethod === "external_idp" || authMethod === "idc";
     if (!isCodeWhispererSurface) return baseUrls;
-    const amazon = baseUrls.filter((u) => u.includes("amazonaws.com"));
+
+    const requestedRegion = String(credentials?.providerSpecificData?.region || "").trim();
+    const region = /^[a-z]{2}(?:-gov)?-[a-z]+-\d$/.test(requestedRegion)
+      ? requestedRegion
+      : "us-east-1";
+    const regionalize = (url) =>
+      region === "us-east-1"
+        ? url
+        : url.replace(
+            /([a-z]+)\.[a-z0-9-]+\.amazonaws\.com/,
+            `$1.${region}.amazonaws.com`
+          );
+
+    const amazon = baseUrls
+      .filter((u) => u.includes("amazonaws.com"))
+      .map(regionalize);
     const others = baseUrls.filter((u) => !u.includes("amazonaws.com"));
     return amazon.length > 0 ? [...amazon, ...others] : baseUrls;
   }

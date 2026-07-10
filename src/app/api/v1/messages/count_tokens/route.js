@@ -11,6 +11,47 @@ export async function OPTIONS() {
   return new Response(null, { headers: CORS_HEADERS });
 }
 
+function countValueChars(value) {
+  if (value == null) return 0;
+  if (["string", "number", "boolean"].includes(typeof value)) return String(value).length;
+  if (Array.isArray(value)) return value.reduce((total, item) => total + countValueChars(item), 0);
+  if (typeof value === "object") {
+    return Object.entries(value).reduce(
+      (total, [key, item]) => total + key.length + countValueChars(item),
+      0
+    );
+  }
+  return 0;
+}
+
+function countContentBlockChars(block) {
+  if (block == null) return 0;
+  if (typeof block === "string") return block.length;
+  if (typeof block !== "object") return countValueChars(block);
+  if (block.type === "text") return countValueChars(block.text);
+  if (block.type === "tool_use") return countValueChars(block.name) + countValueChars(block.input);
+  if (block.type === "tool_result") return countValueChars(block.content);
+  if (block.type === "thinking") return countValueChars(block.thinking);
+  return countValueChars(block);
+}
+
+function countMessageChars(message) {
+  if (!message || typeof message !== "object") return 0;
+  if (typeof message.content === "string") return message.content.length;
+  if (Array.isArray(message.content)) {
+    return message.content.reduce((total, block) => total + countContentBlockChars(block), 0);
+  }
+  return countValueChars(message.content);
+}
+
+export function estimateAnthropicInputTokens(body = {}) {
+  let totalChars = countValueChars(body.system) + countValueChars(body.tools);
+  for (const message of Array.isArray(body.messages) ? body.messages : []) {
+    totalChars += countMessageChars(message);
+  }
+  return Math.ceil(totalChars / 4);
+}
+
 /**
  * POST /v1/messages/count_tokens - Mock token count response
  */
@@ -25,23 +66,7 @@ export async function POST(request) {
     });
   }
 
-  // Estimate token count based on content length
-  const messages = body.messages || [];
-  let totalChars = 0;
-  for (const msg of messages) {
-    if (typeof msg.content === "string") {
-      totalChars += msg.content.length;
-    } else if (Array.isArray(msg.content)) {
-      for (const part of msg.content) {
-        if (part.type === "text" && part.text) {
-          totalChars += part.text.length;
-        }
-      }
-    }
-  }
-
-  // Rough estimate: ~4 chars per token
-  const inputTokens = Math.ceil(totalChars / 4);
+  const inputTokens = estimateAnthropicInputTokens(body);
 
   return new Response(JSON.stringify({
     input_tokens: inputTokens

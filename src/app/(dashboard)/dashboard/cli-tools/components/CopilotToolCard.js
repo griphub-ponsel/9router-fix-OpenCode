@@ -7,7 +7,7 @@ import BaseUrlSelect from "./BaseUrlSelect";
 import ApiKeySelect from "./ApiKeySelect";
 import { matchKnownEndpoint } from "./cliEndpointMatch";
 import { findModelName } from "@/shared/constants/models";
-import { formatCopilotContextSize, getCopilotContextSizeOptions, getCopilotContextTokens, getCopilotModelLimits } from "@/shared/utils/copilotModelLimits";
+import { formatCopilotContextSize, getCopilotContextSizeOptions, getCopilotContextTokens, getCopilotModelLimits, isLegacyCopilotContextDefault } from "@/shared/utils/copilotModelLimits";
 import { supportsCopilotVision } from "@/shared/utils/copilotModelCapabilities";
 import { expandCopilotReasoningVariants } from "@/shared/utils/copilotReasoningVariants";
 
@@ -197,7 +197,7 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
           entry.models.forEach((model) => {
             const configured = Number(model.maxInputTokens) + Number(model.maxOutputTokens);
             const defaultContext = getCopilotContextTokens(model.id);
-            if (configured > 0 && configured !== defaultContext) next[model.id] = configured;
+            if (configured > 0 && configured !== defaultContext && !isLegacyCopilotContextDefault(model.id, configured)) next[model.id] = configured;
             else delete next[model.id];
           });
           return next;

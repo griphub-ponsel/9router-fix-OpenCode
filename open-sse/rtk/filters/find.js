@@ -9,7 +9,7 @@ export function find(input) {
   const byDir = new Map();
 
   for (const path of lines) {
-    const lastSlash = path.lastIndexOf("/");
+    const lastSlash = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
     let dir;
     let basename;
     if (lastSlash === -1) {
@@ -31,7 +31,7 @@ export function find(input) {
   const showDirs = dirs.slice(0, FIND_TOTAL_DIR_MAX);
   for (const dir of showDirs) {
     const files = byDir.get(dir);
-    out += `${dir}/  (${files.length})\n`;
+    out += `${dir.replace(/\\/g, "/")}/  (${files.length})\n`;
     const showFiles = files.slice(0, FIND_PER_DIR_MAX);
     for (const f of showFiles) out += `  ${f}\n`;
     if (files.length > FIND_PER_DIR_MAX) {

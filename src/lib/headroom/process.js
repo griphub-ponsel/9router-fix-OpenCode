@@ -1,12 +1,19 @@
 import fs from "fs";
 import path from "path";
-import { spawn } from "child_process";
+import { execFileSync, spawn } from "child_process";
 import { DATA_DIR } from "@/lib/dataDir.js";
-import { findHeadroomBinary } from "./detect.js";
+import {
+  EXTRA_MARKERS,
+  findHeadroomBinary,
+  findPython310,
+  getInstalledHeadroomExtras,
+  HEADROOM_COMPRESSION_EXTRAS,
+} from "./detect.js";
 
 const HEADROOM_DIR = path.join(DATA_DIR, "headroom");
 const PID_FILE = path.join(HEADROOM_DIR, "proxy.pid");
 const LOG_FILE = path.join(HEADROOM_DIR, "proxy.log");
+const INSTALL_LOG_FILE = path.join(HEADROOM_DIR, "install.log");
 const DEFAULT_PORT = 8787;
 const STARTUP_TIMEOUT_MS = 8000;
 
@@ -41,7 +48,14 @@ export function getManagedPid() {
   return pid && isPidAlive(pid) ? pid : null;
 }
 
-export async function startHeadroomProxy({ port = DEFAULT_PORT } = {}) {
+function extrasProxyArgs({ codeAware, kompress } = {}) {
+  const args = [];
+  if (codeAware) args.push("--code-aware");
+  if (kompress === false) args.push("--disable-kompress");
+  return args;
+}
+
+export async function startHeadroomProxy({ port = DEFAULT_PORT, codeAware = false, kompress = true } = {}) {
   const safePort = Number(port) > 0 && Number(port) < 65536 ? Number(port) : DEFAULT_PORT;
   const binary = findHeadroomBinary();
   if (!binary) {
@@ -57,7 +71,12 @@ export async function startHeadroomProxy({ port = DEFAULT_PORT } = {}) {
   // spawn stdio requires fd numbers, not WriteStream objects.
   const outFd = fs.openSync(LOG_FILE, "a");
 
-  const child = spawn(binary, ["proxy", "--port", String(safePort)], {
+  const child = spawn(binary, [
+    "proxy",
+    "--port",
+    String(safePort),
+    ...extrasProxyArgs({ codeAware, kompress }),
+  ], {
     stdio: ["ignore", outFd, outFd],
     detached: true,
     windowsHide: true,
@@ -101,9 +120,16 @@ export function stopHeadroomProxy() {
   const pid = getManagedPid();
   if (!pid) return { stopped: false, reason: "not_running" };
   try {
-    process.kill(pid, "SIGTERM");
+    if (process.platform === "win32") {
+      execFileSync("taskkill.exe", ["/PID", String(pid), "/T", "/F"], {
+        stdio: "ignore",
+        windowsHide: true,
+      });
+    } else {
+      process.kill(pid, "SIGTERM");
+    }
     // Give it a moment, then force if still alive.
-    setTimeout(() => {
+    if (process.platform !== "win32") setTimeout(() => {
       if (isPidAlive(pid)) {
         try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
       }
@@ -118,11 +144,99 @@ export function stopHeadroomProxy() {
   }
 }
 
+export async function restartHeadroomProxy(options = {}) {
+  stopHeadroomProxy();
+  const deadline = Date.now() + 3000;
+  while (getManagedPid() && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return startHeadroomProxy(options);
+}
+
 export function getHeadroomLogTail(maxLines = 200) {
   try {
     if (!fs.existsSync(LOG_FILE)) return "";
     const content = fs.readFileSync(LOG_FILE, "utf8");
     const lines = content.split(/\r?\n/).filter(Boolean);
+    return lines.slice(-maxLines).join("\n");
+  } catch { return ""; }
+}
+
+function validateExtras(extras) {
+  return Array.isArray(extras)
+    ? [...new Set(extras.filter((extra) => HEADROOM_COMPRESSION_EXTRAS.includes(extra)))]
+    : [];
+}
+
+function runPip(args, failureCode) {
+  const python = findPython310();
+  if (!python) {
+    const error = new Error("Python >= 3.10 not found");
+    error.code = "NO_PYTHON";
+    throw error;
+  }
+
+  ensureDir();
+  const outputFd = fs.openSync(INSTALL_LOG_FILE, "w");
+  const child = spawn(python, ["-m", "pip", ...args], {
+    stdio: ["ignore", outputFd, outputFd],
+    windowsHide: true,
+    env: { ...process.env },
+  });
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const closeFd = () => {
+      try { fs.closeSync(outputFd); } catch { /* already closed */ }
+    };
+    child.once("error", (error) => {
+      if (settled) return;
+      settled = true;
+      closeFd();
+      reject(error);
+    });
+    child.once("exit", (code) => {
+      if (settled) return;
+      settled = true;
+      closeFd();
+      if (code === 0) resolve({ python, code });
+      else {
+        const error = new Error(`pip exited with code=${code} — see headroom/install.log`);
+        error.code = failureCode;
+        reject(error);
+      }
+    });
+  });
+}
+
+export async function installHeadroomExtras(extras = []) {
+  const requested = validateExtras(extras);
+  if (!findHeadroomBinary()) {
+    const error = new Error("headroom-ai not installed (run `pip install headroom-ai[proxy]` first)");
+    error.code = "NOT_INSTALLED";
+    throw error;
+  }
+  const spec = `headroom-ai[${["proxy", ...requested].join(",")}]`;
+  const { python, code } = await runPip(["install", "--upgrade", spec], "INSTALL_FAILED");
+  return { success: true, code, spec, requested, ...getInstalledHeadroomExtras(python) };
+}
+
+export async function uninstallHeadroomExtras(extras = []) {
+  const requested = validateExtras(extras);
+  const packages = [...new Set(requested.flatMap((extra) => EXTRA_MARKERS[extra] || []))];
+  if (packages.length === 0) {
+    const error = new Error("No valid extras to remove");
+    error.code = "INVALID_EXTRAS";
+    throw error;
+  }
+  const { python, code } = await runPip(["uninstall", "-y", ...packages], "UNINSTALL_FAILED");
+  return { success: true, code, removed: packages, requested, ...getInstalledHeadroomExtras(python) };
+}
+
+export function getInstallLogTail(maxLines = 15) {
+  try {
+    if (!fs.existsSync(INSTALL_LOG_FILE)) return "";
+    const lines = fs.readFileSync(INSTALL_LOG_FILE, "utf8").split(/\r?\n/).filter(Boolean);
     return lines.slice(-maxLines).join("\n");
   } catch { return ""; }
 }

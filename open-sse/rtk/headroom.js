@@ -52,6 +52,8 @@ function jsonBytes(value) {
 function messagePayload(body) {
   if (Array.isArray(body?.messages)) return body.messages;
   if (Array.isArray(body?.input)) return body.input;
+  const kiro = collectKiroHeadroomMessages(body);
+  if (kiro) return kiro.messages;
   return null;
 }
 
@@ -113,6 +115,75 @@ function hasUnsafeResponsesInputForCompression(body) {
     if (!item || typeof item !== "object" || Array.isArray(item)) return false;
     return typeof item.type === "string" && item.type !== "message";
   });
+}
+
+function collectKiroHeadroomMessages(body) {
+  const state = body?.conversationState;
+  if (!state || typeof state !== "object") return null;
+  const messages = [];
+  const targets = [];
+  const add = (role, text, target, extra = {}) => {
+    if (typeof text !== "string") return;
+    messages.push({ role, content: text, ...extra });
+    targets.push(target);
+  };
+  const visit = (item) => {
+    const user = item?.userInputMessage;
+    if (user) {
+      add("system", user.systemInstruction, { object: user, key: "systemInstruction" });
+      add("user", user.content, { object: user, key: "content" });
+      for (const result of user.userInputMessageContext?.toolResults || []) {
+        for (const part of result?.content || []) {
+          add("tool", part?.text, { object: part, key: "text" },
+            result?.toolUseId ? { tool_call_id: result.toolUseId } : {});
+        }
+      }
+      return;
+    }
+    const assistant = item?.assistantResponseMessage;
+    if (!assistant) return;
+    const toolCalls = (assistant.toolUses || []).map((tool) => ({
+      id: tool?.toolUseId,
+      type: "function",
+      function: { name: tool?.name || "", arguments: JSON.stringify(tool?.input || {}) },
+    })).filter((tool) => tool.id || tool.function.name);
+    add("assistant", assistant.content, { object: assistant, key: "content" },
+      toolCalls.length > 0 ? { tool_calls: toolCalls } : {});
+  };
+  for (const item of state.history || []) visit(item);
+  if (state.currentMessage) visit(state.currentMessage);
+  return messages.length > 0 ? { messages, targets } : null;
+}
+
+function headroomMessageText(message) {
+  if (typeof message?.content === "string") return message.content;
+  if (!Array.isArray(message?.content)) return null;
+  const parts = message.content.map((part) =>
+    typeof part === "string" ? part : part?.text
+  ).filter((part) => typeof part === "string");
+  return parts.length > 0 ? parts.join("\n") : null;
+}
+
+function applyKiroHeadroomMessages(projection, compressedMessages, diagnostics) {
+  if (!Array.isArray(compressedMessages) || compressedMessages.length !== projection.messages.length) {
+    setDiagnostic(diagnostics, "proxy response did not match Kiro message count");
+    return false;
+  }
+  const updates = [];
+  for (let index = 0; index < projection.messages.length; index++) {
+    if (compressedMessages[index]?.role !== projection.messages[index].role) {
+      setDiagnostic(diagnostics, "proxy response did not preserve Kiro message order");
+      return false;
+    }
+    const text = headroomMessageText(compressedMessages[index]);
+    if (text === null) {
+      setDiagnostic(diagnostics, "proxy response missing Kiro text content");
+      return false;
+    }
+    updates.push({ target: projection.targets[index], text });
+  }
+  for (const { target, text } of updates) target.object[target.key] = text;
+  return true;
 }
 
 // POST messages to Headroom /v1/compress; returns compressed messages + stats or null.
@@ -209,6 +280,25 @@ export async function compressWithHeadroom(body, { enabled, url, model, format, 
         false
       );
       if (Array.isArray(responsesBody?.input)) body.input = responsesBody.input;
+      if (diagnostics) diagnostics.after = captureSizeSnapshot(body);
+      return data;
+    }
+
+    if (format === "kiro") {
+      const projection = collectKiroHeadroomMessages(body);
+      if (!projection) {
+        setDiagnostic(diagnostics, "Kiro request did not project to messages[]");
+        return null;
+      }
+      const data = await callCompress(
+        url,
+        projection.messages,
+        model,
+        timeoutMs,
+        compressUserMessages,
+        diagnostics || {}
+      );
+      if (!data || !applyKiroHeadroomMessages(projection, data.messages, diagnostics)) return null;
       if (diagnostics) diagnostics.after = captureSizeSnapshot(body);
       return data;
     }

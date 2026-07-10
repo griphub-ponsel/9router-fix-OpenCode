@@ -148,7 +148,7 @@ Respond ONLY with the JSON object, no other text.`);
         continue;
       }
 
-      const toolData = toolType === OPENAI_BLOCK.FUNCTION && tool.function ? tool.function : tool;
+      const toolData = tool.function ?? tool;
       const originalName = toolData.name;
 
       // Claude OAuth requires prefixed tool names to avoid conflicts

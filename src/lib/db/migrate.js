@@ -7,6 +7,7 @@ import { getMetaSync, setMetaSync } from "./helpers/metaStore.js";
 import { makeBackupDir, backupFile, pruneOldBackups } from "./backup.js";
 import { getAppVersion } from "./version.js";
 import { stringifyJson } from "./helpers/jsonCol.js";
+import { omitRemovedSettings } from "./helpers/removedSettings.js";
 
 // Marker file: prevents re-importing legacy JSON when user wipes data.sqlite.
 const MIGRATED_MARKER = path.join(DB_DIR, ".migrated-from-json");
@@ -113,7 +114,7 @@ function importLegacyMain(adapter, data) {
   if (!data || typeof data !== "object") return;
 
   if (data.settings) {
-    adapter.run(`INSERT INTO settings(id, data) VALUES(1, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data`, [stringifyJson(data.settings)]);
+    adapter.run(`INSERT INTO settings(id, data) VALUES(1, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data`, [stringifyJson(omitRemovedSettings(data.settings))]);
   }
 
   importWithAssertion(adapter, "providerConnections", data.providerConnections || [], (c) => {

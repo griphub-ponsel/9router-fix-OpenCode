@@ -81,6 +81,7 @@ function isGrepLine(line) {
 function isPathLike(line) {
   const t = line.trim();
   if (t.length === 0) return false;
+  if (/^[A-Za-z]:[\\/]/.test(t)) return true;
   if (t.includes(":")) return false;
   return t.startsWith(".") || t.startsWith("/") || t.includes("/");
 }

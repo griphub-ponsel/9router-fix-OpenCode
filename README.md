@@ -103,8 +103,27 @@ This repository package is private (`9router-app`), so source/Docker execution i
 ```bash
 cp .env.example .env
 npm install
-PORT=20128 NEXT_PUBLIC_BASE_URL=http://localhost:20128 npm run dev
+npm run dev
 ```
+
+Development runs source directly at `http://localhost:20128` with Turbopack
+and Fast Refresh. Dashboard, route handlers, providers, translators, and SSE
+changes are picked up without rebuilding `cli/app` or restarting 9Router.
+The command safely replaces an existing 9Router process on port 20128, but
+refuses to stop unrelated processes.
+
+Useful alternatives:
+
+```bash
+# Webpack fallback, still live on port 20128
+npm run dev:webpack
+
+# UI-only preview on port 20127; CLI clients on 20128 will not use it
+npm run dev:preview
+```
+
+`npm --prefix cli run build` is only needed before testing or publishing the
+packaged CLI artifact. It is not part of the normal source development loop.
 
 Production mode:
 

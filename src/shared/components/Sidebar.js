@@ -27,7 +27,6 @@ const navItems = [
   { href: "/dashboard/token-saver", label: "Token Saver", icon: "savings" },
   { href: "/dashboard/cli-tools", label: "CLI Tools", icon: "terminal" },
   { href: "/dashboard/memory", label: "Memory", icon: "memory", badge: "NEW" },
-  { href: "/dashboard/automation", label: "Automation", icon: "auto_awesome" },
 ];
 
 const debugItems = [

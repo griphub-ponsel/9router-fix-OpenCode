@@ -1,9 +1,13 @@
 // Guards C2: regex name fallback (no catalog). Terse entries derive name; existing names untouched.
 import { describe, it, expect } from "vitest";
 import { deriveModelName } from "../../open-sse/providers/models/namePatterns.js";
-import { normalizeModel } from "../../open-sse/providers/models/schema.js";
+import { normalizeModel, normalizeModelId } from "../../open-sse/providers/models/schema.js";
 
 describe("model name regex fallback (C2)", () => {
+  it("normalizes only numeric version separators", () => {
+    expect(normalizeModelId("claude-opus-4-8-thinking")).toBe("claude-opus-4.8-thinking");
+    expect(normalizeModelId("gpt-5-mini")).toBe("gpt-5-mini");
+  });
   it("derives display name from id per family", () => {
     expect(deriveModelName("kimi-k2.5")).toBe("Kimi K2.5");
     expect(deriveModelName("glm-4.6v")).toBe("GLM 4.6V (Vision)");

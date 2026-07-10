@@ -45,6 +45,70 @@ describe("compressWithHeadroom", () => {
     expect(body.input[0].content).toBe("short");
   });
 
+  it("compresses raw Kiro conversation state without changing its structure", async () => {
+    global.fetch = vi.fn(async () => new Response(JSON.stringify({
+      messages: [
+        { role: "system", content: "short system" },
+        { role: "user", content: "short user" },
+      ],
+      tokens_saved: 20,
+    }), { status: 200 }));
+    const body = {
+      profileArn: "arn:test",
+      conversationState: {
+        history: [],
+        currentMessage: {
+          userInputMessage: {
+            systemInstruction: "long system",
+            content: "long user",
+            modelId: "claude-sonnet-5",
+          },
+        },
+      },
+    };
+
+    const stats = await compressWithHeadroom(body, {
+      enabled: true,
+      url: "http://localhost:8787",
+      model: "claude-sonnet-5",
+      format: "kiro",
+    });
+
+    expect(stats.tokens_saved).toBe(20);
+    expect(body.profileArn).toBe("arn:test");
+    expect(body.conversationState.currentMessage.userInputMessage).toMatchObject({
+      systemInstruction: "short system",
+      content: "short user",
+      modelId: "claude-sonnet-5",
+    });
+  });
+
+  it("fails open when Kiro compression changes message order", async () => {
+    global.fetch = vi.fn(async () => new Response(JSON.stringify({
+      messages: [{ role: "assistant", content: "wrong role" }],
+    }), { status: 200 }));
+    const body = {
+      conversationState: {
+        history: [],
+        currentMessage: { userInputMessage: { content: "original", modelId: "claude-sonnet-5" } },
+      },
+    };
+    const original = structuredClone(body);
+    const diagnostics = {};
+
+    const result = await compressWithHeadroom(body, {
+      enabled: true,
+      url: "http://localhost:8787",
+      model: "claude-sonnet-5",
+      format: "kiro",
+      diagnostics,
+    });
+
+    expect(result).toBeNull();
+    expect(body).toEqual(original);
+    expect(diagnostics.reason).toContain("preserve Kiro message order");
+  });
+
   it("fails open on bad response", async () => {
     global.fetch = vi.fn(async () => new Response(JSON.stringify({ error: "bad" }), { status: 500 }));
     const body = { messages: [{ role: "user", content: "long" }] };

@@ -87,6 +87,7 @@ const PROVIDER_MODELS = {
     { id: "grok-3" },
   ],
   kr: [
+    { id: "claude-sonnet-5" },
     { id: "claude-sonnet-4.5" },
     { id: "claude-haiku-4.5" },
   ],

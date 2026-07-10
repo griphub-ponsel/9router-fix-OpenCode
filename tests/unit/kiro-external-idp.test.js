@@ -110,6 +110,35 @@ describe("Kiro external_idp (CLIProxyAPI) import and refresh", () => {
     );
   });
 
+  it("routes IDC auth to its regional CodeWhisperer endpoint", async () => {
+    const { KiroExecutor } = await import("../../open-sse/executors/kiro.js");
+    const executor = new KiroExecutor();
+    const credentials = {
+      accessToken: "idc-access-token",
+      providerSpecificData: { authMethod: "idc", region: "eu-west-1" },
+    };
+
+    expect(executor.buildUrl("claude-sonnet-5", true, 0, credentials)).toBe(
+      "https://codewhisperer.eu-west-1.amazonaws.com/generateAssistantResponse"
+    );
+    expect(executor.buildUrl("claude-sonnet-5", true, 1, credentials)).toBe(
+      "https://q.eu-west-1.amazonaws.com/generateAssistantResponse"
+    );
+  });
+
+  it("rejects unsafe IDC region values when building AWS hosts", async () => {
+    const { KiroExecutor } = await import("../../open-sse/executors/kiro.js");
+    const executor = new KiroExecutor();
+    const credentials = {
+      accessToken: "idc-access-token",
+      providerSpecificData: { authMethod: "idc", region: "evil.example.com" },
+    };
+
+    expect(executor.buildUrl("claude-sonnet-5", true, 0, credentials)).toBe(
+      "https://codewhisperer.us-east-1.amazonaws.com/generateAssistantResponse"
+    );
+  });
+
   it("sends TokenType for external_idp Kiro usage probes", async () => {
     const calls = [];
     vi.doMock("../../open-sse/utils/proxyFetch.js", () => ({

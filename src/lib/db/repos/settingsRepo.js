@@ -1,5 +1,6 @@
 import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
+import { omitRemovedSettings } from "../helpers/removedSettings.js";
 
 const DEFAULT_MITM_ROUTER_BASE = "http://localhost:20128";
 const DEFAULT_HEADROOM_URL = process.env.HEADROOM_URL || "http://localhost:8787";
@@ -38,6 +39,8 @@ const DEFAULT_SETTINGS = {
   headroomEnabled: false,
   headroomUrl: DEFAULT_HEADROOM_URL,
   headroomCompressUserMessages: false,
+  headroomCodeAware: false,
+  headroomKompress: true,
   cavemanEnabled: false,
   cavemanLevel: "full",
   ponytailEnabled: false,
@@ -56,28 +59,12 @@ const DEFAULT_SETTINGS = {
   // /v1/chat/completions with this model to decide what's memory-worthy.
   // Empty = fall back to MEMORY_EXTRACT_MODEL env, then the "auto" alias.
   memoryExtractModel: "",
-  // ── Cloudflare Workers AI automation ──────────────────────────────
-  // Ammail temp-mail — used to register Cloudflare accounts.
-  ammail_base_url: "",
-  ammail_api_key: "",
-  ammail_default_domain: "",
-  ammail_webhook_secret: "",
-  ammail_cf_account_id: "",
-  ammail_cf_api_token: "",
-  ammail_cf_domain: "",
-  ammail_cf_workers_dev_url: "",
-  // 2Captcha — for solving Cloudflare Turnstile during automation.
-  twocaptcha_api_key: "",
-  // Cloudflare account automation — run queue settings.
-  cf_automation_proxy_pool: "[]",
-  cf_automation_browser_headless: true,
-  cf_automation_concurrency: 1,
 };
 
 async function readRaw() {
   const db = await getAdapter();
   const row = db.get(`SELECT data FROM settings WHERE id = 1`);
-  return row ? parseJson(row.data, {}) : {};
+  return row ? omitRemovedSettings(parseJson(row.data, {})) : {};
 }
 
 // Merge raw settings with defaults; backward-compat for missing keys
@@ -110,8 +97,8 @@ export async function updateSettings(updates) {
   let next;
   db.transaction(() => {
     const row = db.get(`SELECT data FROM settings WHERE id = 1`);
-    const current = row ? parseJson(row.data, {}) : {};
-    next = { ...current, ...updates };
+    const current = row ? omitRemovedSettings(parseJson(row.data, {})) : {};
+    next = omitRemovedSettings({ ...current, ...updates });
     db.run(
       `INSERT INTO settings(id, data) VALUES(1, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data`,
       [stringifyJson(next)]

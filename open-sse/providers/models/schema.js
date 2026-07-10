@@ -1,5 +1,12 @@
 import { deriveModelName } from "./namePatterns.js";
 
+// Registry model versions use dots, while some clients emit digit-separated dashes.
+export function normalizeModelId(modelId) {
+  return typeof modelId === "string"
+    ? modelId.replace(/(?<=\d)-(?=\d)/g, ".")
+    : modelId;
+}
+
 // Model defaults centralized (was scattered as `m.kind || "llm"`, `quotaFamily || "normal"`, etc.)
 export const MODEL_DEFAULTS = {
   kind: "llm",

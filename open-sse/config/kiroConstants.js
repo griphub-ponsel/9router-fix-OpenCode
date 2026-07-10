@@ -17,6 +17,7 @@
 
 import { extractThinking } from "../translator/concerns/thinkingUnified.js";
 import { effortToBudget } from "../translator/concerns/thinking.js";
+import { normalizeModelId } from "../providers/models/schema.js";
 
 export const KIRO_AGENTIC_SUFFIX = "-agentic";
 export const KIRO_THINKING_SUFFIX = "-thinking";
@@ -222,6 +223,7 @@ export function resolveKiroModel(model) {
     thinking = true;
     upstream = stripThinkingSuffix(upstream);
   }
+  upstream = normalizeModelId(upstream);
   return { upstream, agentic, thinking };
 }
 

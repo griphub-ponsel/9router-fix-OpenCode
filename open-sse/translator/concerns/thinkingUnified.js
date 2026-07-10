@@ -132,16 +132,43 @@ function toGeminiThinkingLevel(cfg) {
   return effortToThinkingLevel(raw);
 }
 
+const GEMINI_LEVEL_OUTPUT_FLOOR = {
+  minimal: 4096,
+  low: 8192,
+  medium: 16384,
+  high: 65535,
+};
+
+function geminiBudgetOutputFloor(budget) {
+  if (budget === -1 || !Number.isFinite(budget)) return 32768;
+  if (budget <= 1024) return 8192;
+  if (budget <= 8192) return 16384;
+  if (budget <= 24576) return 32768;
+  return 65535;
+}
+
+function getGeminiGenerationConfig(body) {
+  const target = body.request && typeof body.request === "object" ? body.request : body;
+  if (!target.generationConfig || typeof target.generationConfig !== "object") {
+    target.generationConfig = {};
+  }
+  return target.generationConfig;
+}
+
 // Gemini nests thinkingConfig under generationConfig. gemini-cli / antigravity wrap
 // the whole request in a { request: { generationConfig } } envelope — target the
 // envelope's generationConfig when present, else the top-level one.
 function setGeminiThinking(body, tc) {
-  const gc = body.request?.generationConfig
-    ? body.request.generationConfig
-    : (body.generationConfig && typeof body.generationConfig === "object"
-        ? body.generationConfig
-        : (body.generationConfig = {}));
+  const gc = getGeminiGenerationConfig(body);
   gc.thinkingConfig = tc;
+}
+
+function ensureGeminiOutputFloor(body, floor, caps) {
+  const cap = Number.isFinite(caps?.maxOutput) ? caps.maxOutput : floor;
+  const target = Math.min(floor, cap);
+  const config = getGeminiGenerationConfig(body);
+  const current = Number(config.maxOutputTokens);
+  if (!Number.isFinite(current) || current < target) config.maxOutputTokens = target;
 }
 
 // Strip every known thinking field from a body (used before re-applying / when unsupported).
@@ -168,7 +195,7 @@ function applyFormat(fmt, body, cfg, caps) {
     case "openai": {
       if (none && canDisable) { body.reasoning_effort = "none"; break; }
       const level = toLevel(eff);
-      if (level) body.reasoning_effort = level;
+      if (level) body.reasoning_effort = level === "max" ? "xhigh" : level;
       break;
     }
     case "claude-adaptive": {
@@ -187,12 +214,14 @@ function applyFormat(fmt, body, cfg, caps) {
     case "gemini-level": {
       const level = none ? "minimal" : toGeminiThinkingLevel(eff);
       setGeminiThinking(body, { thinkingLevel: level, includeThoughts: level !== "minimal" });
+      ensureGeminiOutputFloor(body, GEMINI_LEVEL_OUTPUT_FLOOR[level] || 65535, caps);
       break;
     }
     case "gemini-budget": {
       if (none && canDisable) { setGeminiThinking(body, { thinkingBudget: 0, includeThoughts: false }); break; }
       const budget = toBudget(eff, caps.thinkingRange);
       setGeminiThinking(body, { thinkingBudget: budget ?? -1, includeThoughts: true });
+      ensureGeminiOutputFloor(body, geminiBudgetOutputFloor(budget ?? -1), caps);
       break;
     }
     case "zai": {

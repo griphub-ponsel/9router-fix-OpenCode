@@ -13,7 +13,10 @@ const proxyClientMaxBodySize = process.env.NINEROUTER_PROXY_CLIENT_MAX_BODY_SIZE
 const nextConfig = {
   distDir: process.env.NEXT_DIST_DIR || ".next",
   output: "standalone",
-  serverExternalPackages: ["better-sqlite3", "sql.js", "node:sqlite", "bun:sqlite"],
+  // Keep native/optional runtime packages out of Turbopack's server graph.
+  // cloakbrowser lazy-loads optional playwright-core only when ZCode launches;
+  // bundling it eagerly makes unrelated API routes fail during development.
+  serverExternalPackages: ["better-sqlite3", "sql.js", "node:sqlite", "bun:sqlite", "cloakbrowser"],
   turbopack: {
     root: tracingRoot
   },
