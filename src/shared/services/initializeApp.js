@@ -16,6 +16,8 @@ import {
 import { getMitmStatus, startMitm, loadEncryptedPassword, initDbHooks, restoreToolDNS, removeAllDNSEntriesSync } from "@/mitm/manager";
 import { startQuotaAutoPing } from "@/shared/services/quotaAutoPing";
 import { syncToJson as syncMitmAliasCache } from "@/lib/mitmAliasCache";
+import { DEFAULT_HEADROOM_URL, isLoopbackHeadroomUrl, probeProxyRunning } from "@/lib/headroom/detect";
+import { startHeadroomProxy } from "@/lib/headroom/process";
 
 // Inject correct paths and DB hooks into manager.js (CJS) from ESM context
 (function bootstrapMitm() {
@@ -43,6 +45,7 @@ const g = global.__appSingleton ??= {
   mitmStartInProgress: false,
   tunnelAutoResumed: false,
   tailscaleAutoResumed: false,
+  headroomAutoResumeAttempted: false,
 };
 
 export async function initializeApp() {
@@ -62,6 +65,15 @@ export async function initializeApp() {
       g.tailscaleAutoResumed = true;
       console.log("[InitApp] Tailscale was enabled, auto-resuming...");
       safeRestartTailscale("startup").catch((e) => console.log("[InitApp] Tailscale resume failed:", e.message));
+    }
+
+    // Resume local Headroom when token saver was left enabled. Keep external
+    // proxies user-managed and never delay the rest of app initialization.
+    if (settings.headroomEnabled && !g.headroomAutoResumeAttempted) {
+      g.headroomAutoResumeAttempted = true;
+      autoStartHeadroom(settings).catch((e) =>
+        console.warn("[InitApp] Headroom auto-start failed:", e.message)
+      );
     }
 
     if (!g.signalHandlersRegistered) {
@@ -93,6 +105,20 @@ export async function initializeApp() {
   } catch (error) {
     console.error("[InitApp] Error:", error);
   }
+}
+
+async function autoStartHeadroom(settings) {
+  const url = settings.headroomUrl || DEFAULT_HEADROOM_URL;
+  if (!isLoopbackHeadroomUrl(url) || await probeProxyRunning(url)) return;
+  let port = 8787;
+  try { port = parseInt(new URL(url).port, 10) || port; } catch { /* default */ }
+  console.log("[InitApp] Headroom was enabled, auto-starting...");
+  await startHeadroomProxy({
+    port,
+    codeAware: settings.headroomCodeAware === true,
+    kompress: settings.headroomKompress !== false,
+  });
+  console.log("[InitApp] Headroom auto-started");
 }
 
 async function autoStartMitm() {

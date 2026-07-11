@@ -23,6 +23,7 @@ export default function TokenSaverClient() {
   const [showHeadroomInstallModal, setShowHeadroomInstallModal] =
     useState(false);
   const [headroomActionLoading, setHeadroomActionLoading] = useState(false);
+  const [headroomExtraLoading, setHeadroomExtraLoading] = useState(null);
   const [headroomActionError, setHeadroomActionError] = useState("");
   const [headroomCodeAware, setHeadroomCodeAware] = useState(false);
   const [headroomKompress, setHeadroomKompress] = useState(true);
@@ -162,6 +163,7 @@ export default function TokenSaverClient() {
   const changeHeadroomExtra = useCallback(async (extra, install) => {
     setHeadroomActionError("");
     setHeadroomActionLoading(true);
+    setHeadroomExtraLoading(extra);
     try {
       const res = await fetch("/api/headroom/extras", {
         method: install ? "POST" : "DELETE",
@@ -175,6 +177,7 @@ export default function TokenSaverClient() {
       setHeadroomActionError(error.message);
     } finally {
       setHeadroomActionLoading(false);
+      setHeadroomExtraLoading(null);
     }
   }, [refreshHeadroomStatus]);
 
@@ -525,7 +528,7 @@ export default function TokenSaverClient() {
                     disabled={headroomActionLoading}
                     onClick={() => changeHeadroomExtra("code", true)}
                   >
-                    Install
+                    {headroomExtraLoading === "code" ? "Installing…" : "Install"}
                   </Button>
                 )}
               </div>
@@ -556,14 +559,17 @@ export default function TokenSaverClient() {
                     disabled={headroomActionLoading}
                     onClick={() => changeHeadroomExtra("ml", true)}
                   >
-                    Install
+                    {headroomExtraLoading === "ml" ? "Installing…" : "Install"}
                   </Button>
                 )}
               </div>
             </div>
           )}
           {headroomActionError && (
-            <p className="text-sm text-warning">{headroomActionError}</p>
+            <div className="rounded border border-warning/30 bg-warning/10 p-2 text-sm text-warning">
+              <p>{headroomActionError}</p>
+              <p className="mt-1 text-xs">Detail: data/headroom/install.log</p>
+            </div>
           )}
           <div className="flex gap-2">
             <Button

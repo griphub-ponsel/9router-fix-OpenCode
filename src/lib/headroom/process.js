@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { execFileSync, spawn } from "child_process";
+import { execFileSync, spawn, spawnSync } from "child_process";
 import { DATA_DIR } from "@/lib/dataDir.js";
 import {
   EXTRA_MARKERS,
@@ -209,16 +209,58 @@ function runPip(args, failureCode) {
   });
 }
 
+function findUv() {
+  const result = spawnSync(process.platform === "win32" ? "where.exe" : "which", ["uv"], {
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  return result.status === 0 ? result.stdout.trim().split(/\r?\n/)[0] : null;
+}
+
+function isUvToolHeadroom(binary) {
+  if (!binary) return false;
+  const normalized = binary.replaceAll("\\", "/").toLowerCase();
+  return normalized.includes("/.local/bin/headroom") || normalized.includes("/uv/tools/headroom-ai/");
+}
+
+function runUvToolInstall(spec) {
+  const uv = findUv();
+  if (!uv) return null;
+  ensureDir();
+  const outputFd = fs.openSync(INSTALL_LOG_FILE, "w");
+  const child = spawn(uv, ["tool", "install", "--force", spec], {
+    stdio: ["ignore", outputFd, outputFd],
+    windowsHide: true,
+    env: { ...process.env },
+  });
+  return new Promise((resolve, reject) => {
+    child.once("error", (error) => { try { fs.closeSync(outputFd); } catch {} reject(error); });
+    child.once("exit", (code) => {
+      try { fs.closeSync(outputFd); } catch {}
+      if (code === 0) resolve({ code, installer: "uv tool" });
+      else {
+        const error = new Error(`uv tool exited with code=${code} — see headroom/install.log`);
+        error.code = "INSTALL_FAILED";
+        reject(error);
+      }
+    });
+  });
+}
+
 export async function installHeadroomExtras(extras = []) {
   const requested = validateExtras(extras);
-  if (!findHeadroomBinary()) {
+  const binary = findHeadroomBinary();
+  if (!binary) {
     const error = new Error("headroom-ai not installed (run `pip install headroom-ai[proxy]` first)");
     error.code = "NOT_INSTALLED";
     throw error;
   }
-  const spec = `headroom-ai[${["proxy", ...requested].join(",")}]`;
-  const { python, code } = await runPip(["install", "--upgrade", spec], "INSTALL_FAILED");
-  return { success: true, code, spec, requested, ...getInstalledHeadroomExtras(python) };
+  const current = getInstalledHeadroomExtras(findPython310()).extras || {};
+  const selected = HEADROOM_COMPRESSION_EXTRAS.filter((extra) => requested.includes(extra) || current[extra]);
+  const spec = `headroom-ai[${["proxy", ...selected].join(",")}]`;
+  const uvResult = isUvToolHeadroom(binary) ? await runUvToolInstall(spec) : null;
+  const result = uvResult || await runPip(["install", "--upgrade", spec], "INSTALL_FAILED");
+  return { success: true, ...result, spec, requested, ...getInstalledHeadroomExtras(result.python) };
 }
 
 export async function uninstallHeadroomExtras(extras = []) {

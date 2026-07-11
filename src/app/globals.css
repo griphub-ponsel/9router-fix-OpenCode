@@ -1,4 +1,8 @@
-@import "tailwindcss";
+@import "tailwindcss" source(none);
+
+/* Scan application source only; generated CLI artifacts may contain binary
+  sequences that Tailwind mistakes for arbitrary-value class names. */
+@source "../";
 
 @custom-variant dark (&:where(.dark, .dark *));
 
