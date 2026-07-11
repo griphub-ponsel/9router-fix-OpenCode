@@ -26,7 +26,15 @@ export async function GET(request) {
     let memories = [];
     let searchType = mode;
 
-    if (mode === "semantic") {
+    if (!query.trim()) {
+      // The unfiltered dashboard is a timeline, not a relevance search.
+      // Sort in SQL so LIMIT returns the actual newest records.
+      memories = await memoryService.adapter.listMemories(filters, {
+        limit,
+        orderBy: "timeline"
+      });
+      searchType = "timeline";
+    } else if (mode === "semantic") {
       // Pure semantic search (requires embedding for the query)
       memories = await memoryService.semanticSearchMemories(query, {
         ...filters,

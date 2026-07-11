@@ -240,6 +240,29 @@ describe('AutoMemory', () => {
       expect(text).toContain('part one');
       expect(text).toContain('part two');
     });
+
+    it('builds a clean chronological transcript for session recaps', () => {
+      const transcript = memoryService.formatEpisodicTranscript([
+        {
+          type: 'prompt',
+          raw_content: '<environment_info>Windows metadata</environment_info><userRequest>tolong perbaiki login</userRequest>'
+        },
+        {
+          type: 'assistant_response',
+          raw_content: 'Login sudah diperbaiki dan dites.'
+        }
+      ]);
+
+      expect(transcript).toBe('User: tolong perbaiki login\n\nAssistant: Login sudah diperbaiki dan dites.');
+      expect(transcript).not.toContain('Windows metadata');
+      expect(transcript.indexOf('User:')).toBeLessThan(transcript.indexOf('Assistant:'));
+    });
+
+    it('creates a readable recap title without exposing a session id', () => {
+      const title = memoryService.createEpisodicTitle('User asked to repair login. The fix was verified.');
+      expect(title).toBe('Conversation recap: User asked to repair login');
+      expect(title).not.toContain('conv-');
+    });
   });
 
   describe('injectMemoryContext v2', () => {

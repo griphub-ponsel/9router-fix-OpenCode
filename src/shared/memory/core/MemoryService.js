@@ -718,11 +718,7 @@ class MemoryService {
       const obs = await this.adapter.listObservationsBySession(sessionId, { limit: 120 });
       if (!obs || !obs.length) return null;
 
-      const blob = obs
-        .map(o => o.raw_content || '')
-        .filter(Boolean)
-        .join('\n')
-        .slice(0, 15000);
+      const blob = this.formatEpisodicTranscript(obs, { maxLength: 15000 });
 
       if (!blob || blob.length < 20) return null;
 
@@ -733,7 +729,7 @@ class MemoryService {
 
       if (!summary) return null;
 
-      const title = context.title || `Session ${String(sessionId).slice(0, 8)} summary`;
+      const title = context.title || this.createEpisodicTitle(summary);
 
       const memId = await this.saveMemory({
         type: MEMORY_TYPE.EPISODIC,
@@ -883,6 +879,72 @@ class MemoryService {
    */
   estimateTokens(text) {
     return Math.ceil(text.split(/\s+/).length * 1.3);
+  }
+
+  /**
+   * Sanitize text for episodic memory recaps by removing injected metadata.
+   */
+  sanitizeEpisodicText(text) {
+    const metadataTags = [
+      'environment_info', 'workspace_info', 'attachments', 'context',
+      'reminderInstructions', 'userMemory', 'sessionMemory', 'repoMemory'
+    ].join('|');
+    const metadataBlocks = new RegExp(`<(${metadataTags})\\b[^>]*>[\\s\\S]*?(?:<\\/\\1>|$)`, 'gi');
+    const remainingTags = new RegExp(`<\\/?(?:userRequest|${metadataTags})>`, 'gi');
+
+    return String(text || '')
+      .replace(metadataBlocks, ' ')
+      .replace(remainingTags, ' ')
+      .replace(/\r/g, '')
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+
+  /**
+   * Build a readable, chronological transcript for episodic summarization.
+   */
+  formatEpisodicTranscript(observations = [], options = {}) {
+    const { maxLength = 15000 } = options;
+    const labels = {
+      prompt: 'User',
+      user: 'User',
+      assistant: 'Assistant',
+      assistant_response: 'Assistant'
+    };
+
+    const transcript = (observations || [])
+      .map((observation) => {
+        const content = this.sanitizeEpisodicText(
+          observation?.raw_content || observation?.rawContent || observation?.content || ''
+        );
+        if (!content) return null;
+
+        const label = labels[observation?.type] || 'Observation';
+        return `${label}: ${content}`;
+      })
+      .filter(Boolean)
+      .join('\n\n');
+
+    return transcript.slice(0, Math.max(0, maxLength)).trim();
+  }
+
+  /**
+   * Derive a short recap title from summary content without exposing IDs.
+   */
+  createEpisodicTitle(summary, options = {}) {
+    const { maxLength = 72 } = options;
+    const cleanSummary = this.sanitizeEpisodicText(summary)
+      .replace(/^(?:summary|conversation recap)\s*:\s*/i, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const firstSentence = cleanSummary.split(/[.!?](?:\s|$)/, 1)[0] || 'Conversation';
+    const availableLength = Math.max(1, maxLength - 'Conversation recap: '.length);
+    const subject = firstSentence.length > availableLength
+      ? `${firstSentence.slice(0, availableLength - 1).trimEnd()}…`
+      : firstSentence;
+
+    return `Conversation recap: ${subject}`;
   }
 
   /**

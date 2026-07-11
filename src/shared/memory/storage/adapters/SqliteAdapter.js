@@ -535,6 +535,10 @@ class SqliteAdapter extends StorageInterface {
     const conditions = [];
     const values = [];
 
+    if (filters.sessionId) {
+      conditions.push('session_id = ?');
+      values.push(filters.sessionId);
+    }
     if (filters.type) {
       conditions.push('type = ?');
       values.push(filters.type);
@@ -563,9 +567,12 @@ class SqliteAdapter extends StorageInterface {
     // Filter out expired memories
     conditions.push('(expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)');
 
-    // Pinned first, then by importance + recency
+    // General retrieval keeps pinned/important items first. Timeline callers
+    // can explicitly request strict chronology before LIMIT/OFFSET is applied.
     let query = 'SELECT * FROM memories WHERE ' + conditions.join(' AND ');
-    query += ' ORDER BY is_pinned DESC, importance_score DESC, created_at DESC';
+    query += options.orderBy === 'timeline'
+      ? ' ORDER BY created_at DESC, id DESC'
+      : ' ORDER BY is_pinned DESC, importance_score DESC, created_at DESC';
 
     const { limit = 50, offset = 0 } = options;
     query += ` LIMIT ? OFFSET ?`;

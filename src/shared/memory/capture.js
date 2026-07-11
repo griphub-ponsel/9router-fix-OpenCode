@@ -403,7 +403,10 @@ function alreadyCapturedAssistant(sessionId, hash) {
 }
 
 async function captureChatMemory(body = {}, context = {}) {
-  const promptText = getUserPromptText(body);
+  // Clients resend the complete chat history on every turn. Persist only the
+  // newest user turn so observations stay readable and session recaps do not
+  // repeat old prompts or client metadata over and over.
+  const promptText = getLastUserText(body) || getUserPromptText(body);
   if (!promptText.trim()) {
     return { observations: 0, memories: 0 };
   }
@@ -659,18 +662,14 @@ async function maybeUpdateSessionSummary(sessionId, context = {}) {
     }
     sessionSummaryState.set(sessionId, count);
 
-    const blob = observations
-      .map((o) => o.raw_content || '')
-      .filter(Boolean)
-      .join('\n')
-      .slice(0, 15000);
+    const blob = memoryService.formatEpisodicTranscript(observations, { maxLength: 15000 });
     if (blob.length < 200) return null;
 
     const summary = await memoryService.summarizeWithRouter(blob, { maxLength: 850, style: 'episodic' });
     if (!summary) return null;
 
     const userId = context.userId || 'local-user';
-    const title = `Session summary: ${sessionId}`;
+    const title = memoryService.createEpisodicTitle(summary);
 
     // Update in place if this session already has a summary memory.
     const existing = await memoryService.adapter.listMemories({
@@ -678,9 +677,16 @@ async function maybeUpdateSessionSummary(sessionId, context = {}) {
       scope: SCOPE.USER,
       userId
     }, { limit: 200 });
-    const match = existing.find((memory) => memory.title === title);
+    const legacyTitle = `Session summary: ${sessionId}`;
+    const match = existing.find((memory) =>
+      memory.session_id === sessionId || memory.title === legacyTitle
+    );
     if (match) {
-      await memoryService.updateMemory(match.id, { content: summary, importanceScore: 0.75 }, userId);
+      await memoryService.updateMemory(match.id, {
+        title,
+        content: summary,
+        importanceScore: 0.75
+      }, userId);
       return match.id;
     }
 
