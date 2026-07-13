@@ -168,6 +168,10 @@ export const CODEBUDDY_CONFIG = { ...PROVIDER_OAUTH["codebuddy-cn"] };
 // Kimchi OAuth Configuration (Browser token callback flow)
 export const KIMCHI_CONFIG = { ...PROVIDER_OAUTH["kimchi"] };
 
+// Grok CLI / Grok Build OAuth Configuration (Device Code Flow)
+// Endpoint: cli-chat-proxy.grok.com — same client_id as xai, different flow + scopes
+export const GROK_CLI_CONFIG = { ...PROVIDER_OAUTH["grok-cli"] };
+
 // OAuth timeout (5 minutes)
 export const OAUTH_TIMEOUT = 300000;
 
@@ -193,4 +197,5 @@ export const PROVIDERS = {
   XAI_OAUTH: "xai-oauth",
   PIONEER: "pioneer",
   KIMCHI: "kimchi",
+  GROK_CLI: "grok-cli",
 };

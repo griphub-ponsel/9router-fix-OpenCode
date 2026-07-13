@@ -33,6 +33,7 @@ import {
   CODEBUDDY_CONFIG,
   XAI_OAUTH_CONFIG,
   KIMCHI_CONFIG,
+  GROK_CLI_CONFIG,
   getOAuthClientMetadata,
 } from "./constants/oauth";
 import { XAI_CONFIG, XAI_PKCE_VERIFIER_BYTES } from "./constants/xai";
@@ -187,6 +188,192 @@ const PROVIDERS = {
         };
       }
       return mapped;
+    },
+  },
+
+  xai: {
+    config: XAI_CONFIG,
+    flowType: "authorization_code_pkce",
+    fixedPort: XAI_CONFIG.loopbackPort,
+    callbackPath: XAI_CONFIG.callbackPath,
+    pkceVerifierBytes: XAI_PKCE_VERIFIER_BYTES,
+    prepareConfig: async (config) => {
+      const endpoints = await discoverXaiEndpoints();
+      return {
+        ...config,
+        authorizeUrl: endpoints.authorizeUrl,
+        tokenUrl: endpoints.tokenUrl,
+      };
+    },
+    buildAuthUrl: (config, redirectUri, state, codeChallenge) => {
+      const nonce = crypto.randomBytes(16).toString("hex");
+      const params = {
+        response_type: "code",
+        client_id: config.clientId,
+        redirect_uri: redirectUri,
+        scope: config.scope,
+        code_challenge: codeChallenge,
+        code_challenge_method: config.codeChallengeMethod,
+        state,
+        nonce,
+        plan: "generic",
+        referrer: "cli-proxy-api",
+      };
+      const qs = Object.entries(params)
+        .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
+        .join("&");
+      return `${config.authorizeUrl}?${qs}`;
+    },
+    exchangeToken: async (config, code, redirectUri, codeVerifier) => {
+      const response = await fetch(config.tokenUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Accept: "application/json",
+        },
+        body: new URLSearchParams({
+          grant_type: "authorization_code",
+          client_id: config.clientId,
+          code,
+          redirect_uri: redirectUri,
+          code_verifier: codeVerifier,
+        }),
+      });
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`xAI token exchange failed: ${error}`);
+      }
+      return await response.json();
+    },
+    mapTokens: (tokens) => {
+      const mapped = {
+        accessToken: tokens.access_token,
+        refreshToken: tokens.refresh_token,
+        expiresIn: tokens.expires_in,
+        scope: tokens.scope,
+      };
+      const email = decodeXaiIdTokenEmail(tokens.id_token);
+      if (email) mapped.email = email;
+      if (tokens.id_token) {
+        mapped.providerSpecificData = { idToken: tokens.id_token };
+      }
+      return mapped;
+    },
+  },
+
+  // Grok CLI / Grok Build — device code flow to auth.x.ai, inference on cli-chat-proxy.grok.com
+  "grok-cli": {
+    config: GROK_CLI_CONFIG,
+    flowType: "device_code",
+    requestDeviceCode: async (config) => {
+      const body = new URLSearchParams({
+        client_id: config.clientId,
+        scope: config.scope,
+      });
+      // Official CLI sends referrer=grok-build
+      if (config.referrer) body.set("referrer", config.referrer);
+
+      const response = await fetch(config.deviceCodeUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Accept: "application/json",
+          "User-Agent": "grok-pager/0.2.93 grok-shell/0.2.93 (linux; x86_64)",
+        },
+        body,
+      });
+
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`Grok CLI device code request failed: ${error}`);
+      }
+
+      return await response.json();
+    },
+    pollToken: async (config, deviceCode) => {
+      const response = await fetch(config.tokenUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Accept: "application/json",
+          "User-Agent": "grok-pager/0.2.93 grok-shell/0.2.93 (linux; x86_64)",
+        },
+        body: new URLSearchParams({
+          grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+          device_code: deviceCode,
+          client_id: config.clientId,
+        }),
+      });
+
+      let data;
+      try {
+        data = await response.json();
+      } catch {
+        const text = await response.text();
+        data = { error: "invalid_response", error_description: text };
+      }
+
+      // Device flow: 400 + authorization_pending is expected while user authorizes
+      const pending =
+        data?.error === "authorization_pending" ||
+        data?.error === "slow_down";
+      return {
+        ok: response.ok || pending,
+        data,
+      };
+    },
+    postExchange: async (tokens) => {
+      // Best-effort user profile from cli-chat-proxy (non-fatal)
+      try {
+        const res = await fetch("https://cli-chat-proxy.grok.com/v1/user", {
+          headers: {
+            Authorization: `Bearer ${tokens.access_token}`,
+            Accept: "application/json",
+            "User-Agent": "grok-pager/0.2.93 grok-shell/0.2.93 (linux; x86_64)",
+            "x-xai-token-auth": "xai-grok-cli",
+            "x-grok-client-version": "0.2.93",
+          },
+        });
+        if (res.ok) return { user: await res.json() };
+      } catch {
+        /* ignore */
+      }
+      return { user: null };
+    },
+    mapTokens: (tokens, extra) => {
+      const email =
+        decodeXaiIdTokenEmail(tokens.id_token) ||
+        extractEmailFromAccessToken(tokens.access_token) ||
+        extra?.user?.email ||
+        null;
+      const userId =
+        extra?.user?.userId ||
+        extra?.user?.principalId ||
+        null;
+      const displayName = [extra?.user?.firstName, extra?.user?.lastName]
+        .filter(Boolean)
+        .join(" ")
+        .trim() || null;
+
+      return {
+        accessToken: tokens.access_token,
+        refreshToken: tokens.refresh_token || null,
+        expiresIn: tokens.expires_in,
+        scope: tokens.scope,
+        // Top-level for dashboard connection cards
+        email: email || undefined,
+        displayName: displayName || undefined,
+        // Mirror identity into providerSpecificData so GrokCliExecutor can set
+        // x-email / x-userid without depending on top-level credential shape.
+        providerSpecificData: {
+          authMethod: "device_code",
+          idToken: tokens.id_token || null,
+          email: email || null,
+          userId,
+          hasGrokCodeAccess: extra?.user?.hasGrokCodeAccess ?? null,
+          subscriptionTier: extra?.user?.subscriptionTier ?? null,
+        },
+      };
     },
   },
 

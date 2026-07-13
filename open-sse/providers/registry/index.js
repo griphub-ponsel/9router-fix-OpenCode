@@ -1,4 +1,4 @@
-// Auto-generated: static imports of all registry entries
+// Auto-generated: static imports for all registry entries
 import p0 from "./alicode-intl.js";
 import p1 from "./alicode.js";
 import p2 from "./anthropic.js";
@@ -40,6 +40,7 @@ import p37 from "./glm.js";
 import p38 from "./google-pse.js";
 import p39 from "./google-tts.js";
 import p40 from "./grok-web.js";
+import pGrokCli from "./grok-cli.js";
 import p41 from "./groq.js";
 import p42 from "./huggingface.js";
 import p43 from "./hyperbolic.js";
@@ -194,6 +195,7 @@ export default [
   p92,
   p93,
   p94,
+  pGrokCli,
   pXaiOauth,
   pMerlin
 ];

@@ -1,11 +1,17 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Card, Button, ModelSelectModal, ManualConfigModal } from "@/shared/components";
 import Image from "next/image";
 import BaseUrlSelect from "./BaseUrlSelect";
 import ApiKeySelect from "./ApiKeySelect";
 import { matchKnownEndpoint } from "./cliEndpointMatch";
+import { findModelName } from "@/shared/constants/models";
+import { formatCopilotContextSize, getCopilotContextSizeOptions, getCopilotContextTokens, getCopilotReasoningEfforts } from "@/shared/utils/copilotModelLimits";
+
+const DEFAULT_REASONING_EFFORTS = ["low", "medium", "high"];
+
+const getReasoningEfforts = (model) => getCopilotReasoningEfforts(model) || DEFAULT_REASONING_EFFORTS;
 
 export default function CodexToolCard({ tool, isExpanded, onToggle, baseUrl, apiKeys, activeProviders, cloudEnabled, initialStatus, tunnelEnabled, tunnelPublicUrl, tailscaleEnabled, tailscaleUrl }) {
   const [codexStatus, setCodexStatus] = useState(initialStatus || null);
@@ -16,12 +22,80 @@ export default function CodexToolCard({ tool, isExpanded, onToggle, baseUrl, api
   const [showInstallGuide, setShowInstallGuide] = useState(false);
   const [selectedApiKey, setSelectedApiKey] = useState("");
   const [selectedModel, setSelectedModel] = useState("");
+  const [selectedModels, setSelectedModels] = useState([]);
+  const [modelDisplayNames, setModelDisplayNames] = useState({});
+  const [modelContextSizes, setModelContextSizes] = useState({});
+  const [modelReasoningEfforts, setModelReasoningEfforts] = useState({});
+  const [newModelBadges, setNewModelBadges] = useState({});
+  const [sortKey, setSortKey] = useState("model");
+  const [sortDir, setSortDir] = useState("asc");
   const [subagentModel, setSubagentModel] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [subagentModalOpen, setSubagentModalOpen] = useState(false);
   const [modelAliases, setModelAliases] = useState({});
   const [showManualConfigModal, setShowManualConfigModal] = useState(false);
   const [customBaseUrl, setCustomBaseUrl] = useState("");
+  const [visionFallbackModels, setVisionFallbackModels] = useState([]);
+  const [fallbackModalOpen, setFallbackModalOpen] = useState(false);
+
+  const sortModels = (models) => [...new Set(models)].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+
+  const getDefaultModelName = (model) => {
+    const aliasName = modelAliases?.[model];
+    if (typeof aliasName === "string" && aliasName.trim()) return aliasName;
+    if (typeof model === "string" && model.includes("/")) {
+      const slash = model.indexOf("/");
+      const name = findModelName(model.slice(0, slash), model.slice(slash + 1));
+      if (name && name !== model.slice(slash + 1)) return name;
+    }
+    return model;
+  };
+
+  const getModelDisplayName = (model) => {
+    const name = modelDisplayNames[model];
+    return typeof name === "string" && name.trim() ? name.trim() : getDefaultModelName(model);
+  };
+
+  const getSelectedModelNames = (models = selectedModels) => Object.fromEntries(
+    models.map((model) => [model, getModelDisplayName(model)])
+  );
+
+  const getSelectedModelContextSizes = () => Object.fromEntries(selectedModels.map((model) => [
+    model,
+    Number(modelContextSizes[model]) || getCopilotContextTokens(model),
+  ]).filter(([, tokens]) => Number(tokens) > 0));
+
+  const getSelectedModelReasoningEfforts = () => Object.fromEntries(selectedModels.map((model) => {
+    const supported = getReasoningEfforts(model);
+    const selected = modelReasoningEfforts[model];
+    return [model, supported.includes(selected) ? selected : supported.includes("medium") ? "medium" : supported[0]];
+  }));
+
+  const getSelectedModelReasoningOptions = () => Object.fromEntries(selectedModels.map((model) => [model, getReasoningEfforts(model)]));
+
+  const setModelContextSize = (model, value) => setModelContextSizes((current) => {
+    const next = { ...current };
+    if (value === "auto") delete next[model];
+    else next[model] = Number(value);
+    return next;
+  });
+
+  const sortedModels = useMemo(() => {
+    const result = [...selectedModels].sort((a, b) => {
+      const left = sortKey === "displayName" ? getModelDisplayName(a) : a;
+      const right = sortKey === "displayName" ? getModelDisplayName(b) : b;
+      return left.localeCompare(right, undefined, { sensitivity: "base" });
+    });
+    return sortDir === "desc" ? result.reverse() : result;
+  }, [selectedModels, modelDisplayNames, modelAliases, sortKey, sortDir]);
+
+  const toggleSort = (key) => {
+    if (sortKey === key) setSortDir((current) => current === "asc" ? "desc" : "asc");
+    else {
+      setSortKey(key);
+      setSortDir("asc");
+    }
+  };
 
   useEffect(() => {
     if (apiKeys?.length > 0 && !selectedApiKey) {
@@ -61,7 +135,22 @@ export default function CodexToolCard({ tool, isExpanded, onToggle, baseUrl, api
       const subagentModelMatch = codexStatus.config.match(/\[agents\.subagent\]\s*\n\s*model\s*=\s*"([^"]+)"/m);
       if (subagentModelMatch) setSubagentModel(subagentModelMatch[1]);
     }
-  }, [codexStatus]);
+    if (codexStatus?.codex?.models) {
+      const models = sortModels(codexStatus.codex.models);
+      setSelectedModels(models);
+      setSelectedModel(codexStatus.codex.activeModel || models[0] || "");
+      setModelDisplayNames((current) => {
+        const next = { ...current };
+        models.forEach((model) => {
+          next[model] = codexStatus.codex.modelNames?.[model] || next[model] || getDefaultModelName(model);
+        });
+        return next;
+      });
+      setModelContextSizes(codexStatus.codex.modelContextSizes || {});
+      setModelReasoningEfforts(codexStatus.codex.modelReasoningEfforts || {});
+    }
+    if (Array.isArray(codexStatus?.visionFallbackModels)) setVisionFallbackModels(codexStatus.visionFallbackModels);
+  }, [codexStatus, modelAliases]);
 
   const getConfigStatus = () => {
     if (!codexStatus?.installed) return null;
@@ -109,8 +198,14 @@ export default function CodexToolCard({ tool, isExpanded, onToggle, baseUrl, api
         body: JSON.stringify({
           baseUrl: getEffectiveBaseUrl(),
           apiKey: keyToUse,
-          model: selectedModel,
-          subagentModel: subagentModel || selectedModel
+          models: selectedModels,
+          modelNames: getSelectedModelNames(),
+          modelContextSizes: getSelectedModelContextSizes(),
+          modelReasoningEfforts: getSelectedModelReasoningEfforts(),
+          modelReasoningOptions: getSelectedModelReasoningOptions(),
+          activeModel: selectedModel,
+          subagentModel: subagentModel || selectedModel,
+          visionFallbackModels,
         }),
       });
       const data = await res.json();
@@ -136,6 +231,11 @@ export default function CodexToolCard({ tool, isExpanded, onToggle, baseUrl, api
       if (res.ok) {
         setMessage({ type: "success", text: "Settings reset successfully!" });
         setSelectedModel("");
+        setSelectedModels([]);
+        setModelDisplayNames({});
+        setModelContextSizes({});
+        setModelReasoningEfforts({});
+        setNewModelBadges({});
         setSubagentModel("");
         checkCodexStatus();
       } else {
@@ -149,12 +249,18 @@ export default function CodexToolCard({ tool, isExpanded, onToggle, baseUrl, api
   };
 
   const handleModelSelect = (model) => {
-    setSelectedModel(model.value);
+    if (!selectedModels.includes(model.value)) {
+      setSelectedModels((current) => sortModels([...current, model.value]));
+      setModelDisplayNames((current) => ({ ...current, [model.value]: model.name || getDefaultModelName(model.value) }));
+      setNewModelBadges((current) => ({ ...current, [model.value]: true }));
+      const efforts = getReasoningEfforts(model.value);
+      setModelReasoningEfforts((current) => ({ ...current, [model.value]: efforts.includes("medium") ? "medium" : efforts[0] }));
+    }
+    if (!selectedModel) setSelectedModel(model.value);
     // Auto-set subagent model if not set
     if (!subagentModel) {
       setSubagentModel(model.value);
     }
-    setModalOpen(false);
   };
 
   const getManualConfigs = () => {
@@ -162,10 +268,11 @@ export default function CodexToolCard({ tool, isExpanded, onToggle, baseUrl, api
       ? selectedApiKey
       : (!cloudEnabled ? "sk_9router" : "<API_KEY_FROM_DASHBOARD>");
 
-    const effectiveSubagentModel = subagentModel || selectedModel;
+    const activeModel = selectedModel || selectedModels[0] || "provider/model-id";
+    const effectiveSubagentModel = subagentModel || activeModel;
 
     const configContent = `# 9Router Configuration for Codex CLI
-model = "${selectedModel}"
+model = "${activeModel}"
 model_provider = "9router"
 
 [model_providers.9router]
@@ -305,15 +412,91 @@ model = "${effectiveSubagentModel}"
                   <ApiKeySelect value={selectedApiKey} onChange={setSelectedApiKey} apiKeys={apiKeys} cloudEnabled={cloudEnabled} />
                 </div>
 
-                {/* Model */}
-                <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr_auto] sm:items-center sm:gap-2">
-                  <span className="text-xs font-semibold text-text-main sm:text-right sm:text-sm">Model</span>
-                  <span className="material-symbols-outlined hidden text-text-muted text-[14px] sm:inline">arrow_forward</span>
-                  <div className="relative w-full min-w-0">
-                    <input type="text" value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)} placeholder="provider/model-id" className="w-full min-w-0 pl-2 pr-7 py-2 bg-surface rounded border border-border text-xs focus:outline-none focus:ring-1 focus:ring-primary/50 sm:py-1.5" />
-                    {selectedModel && <button onClick={() => setSelectedModel("")} className="absolute right-1 top-1/2 -translate-y-1/2 p-0.5 text-text-muted hover:text-red-500 rounded transition-colors" title="Clear"><span className="material-symbols-outlined text-[14px]">close</span></button>}
+                {/* Models */}
+                <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr] sm:items-start sm:gap-2">
+                  <span className="w-32 shrink-0 pt-1 text-right text-sm font-semibold text-text-main">Models</span>
+                  <span className="material-symbols-outlined mt-1.5 text-text-muted text-[14px]">arrow_forward</span>
+                  <div className="flex flex-1 flex-col gap-2">
+                    {selectedModels.length === 0 ? (
+                      <div className="rounded border border-border bg-surface/40 px-3 py-4 text-center">
+                        <span className="text-xs text-text-muted">No models selected</span>
+                      </div>
+                    ) : (
+                      <div className="overflow-hidden rounded border border-border bg-surface/40">
+                        <div className="grid grid-cols-[auto_minmax(0,1fr)_minmax(0,1.2fr)_5.5rem_5.5rem_2rem] gap-2 border-b border-border bg-surface/60 px-3 py-2">
+                          <span className="w-5" />
+                          <button type="button" onClick={() => toggleSort("model")} className="flex cursor-pointer items-center gap-1 text-left text-[11px] font-medium text-text-muted transition-colors hover:text-text-main">
+                            <span>Model</span>
+                            <span className="material-symbols-outlined text-[14px] leading-none">{sortKey === "model" ? (sortDir === "asc" ? "arrow_upward" : "arrow_downward") : "unfold_more"}</span>
+                          </button>
+                          <button type="button" onClick={() => toggleSort("displayName")} className="flex cursor-pointer items-center gap-1 text-left text-[11px] font-medium text-text-muted transition-colors hover:text-text-main">
+                            <span>Display Name</span>
+                            <span className="material-symbols-outlined text-[14px] leading-none">{sortKey === "displayName" ? (sortDir === "asc" ? "arrow_upward" : "arrow_downward") : "unfold_more"}</span>
+                          </button>
+                          <span className="text-center text-[11px] font-medium text-text-muted">Context</span>
+                          <span className="text-center text-[11px] font-medium text-text-muted">Thinking</span>
+                          <span />
+                        </div>
+                        {sortedModels.map((model) => (
+                          <div key={model} className={`grid grid-cols-[auto_minmax(0,1fr)_minmax(0,1.2fr)_5.5rem_5.5rem_2rem] items-center gap-2 border-b border-border px-3 py-1.5 last:border-b-0 ${model === selectedModel ? "bg-primary/5" : "hover:bg-surface/80"}`}>
+                            <button type="button" onClick={() => setSelectedModel(model)} className={`flex size-5 items-center justify-center rounded ${model === selectedModel ? "text-primary" : "text-text-muted/40 hover:text-primary/60"}`} title={model === selectedModel ? "Active model" : "Set as active model"}>
+                              <span className="material-symbols-outlined text-[14px]">{model === selectedModel ? "star" : "star_outline"}</span>
+                            </button>
+                            <span className="flex min-w-0 items-center gap-1.5" title={model}>
+                              <span className="truncate text-xs text-text-main">{model}</span>
+                              {newModelBadges[model] && <span className="shrink-0 rounded bg-emerald-500/15 px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-500">New</span>}
+                            </span>
+                            <input type="text" value={modelDisplayNames[model] ?? getDefaultModelName(model)} onChange={(event) => setModelDisplayNames((current) => ({ ...current, [model]: event.target.value }))} className="w-full min-w-0 rounded border border-border bg-surface px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-primary/50" />
+                            <select value={modelContextSizes[model] || "auto"} onChange={(event) => setModelContextSize(model, event.target.value)} className="w-full rounded border border-border bg-surface px-1.5 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-primary/50" title="Context window advertised to Codex">
+                              <option value="auto">Auto ({formatCopilotContextSize(getCopilotContextTokens(model))})</option>
+                              {getCopilotContextSizeOptions(model, modelContextSizes[model]).filter((option) => option.value !== getCopilotContextTokens(model)).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                            </select>
+                            <select value={modelReasoningEfforts[model] || (getReasoningEfforts(model).includes("medium") ? "medium" : getReasoningEfforts(model)[0])} onChange={(event) => setModelReasoningEfforts((current) => ({ ...current, [model]: event.target.value }))} className="w-full rounded border border-border bg-surface px-1.5 py-1 text-xs capitalize focus:outline-none focus:ring-1 focus:ring-primary/50" title="Default thinking effort in Codex">
+                              {getReasoningEfforts(model).map((effort) => <option key={effort} value={effort}>{effort}</option>)}
+                            </select>
+                            <button type="button" onClick={() => {
+                              const remaining = selectedModels.filter((entry) => entry !== model);
+                              setSelectedModels(remaining);
+                              setModelDisplayNames((current) => { const next = { ...current }; delete next[model]; return next; });
+                              setModelContextSizes((current) => { const next = { ...current }; delete next[model]; return next; });
+                              setModelReasoningEfforts((current) => { const next = { ...current }; delete next[model]; return next; });
+                              setNewModelBadges((current) => { const next = { ...current }; delete next[model]; return next; });
+                              if (selectedModel === model) setSelectedModel(remaining[0] || "");
+                            }} className="flex size-5 items-center justify-center rounded text-text-muted/50 transition-colors hover:bg-red-500/10 hover:text-red-500" title="Remove model">
+                              <span className="material-symbols-outlined text-[14px]">close</span>
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <div className="flex items-center gap-3">
+                      <button onClick={() => setModalOpen(true)} disabled={!activeProviders?.length} className={`rounded border px-2 py-1 text-xs transition-colors ${activeProviders?.length ? "cursor-pointer border-border bg-surface text-text-main hover:border-primary" : "cursor-not-allowed border-border opacity-50"}`}>Add Model</button>
+                      <span className="text-xs text-text-muted">{selectedModels.length ? (selectedModel ? <>Active: <span className="text-primary">{selectedModel}</span></> : "Click star to set active model") : "Select models to add"}</span>
+                    </div>
                   </div>
-                  <button onClick={() => setModalOpen(true)} disabled={!activeProviders?.length} className={`w-full sm:w-auto rounded border px-2 py-2 text-xs transition-colors sm:py-1.5 whitespace-nowrap sm:shrink-0 ${activeProviders?.length ? "bg-surface border-border text-text-main hover:border-primary cursor-pointer" : "opacity-50 cursor-not-allowed border-border"}`}>Select Model</button>
+                </div>
+
+                {/* Vision Fallback */}
+                <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr] sm:items-start sm:gap-2">
+                  <span className="w-32 shrink-0 pt-1 text-right text-sm font-semibold text-text-main">Vision Fallback</span>
+                  <span className="material-symbols-outlined mt-1.5 text-text-muted text-[14px]">arrow_forward</span>
+                  <div className="flex flex-1 flex-col gap-2">
+                    <div className="flex items-start gap-2 rounded border border-border bg-surface/40 px-3 py-2 text-[11px] text-text-muted">
+                      <span className="material-symbols-outlined text-[14px] text-primary">visibility</span>
+                      <span>Advertises image input in Codex App and delegates image understanding through one of these models. Leave empty to keep Codex text-only.</span>
+                    </div>
+                    {visionFallbackModels.length === 0 ? (
+                      <div className="rounded border border-border bg-surface/40 px-3 py-3 text-center"><span className="text-xs text-text-muted">No vision fallback models</span></div>
+                    ) : (
+                      <div className="flex flex-wrap gap-1.5">
+                        {visionFallbackModels.map((model) => <span key={model} className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[11px] text-primary" title={model}><span className="material-symbols-outlined text-[12px]">visibility</span><span className="max-w-[16rem] truncate">{model}</span><button type="button" onClick={() => setVisionFallbackModels((current) => current.filter((entry) => entry !== model))} className="flex items-center justify-center rounded-full text-primary/60 transition-colors hover:text-red-500" title="Remove fallback model"><span className="material-symbols-outlined text-[12px]">close</span></button></span>)}
+                      </div>
+                    )}
+                    <div className="flex items-center gap-3">
+                      <button type="button" onClick={() => setFallbackModalOpen(true)} disabled={!activeProviders?.length} className={`rounded border px-2 py-1 text-xs transition-colors ${activeProviders?.length ? "cursor-pointer border-border bg-surface text-text-main hover:border-primary" : "cursor-not-allowed border-border opacity-50"}`}>Add Vision Model</button>
+                      <span className="text-xs text-text-muted">{visionFallbackModels.length ? `${visionFallbackModels.length} fallback model${visionFallbackModels.length === 1 ? "" : "s"}` : "Optional"}</span>
+                    </div>
+                  </div>
                 </div>
 
                 {/* Subagent Model */}
@@ -356,7 +539,7 @@ model = "${effectiveSubagentModel}"
               )}
 
               <div className="grid grid-cols-1 gap-2 sm:flex sm:items-center">
-                <Button variant="primary" size="sm" onClick={handleApplySettings} disabled={(!selectedApiKey && (cloudEnabled && apiKeys.length > 0)) || !selectedModel} loading={applying}>
+                <Button variant="primary" size="sm" onClick={handleApplySettings} disabled={(!selectedApiKey && (cloudEnabled && apiKeys.length > 0)) || selectedModels.length === 0 || !selectedModel} loading={applying}>
                   <span className="material-symbols-outlined text-[14px] mr-1">save</span>Apply
                 </Button>
                 <Button variant="outline" size="sm" onClick={handleResetSettings} disabled={restoring} loading={restoring}>
@@ -375,10 +558,17 @@ model = "${effectiveSubagentModel}"
         isOpen={modalOpen}
         onClose={() => setModalOpen(false)}
         onSelect={handleModelSelect}
-        selectedModel={selectedModel}
+        onDeselect={(model) => {
+          const remaining = selectedModels.filter((entry) => entry !== model.value);
+          setSelectedModels(remaining);
+          if (selectedModel === model.value) setSelectedModel(remaining[0] || "");
+        }}
+        selectedModel={null}
         activeProviders={activeProviders}
         modelAliases={modelAliases}
-        title="Select Model for Codex"
+        addedModelValues={selectedModels}
+        closeOnSelect={false}
+        title="Add Model for Codex"
       />
 
       <ModelSelectModal
@@ -389,6 +579,19 @@ model = "${effectiveSubagentModel}"
         activeProviders={activeProviders}
         modelAliases={modelAliases}
         title="Select Subagent Model for Codex"
+      />
+
+      <ModelSelectModal
+        isOpen={fallbackModalOpen}
+        onClose={() => setFallbackModalOpen(false)}
+        onSelect={(model) => setVisionFallbackModels((current) => current.includes(model.value) ? current : [...current, model.value])}
+        onDeselect={(model) => setVisionFallbackModels((current) => current.filter((entry) => entry !== model.value))}
+        selectedModel={null}
+        activeProviders={activeProviders}
+        modelAliases={modelAliases}
+        addedModelValues={visionFallbackModels}
+        closeOnSelect={false}
+        title="Add Vision Fallback Model"
       />
 
       <ManualConfigModal

@@ -18,7 +18,8 @@ const resolved = {
     qwen: PROVIDERS.qwen?.tokenUrl,
     iflow: PROVIDERS.iflow?.tokenUrl,
     kiro: PROVIDERS.kiro?.tokenUrl,
-    xai: PROVIDERS.xai?.tokenUrl,
+    // Grok CLI injects oauth.tokenUrl onto PROVIDERS via OAUTH_INJECT_FIELDS
+    "grok-cli": PROVIDERS["grok-cli"]?.tokenUrl,
     cline: PROVIDERS.cline?.tokenUrl,
     "kimi-coding": PROVIDERS["kimi-coding"]?.tokenUrl,
   },
@@ -30,7 +31,7 @@ const resolved = {
   refreshUrls: {
     cline: PROVIDERS.cline?.refreshUrl,
     "kimi-coding": PROVIDERS["kimi-coding"]?.refreshUrl,
-    xai: PROVIDERS.xai?.refreshUrl,
+    "grok-cli": PROVIDERS["grok-cli"]?.tokenUrl,
   },
   clientIds: {
     claude: PROVIDERS.claude?.clientId,
@@ -38,6 +39,7 @@ const resolved = {
     qwen: PROVIDERS.qwen?.clientId,
     iflow: PROVIDERS.iflow?.clientId,
     "kimi-coding": PROVIDERS["kimi-coding"]?.clientId,
+    "grok-cli": PROVIDERS["grok-cli"]?.clientId,
   },
 };
 const current = JSON.parse(JSON.stringify(resolved));

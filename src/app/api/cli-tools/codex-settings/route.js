@@ -7,12 +7,54 @@ import fs from "fs/promises";
 import path from "path";
 import os from "os";
 import { parseTOML, stringifyTOML } from "confbox";
+import { findModelName } from "open-sse/config/providerModels.js";
+import { getSettings, updateSettings } from "@/lib/localDb";
 
 const execAsync = promisify(exec);
 
 const getCodexDir = () => path.join(os.homedir(), ".codex");
 const getCodexConfigPath = () => path.join(getCodexDir(), "config.toml");
 const getCodexAuthPath = () => path.join(getCodexDir(), "auth.json");
+const getCodexCatalogPath = () => path.join(getCodexDir(), "9router-models.json");
+
+const DEFAULT_REASONING_EFFORTS = ["low", "medium", "high"];
+const VALID_REASONING_EFFORTS = new Set(["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
+
+const normalizeReasoningEffort = (value) => VALID_REASONING_EFFORTS.has(value) ? value : "medium";
+
+const createCatalogModel = ({ slug, displayName, contextWindow, defaultReasoningEffort, reasoningEfforts, imageInput, priority }) => ({
+  slug,
+  display_name: displayName,
+  description: `9Router model: ${displayName}`,
+  default_reasoning_level: defaultReasoningEffort,
+  supported_reasoning_levels: reasoningEfforts.map((effort) => ({ effort, description: `${effort[0].toUpperCase()}${effort.slice(1)} reasoning` })),
+  shell_type: "shell_command",
+  visibility: "list",
+  supported_in_api: true,
+  priority,
+  availability_nux: null,
+  upgrade: null,
+  base_instructions: "You are a coding agent. Use the available tools to complete the user's task accurately.",
+  model_messages: null,
+  support_verbosity: false,
+  default_verbosity: null,
+  apply_patch_tool_type: null,
+  truncation_policy: { mode: "tokens", limit: 10000 },
+  supports_parallel_tool_calls: true,
+  supports_image_detail_original: false,
+  input_modalities: imageInput ? ["text", "image"] : ["text"],
+  context_window: contextWindow,
+  max_context_window: contextWindow,
+  auto_compact_token_limit: null,
+  experimental_supported_tools: [],
+});
+
+const resolveModelDisplayName = (fullId) => {
+  if (typeof fullId !== "string" || !fullId.includes("/")) return fullId;
+  const slash = fullId.indexOf("/");
+  const name = findModelName(fullId.slice(0, slash), fullId.slice(slash + 1));
+  return name && name !== fullId.slice(slash + 1) ? name : fullId;
+};
 
 // Flatten confbox-parsed TOML into a writable object, preserving nested tables
 const parsedToWritable = (obj) => obj ?? {};
@@ -93,12 +135,35 @@ export async function GET() {
     }
 
     const config = await readConfig();
+    const parsed = config ? parsedToWritable(parseTOML(config)) : {};
+    const settings = await getSettings().catch(() => ({}));
+    const configuredModels = Array.isArray(settings?.codexCliModels)
+      ? settings.codexCliModels.filter((model) => typeof model === "string" && model.trim())
+      : [];
+    const activeModel = parsed.model_provider === "9router" ? parsed.model || "" : "";
+    const models = [...new Set([activeModel, ...configuredModels].filter(Boolean))];
+    const storedNames = settings?.codexCliModelNames && typeof settings.codexCliModelNames === "object"
+      ? settings.codexCliModelNames
+      : {};
+    const modelNames = Object.fromEntries(models.map((model) => [
+      model,
+      typeof storedNames[model] === "string" && storedNames[model].trim()
+        ? storedNames[model]
+        : resolveModelDisplayName(model),
+    ]));
+    const storedContextSizes = settings?.codexCliModelContextSizes && typeof settings.codexCliModelContextSizes === "object" ? settings.codexCliModelContextSizes : {};
+    const modelContextSizes = Object.fromEntries(models.map((model) => [model, Number(storedContextSizes[model])]).filter(([, tokens]) => tokens > 0));
+    const storedReasoningEfforts = settings?.codexCliModelReasoningEfforts && typeof settings.codexCliModelReasoningEfforts === "object" ? settings.codexCliModelReasoningEfforts : {};
+    const modelReasoningEfforts = Object.fromEntries(models.map((model) => [model, normalizeReasoningEffort(storedReasoningEfforts[model])]));
+    const visionFallbackModels = Array.isArray(settings?.visionFallbackModels) ? settings.visionFallbackModels : [];
 
     return NextResponse.json({
       installed: true,
       config,
       has9Router: has9RouterConfig(config),
       configPath: getCodexConfigPath(),
+      codex: { models, modelNames, modelContextSizes, modelReasoningEfforts, activeModel },
+      visionFallbackModels,
     });
   } catch (error) {
     console.log("Error checking codex settings:", error);
@@ -109,10 +174,16 @@ export async function GET() {
 // POST - Update 9Router settings (merge with existing config)
 export async function POST(request) {
   try {
-    const { baseUrl, apiKey, model, subagentModel } = await request.json();
+    const { baseUrl, apiKey, model, models, modelNames = {}, modelContextSizes = {}, modelReasoningEfforts = {}, modelReasoningOptions = {}, activeModel, subagentModel, visionFallbackModels } = await request.json();
+    const modelsArray = [...new Set(
+      (Array.isArray(models) ? models : typeof model === "string" ? [model] : [])
+        .filter((entry) => typeof entry === "string" && entry.trim())
+        .map((entry) => entry.trim())
+    )];
+    const selectedActiveModel = modelsArray.includes(activeModel) ? activeModel : modelsArray[0];
     
-    if (!baseUrl || !apiKey || !model) {
-      return NextResponse.json({ error: "baseUrl, apiKey and model are required" }, { status: 400 });
+    if (!baseUrl || !apiKey || modelsArray.length === 0) {
+      return NextResponse.json({ error: "baseUrl, apiKey and at least one model are required" }, { status: 400 });
     }
 
     const codexDir = getCodexDir();
@@ -129,8 +200,9 @@ export async function POST(request) {
     } catch { /* No existing config */ }
 
     // Update only 9Router related fields (api_key goes to auth.json, not config.toml)
-    parsed.model = model;
+    parsed.model = selectedActiveModel;
     parsed.model_provider = "9router";
+    parsed.model_catalog_json = getCodexCatalogPath();
 
     // Update or create 9router provider section (no api_key - Codex reads from auth.json)
     // Ensure /v1 suffix is added only once
@@ -142,10 +214,43 @@ export async function POST(request) {
     });
 
     // Add subagent configuration
-    const effectiveSubagentModel = subagentModel || model;
+    const effectiveSubagentModel = subagentModel || selectedActiveModel;
     setNestedSection(parsed, "agents.subagent", {
       model: effectiveSubagentModel,
     });
+
+    const normalizedModelNames = Object.fromEntries(modelsArray.map((entry) => [
+      entry,
+      typeof modelNames?.[entry] === "string" && modelNames[entry].trim()
+        ? modelNames[entry].trim()
+        : resolveModelDisplayName(entry),
+    ]));
+    const normalizedContextSizes = Object.fromEntries(modelsArray.map((entry) => [entry, Number(modelContextSizes?.[entry])]).filter(([, tokens]) => tokens > 0));
+    const normalizedReasoningEfforts = Object.fromEntries(modelsArray.map((entry) => [entry, normalizeReasoningEffort(modelReasoningEfforts?.[entry])]));
+    const normalizedReasoningOptions = Object.fromEntries(modelsArray.map((entry) => {
+      const options = Array.isArray(modelReasoningOptions?.[entry])
+        ? [...new Set(modelReasoningOptions[entry].filter((effort) => VALID_REASONING_EFFORTS.has(effort)))]
+        : [];
+      const defaultEffort = normalizedReasoningEfforts[entry];
+      return [entry, options.length ? (options.includes(defaultEffort) ? options : [...options, defaultEffort]) : DEFAULT_REASONING_EFFORTS];
+    }));
+    const cleanedVisionFallbackModels = Array.isArray(visionFallbackModels)
+      ? [...new Set(visionFallbackModels.filter((entry) => typeof entry === "string" && entry.trim()).map((entry) => entry.trim()))]
+      : [];
+    const catalog = {
+      models: modelsArray.map((entry, index) => createCatalogModel({
+        slug: entry,
+        displayName: normalizedModelNames[entry],
+        contextWindow: normalizedContextSizes[entry] || 256000,
+        defaultReasoningEffort: normalizedReasoningEfforts[entry],
+        reasoningEfforts: normalizedReasoningOptions[entry],
+        imageInput: cleanedVisionFallbackModels.length > 0,
+        priority: entry === selectedActiveModel ? 0 : index + 1,
+      })),
+    };
+    parsed.model_reasoning_effort = normalizedReasoningEfforts[selectedActiveModel];
+
+    await fs.writeFile(getCodexCatalogPath(), JSON.stringify(catalog, null, 2));
 
     // Write merged config
     const configContent = stringifyTOML(parsed);
@@ -163,6 +268,14 @@ export async function POST(request) {
     authData.OPENAI_API_KEY = apiKey;
     authData.auth_mode = "apikey";
     await fs.writeFile(authPath, JSON.stringify(authData, null, 2));
+
+    await updateSettings({
+      codexCliModels: modelsArray,
+      codexCliModelNames: normalizedModelNames,
+      codexCliModelContextSizes: normalizedContextSizes,
+      codexCliModelReasoningEfforts: normalizedReasoningEfforts,
+      visionFallbackModels: cleanedVisionFallbackModels,
+    });
 
     return NextResponse.json({
       success: true,
@@ -199,7 +312,9 @@ export async function DELETE() {
     if (parsed.model_provider === "9router") {
       delete parsed.model;
       delete parsed.model_provider;
+      delete parsed.model_reasoning_effort;
     }
+    if (parsed.model_catalog_json === getCodexCatalogPath()) delete parsed.model_catalog_json;
 
     // Remove 9router provider section
     deleteNestedSection(parsed, "model_providers.9router");
@@ -226,6 +341,12 @@ export async function DELETE() {
         await fs.writeFile(authPath, JSON.stringify(authData, null, 2));
       }
     } catch { /* No auth file */ }
+
+    await fs.unlink(getCodexCatalogPath()).catch((error) => {
+      if (error.code !== "ENOENT") throw error;
+    });
+
+    await updateSettings({ codexCliModels: [], codexCliModelNames: {}, codexCliModelContextSizes: {}, codexCliModelReasoningEfforts: {} }).catch(() => {});
 
     return NextResponse.json({
       success: true,

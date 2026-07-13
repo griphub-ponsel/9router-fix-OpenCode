@@ -147,10 +147,10 @@ export default function ProviderDetailPage() {
   const isAnthropicCompatible = isAnthropicCompatibleProvider(providerId);
   const isCompatible = isOpenAICompatible || isAnthropicCompatible;
   const hasDualAuthModes = !isCompatible && isOAuth && supportsApiKeyAuth;
-  const oauthConnectionLabel = providerId === "xai" ? "Grok Build OAuth" : providerId === "notion" ? "OAuth (Tools)" : "OAuth";
+  const oauthConnectionLabel = providerId === "xai" ? "Grok Build OAuth" : providerId === "grok-cli" ? "Grok CLI Device Login" : providerId === "notion" ? "OAuth (Tools)" : "OAuth";
   const apiKeyConnectionLabel = providerId === "xai" ? "xAI API Key" : providerId === "notion" ? "Cookie (Chat)" : "API Key";
   const thinkingConfig = AI_PROVIDERS[providerId]?.thinkingConfig || THINKING_CONFIG.extended;
-  
+
   const providerStorageAlias = isCompatible ? providerId : providerAlias;
   const providerDisplayAlias = isCompatible
     ? (providerNode?.prefix || providerId)
