@@ -17,7 +17,11 @@ beforeAll(async () => {
   await sqliteDb.initDb();
 });
 
-afterAll(() => {
+afterAll(async () => {
+  try {
+    const { getAdapter } = await import("@/lib/db/driver.js");
+    (await getAdapter()).close?.();
+  } catch {}
   if (tempDir) fs.rmSync(tempDir, { recursive: true, force: true });
   if (originalDataDir === undefined) delete process.env.DATA_DIR;
   else process.env.DATA_DIR = originalDataDir;
@@ -181,12 +185,12 @@ describe("DB SQLite layer — public API parity", () => {
   it("usage: saveRequestUsage + getUsageHistory + getUsageStats", async () => {
     await sqliteDb.saveRequestUsage({
       provider: "openai", model: "gpt-4", connectionId: "c1",
-      tokens: { prompt_tokens: 100, completion_tokens: 50 },
+      tokens: { prompt_tokens: 100, completion_tokens: 50, cached_tokens: 60 },
       endpoint: "/v1/chat/completions", status: "ok",
     });
     await sqliteDb.saveRequestUsage({
       provider: "openai", model: "gpt-4", connectionId: "c1",
-      tokens: { prompt_tokens: 200, completion_tokens: 100 },
+      tokens: { prompt_tokens: 200, completion_tokens: 100, cache_read_input_tokens: 120 },
       endpoint: "/v1/chat/completions", status: "ok",
     });
 
@@ -199,6 +203,10 @@ describe("DB SQLite layer — public API parity", () => {
     expect(stats.byProvider.openai).toBeDefined();
     expect(stats.byProvider.openai.requests).toBeGreaterThanOrEqual(2);
     expect(stats.byProvider.openai.promptTokens).toBeGreaterThanOrEqual(300);
+    expect(stats.totalCachedTokens).toBeGreaterThanOrEqual(180);
+
+    const dailyStats = await sqliteDb.getUsageStats("7d");
+    expect(dailyStats.totalCachedTokens).toBeGreaterThanOrEqual(180);
   });
 
   it("usage: pending tracking in-memory", () => {

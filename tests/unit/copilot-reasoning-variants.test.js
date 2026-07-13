@@ -14,6 +14,19 @@ describe("expandCopilotReasoningVariants", () => {
     expect(model.supportsReasoningEffort).toEqual(["low", "medium", "high"]);
   });
 
+  it("exposes xhigh/max for every Kiro live-catalog model", () => {
+    for (const id of [
+      "kr/claude-sonnet-5",
+      "kr/claude-haiku-4.5",
+      "kr/deepseek-3.2",
+      "kiro/qwen3-coder-next",
+    ]) {
+      const [model] = expandCopilotReasoningVariants([{ id }]);
+      expect(model.thinking, id).toBe(true);
+      expect(model.supportsReasoningEffort, id).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    }
+  });
+
   it("resolves a combo to the union of its members' efforts (incl. max)", () => {
     const combos = [{ name: "maximize-claude", models: ["cc/claude-opus-4-7", "cc/claude-haiku-4-5"] }];
     const [model] = expandCopilotReasoningVariants([{ id: "maximize-claude" }], combos);

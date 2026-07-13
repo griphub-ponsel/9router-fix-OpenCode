@@ -62,12 +62,14 @@ function addToCounter(target, key, values) {
 function aggregateEntryToDay(day, entry) {
   const promptTokens = entry.tokens?.prompt_tokens || entry.tokens?.input_tokens || 0;
   const completionTokens = entry.tokens?.completion_tokens || entry.tokens?.output_tokens || 0;
+  const cachedTokens = entry.tokens?.cached_tokens || entry.tokens?.cache_read_input_tokens || 0;
   const cost = entry.cost || 0;
-  const vals = { promptTokens, completionTokens, cost };
+  const vals = { promptTokens, completionTokens, cachedTokens, cost };
 
   day.requests = (day.requests || 0) + 1;
   day.promptTokens = (day.promptTokens || 0) + promptTokens;
   day.completionTokens = (day.completionTokens || 0) + completionTokens;
+  day.cachedTokens = (day.cachedTokens || 0) + cachedTokens;
   day.cost = (day.cost || 0) + cost;
 
   day.byProvider ||= {};
@@ -363,6 +365,60 @@ function loadDaysInRange(adapter, maxDays) {
   return adapter.all(`SELECT dateKey, data FROM usageDaily WHERE dateKey >= ?`, [cutoffKey]);
 }
 
+function getPeriodCutoff(period) {
+  if (period === "today") {
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    return startOfDay.toISOString();
+  }
+  if (period === "24h") return new Date(Date.now() - PERIOD_MS["24h"]).toISOString();
+
+  const periodDays = { "7d": 7, "30d": 30, "60d": 60 };
+  const days = periodDays[period];
+  if (!days) return null;
+
+  const cutoff = new Date();
+  cutoff.setHours(0, 0, 0, 0);
+  cutoff.setDate(cutoff.getDate() - days + 1);
+  return cutoff.toISOString();
+}
+
+function sumCachedTokensFromHistory(adapter, period) {
+  const cutoff = getPeriodCutoff(period);
+  const where = cutoff ? "WHERE timestamp >= ?" : "";
+  const params = cutoff ? [cutoff] : [];
+
+  try {
+    const row = adapter.get(
+      `SELECT COALESCE(SUM(COALESCE(
+        json_extract(tokens, '$.cached_tokens'),
+        json_extract(tokens, '$.cache_read_input_tokens'),
+        json_extract(tokens, '$.prompt_tokens_details.cached_tokens'),
+        json_extract(tokens, '$.input_tokens_details.cached_tokens'),
+        0
+      )), 0) AS totalCachedTokens
+      FROM usageHistory ${where}`,
+      params,
+    );
+    const total = Number(row?.totalCachedTokens || 0);
+    return Number.isFinite(total) ? total : 0;
+  } catch {
+    // Fallback for SQLite builds without JSON functions.
+    const rows = adapter.all(`SELECT tokens FROM usageHistory ${where}`, params);
+    return rows.reduce((total, row) => {
+      const tokens = parseJson(row.tokens, {}) || {};
+      const cached =
+        tokens.cached_tokens ??
+        tokens.cache_read_input_tokens ??
+        tokens.prompt_tokens_details?.cached_tokens ??
+        tokens.input_tokens_details?.cached_tokens ??
+        0;
+      const value = Number(cached);
+      return total + (Number.isFinite(value) ? value : 0);
+    }, 0);
+  }
+}
+
 export async function getUsageStats(period = "all") {
   const db = await getAdapter();
 
@@ -413,7 +469,7 @@ export async function getUsageStats(period = "all") {
 
   const stats = {
     totalRequests: 0,
-    totalPromptTokens: 0, totalCompletionTokens: 0, totalCost: 0,
+    totalPromptTokens: 0, totalCompletionTokens: 0, totalCachedTokens: 0, totalCost: 0,
     byProvider: {}, byModel: {}, byAccount: {}, byApiKey: {}, byEndpoint: {},
     last10Minutes: [],
     pending: pendingRequests,
@@ -474,6 +530,7 @@ export async function getUsageStats(period = "all") {
       const day = parseJson(dr.data, {});
       stats.totalPromptTokens += day.promptTokens || 0;
       stats.totalCompletionTokens += day.completionTokens || 0;
+      stats.totalCachedTokens += day.cachedTokens || 0;
       stats.totalCost += day.cost || 0;
 
       for (const [prov, p] of Object.entries(day.byProvider || {})) {
@@ -593,13 +650,15 @@ export async function getUsageStats(period = "all") {
 
     for (const r of filtered) {
       const tokens = parseJson(r.tokens, {}) || {};
-      const promptTokens = tokens.prompt_tokens || 0;
-      const completionTokens = tokens.completion_tokens || 0;
+      const promptTokens = tokens.prompt_tokens || tokens.input_tokens || 0;
+      const completionTokens = tokens.completion_tokens || tokens.output_tokens || 0;
+      const cachedTokens = tokens.cached_tokens || tokens.cache_read_input_tokens || 0;
       const entryCost = r.cost || 0;
       const providerDisplayName = providerNodeNameMap[r.provider] || r.provider;
 
       stats.totalPromptTokens += promptTokens;
       stats.totalCompletionTokens += completionTokens;
+      stats.totalCachedTokens += cachedTokens;
       stats.totalCost += entryCost;
 
       if (!stats.byProvider[r.provider]) stats.byProvider[r.provider] = { requests: 0, promptTokens: 0, completionTokens: 0, cost: 0 };
@@ -663,6 +722,9 @@ export async function getUsageStats(period = "all") {
   }
 
   stats.totalRequests = Object.values(stats.byProvider).reduce((sum, p) => sum + (p.requests || 0), 0);
+  // Read cache totals from raw history. Older usageDaily rows predate cached-token
+  // aggregation, so relying on daily summaries would incorrectly display zero.
+  stats.totalCachedTokens = sumCachedTokensFromHistory(db, period);
   return stats;
 }
 

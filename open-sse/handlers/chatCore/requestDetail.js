@@ -23,13 +23,16 @@ export function extractRequestConfig(body, stream) {
 export function extractUsageFromResponse(responseBody) {
   if (!responseBody || typeof responseBody !== "object") return null;
 
-  // Claude format
+  // Claude / OpenAI Responses format (both use input_tokens/output_tokens)
   if (responseBody.usage?.input_tokens !== undefined) {
     return {
       prompt_tokens: responseBody.usage.input_tokens || 0,
       completion_tokens: responseBody.usage.output_tokens || 0,
-      cache_read_input_tokens: responseBody.usage.cache_read_input_tokens,
-      cache_creation_input_tokens: responseBody.usage.cache_creation_input_tokens
+      cache_read_input_tokens:
+        responseBody.usage.cache_read_input_tokens ??
+        responseBody.usage.input_tokens_details?.cached_tokens,
+      cache_creation_input_tokens: responseBody.usage.cache_creation_input_tokens,
+      reasoning_tokens: responseBody.usage.output_tokens_details?.reasoning_tokens
     };
   }
 
@@ -48,6 +51,7 @@ export function extractUsageFromResponse(responseBody) {
     return {
       prompt_tokens: responseBody.usageMetadata.promptTokenCount || 0,
       completion_tokens: responseBody.usageMetadata.candidatesTokenCount || 0,
+      cached_tokens: responseBody.usageMetadata.cachedContentTokenCount,
       reasoning_tokens: responseBody.usageMetadata.thoughtsTokenCount
     };
   }
@@ -87,7 +91,22 @@ export function saveUsageStats({ provider, model, tokens, connectionId, apiKey, 
   // Normalize to OpenAI token shape for storage
   const normalized = {
     prompt_tokens: tokens.prompt_tokens ?? tokens.input_tokens ?? 0,
-    completion_tokens: tokens.completion_tokens ?? tokens.output_tokens ?? 0
+    completion_tokens: tokens.completion_tokens ?? tokens.output_tokens ?? 0,
+    cached_tokens:
+      tokens.cached_tokens ??
+      tokens.cache_read_input_tokens ??
+      tokens.prompt_tokens_details?.cached_tokens ??
+      tokens.input_tokens_details?.cached_tokens ??
+      0,
+    cache_creation_input_tokens:
+      tokens.cache_creation_input_tokens ??
+      tokens.prompt_tokens_details?.cache_creation_tokens ??
+      0,
+    reasoning_tokens:
+      tokens.reasoning_tokens ??
+      tokens.completion_tokens_details?.reasoning_tokens ??
+      tokens.output_tokens_details?.reasoning_tokens ??
+      0
   };
 
   saveRequestUsage({

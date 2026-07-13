@@ -97,6 +97,13 @@ function normalizeLimits(limits, contextTokensOverride = null) {
 
 /** GitHub Copilot–allowed reasoning_effort values per model id (when restricted). */
 export function getCopilotReasoningEfforts(modelId) {
+  const { alias } = getModelParts(modelId);
+  // Every Kiro catalog model accepts 9router's synthetic thinking control.
+  // `reasoning_effort: max` is clamped to Kiro's upstream limit (32K), so
+  // advertise the full picker even for new live-catalog IDs not in EXACT_LIMITS.
+  if (alias === "kr" || alias === "kiro") {
+    return ["low", "medium", "high", "xhigh", "max"];
+  }
   const model = normalizeModelId(modelId);
   const exact = EXACT_LIMITS[model];
   return exact?.reasoningEfforts ?? null;
