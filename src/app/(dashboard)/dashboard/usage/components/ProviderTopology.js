@@ -9,11 +9,12 @@ import {
   Controls,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { AI_PROVIDERS } from "@/shared/constants/providers";
+import { AI_PROVIDERS, getProviderLogo } from "@/shared/constants/providers";
 
 // Force-stop FE animation if a provider stays active longer than this
 const FE_ACTIVE_TIMEOUT_MS = 60000;
 const FE_ACTIVE_TICK_MS = 1000;
+const FIT_VIEW_OPTIONS = { padding: 0.2, duration: 200 };
 
 function getProviderConfig(providerId) {
   return AI_PROVIDERS[providerId] || { color: "#6b7280", name: providerId };
@@ -21,7 +22,7 @@ function getProviderConfig(providerId) {
 
 // Use local provider images from /public/providers/
 function getProviderImageUrl(providerId) {
-  return `/providers/${providerId}.png`;
+  return getProviderLogo(providerId);
 }
 
 // Custom provider node - rectangle with image + name
@@ -208,9 +209,10 @@ export default function ProviderTopology({ providers = [], activeRequests = [], 
   const lastSet = useMemo(() => new Set(lastKey ? [lastKey] : []), [lastKey]);
   const errorSet = useMemo(() => new Set(errorKey ? [errorKey] : []), [errorKey]);
 
-  // Track firstSeen per active provider; drop provider if running too long (BE stuck)
+  // Track firstSeen per active provider; drop provider if running too long (BE stuck).
+  // Keep render input in state; refs and Date.now() stay inside effects.
+  const [activeSet, setActiveSet] = useState(() => new Set());
   const firstSeenRef = useRef({});
-  const [tick, setTick] = useState(0);
 
   useEffect(() => {
     const seen = firstSeenRef.current;
@@ -221,27 +223,24 @@ export default function ProviderTopology({ providers = [], activeRequests = [], 
     for (const p of Object.keys(seen)) {
       if (!rawActiveSet.has(p)) delete seen[p];
     }
-  }, [rawActiveSet]);
-
-  useEffect(() => {
+    const refresh = () => {
+      const tickNow = Date.now();
+      const filtered = new Set();
+      for (const p of rawActiveSet) {
+        const ts = seen[p];
+        if (!ts || tickNow - ts < FE_ACTIVE_TIMEOUT_MS) filtered.add(p);
+      }
+      setActiveSet(filtered);
+    };
+    refresh();
     if (rawActiveSet.size === 0) return;
-    const id = setInterval(() => setTick((t) => t + 1), FE_ACTIVE_TICK_MS);
+    const id = setInterval(refresh, FE_ACTIVE_TICK_MS);
     return () => clearInterval(id);
   }, [rawActiveSet]);
 
-  const activeSet = useMemo(() => {
-    const now = Date.now();
-    const filtered = new Set();
-    for (const p of rawActiveSet) {
-      const ts = firstSeenRef.current[p];
-      if (!ts || now - ts < FE_ACTIVE_TIMEOUT_MS) filtered.add(p);
-    }
-    return filtered;
-  }, [rawActiveSet, tick]);
-
   const { nodes, edges } = useMemo(
     () => buildLayout(providers, activeSet, lastSet, errorSet),
-    [providers, activeSet, lastKey, errorKey]
+    [providers, activeSet, lastSet, errorSet]
   );
 
   // Stable key — only remount when provider list changes
@@ -252,10 +251,9 @@ export default function ProviderTopology({ providers = [], activeRequests = [], 
 
   const rfInstance = useRef(null);
   const containerRef = useRef(null);
-  const fitOpts = { padding: 0.2, duration: 200 };
   const onInit = useCallback((instance) => {
     rfInstance.current = instance;
-    setTimeout(() => instance.fitView(fitOpts), 50);
+    setTimeout(() => instance.fitView(FIT_VIEW_OPTIONS), 50);
   }, []);
 
   // Re-fit on container resize
@@ -263,7 +261,7 @@ export default function ProviderTopology({ providers = [], activeRequests = [], 
     const el = containerRef.current;
     if (!el) return;
     const ro = new ResizeObserver(() => {
-      if (rfInstance.current) rfInstance.current.fitView(fitOpts);
+      if (rfInstance.current) rfInstance.current.fitView(FIT_VIEW_OPTIONS);
     });
     ro.observe(el);
     return () => ro.disconnect();
@@ -272,7 +270,7 @@ export default function ProviderTopology({ providers = [], activeRequests = [], 
   // Re-fit when node count/layout changes
   useEffect(() => {
     if (rfInstance.current) {
-      const id = setTimeout(() => rfInstance.current.fitView(fitOpts), 50);
+      const id = setTimeout(() => rfInstance.current.fitView(FIT_VIEW_OPTIONS), 50);
       return () => clearTimeout(id);
     }
   }, [nodes.length]);
@@ -290,7 +288,7 @@ export default function ProviderTopology({ providers = [], activeRequests = [], 
           edges={edges}
           nodeTypes={nodeTypes}
           fitView
-          fitViewOptions={fitOpts}
+          fitViewOptions={FIT_VIEW_OPTIONS}
           minZoom={0.1}
           maxZoom={2}
           onInit={onInit}

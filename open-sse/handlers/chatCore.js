@@ -164,13 +164,17 @@ function getHeader(headers = {}, name) {
   return null;
 }
 
-async function applyMemoryContext({ body, provider, model, apiKey, clientRawRequest, log, memoryExtractModel }) {
+async function applyMemoryContext({ body, provider, model, clientRawRequest, log, memoryExtractModel }) {
   try {
     // Never capture/inject for internal memory self-calls (extraction,
     // summarization) — prevents infinite recursion through /v1/chat/completions.
     if (getHeader(clientRawRequest?.headers, MEMORY_INTERNAL_HEADER)) return;
 
-    const userId = apiKey ? `api:${String(apiKey).slice(-8)}` : "local-user";
+    // 9Router is a personal, single-user local router. API keys authenticate
+    // clients; they are not separate memory identities. Keeping one canonical
+    // owner makes every dashboard memory available across VS Code, OpenCode,
+    // CLI tools, and rotated client keys instead of fragmenting recall.
+    const userId = "local-user";
     const explicitSession = getHeader(clientRawRequest?.headers, "x-9router-session-id") || body.session_id || body.conversation_id || body.thread_id || null;
     const sessionId = deriveSessionId(body, explicitSession);
     const captured = await captureChatMemory(body, {
@@ -183,6 +187,7 @@ async function applyMemoryContext({ body, provider, model, apiKey, clientRawRequ
     const injected = await injectMemoryContext(body, { userId });
     if (captured?.memories) log?.debug?.("MEMORY", `Saved ${captured.memories} remembered fact(s)`);
     if (injected?.injected) log?.debug?.("MEMORY", `Injected ${injected.injected} remembered fact(s) into prompt`);
+    if (injected?.error) log?.warn?.("MEMORY", `injection failed: ${injected.error}`);
 
     // ChatGPT-style background jobs (fire-and-forget, throttled, fail-open):
     // LLM decides what's memory-worthy + rolling episodic session summary.
@@ -217,7 +222,7 @@ export async function handleChatCore(options) {
   if (bypassResponse) return bypassResponse;
 
   if (!internalVisionRelay && !visionRetryAttempted) {
-    await applyMemoryContext({ body, provider, model, apiKey, clientRawRequest, log, memoryExtractModel });
+    await applyMemoryContext({ body, provider, model, clientRawRequest, log, memoryExtractModel });
   }
 
   const alias = PROVIDER_ID_TO_ALIAS[provider] || provider;

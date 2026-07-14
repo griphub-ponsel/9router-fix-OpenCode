@@ -100,6 +100,12 @@ export function isCustomEmbeddingProvider(providerId) {
 // All providers (combined)
 export const AI_PROVIDERS = { ...FREE_PROVIDERS, ...FREE_TIER_PROVIDERS, ...OAUTH_PROVIDERS, ...APIKEY_PROVIDERS, ...WEB_COOKIE_PROVIDERS };
 
+// Registry display.logo is source of truth. Most providers use legacy PNGs,
+// while newer providers such as Meta use SVG assets.
+export function getProviderLogo(providerId) {
+  return AI_PROVIDERS[providerId]?.logo || `/providers/${providerId}.png`;
+}
+
 // Auth methods
 export const AUTH_METHODS = {
   oauth: { id: "oauth" },

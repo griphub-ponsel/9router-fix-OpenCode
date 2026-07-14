@@ -185,7 +185,7 @@ function stripAll(body) {
 }
 
 // Apply unified thinking config to body in the resolved provider-native format.
-function applyFormat(fmt, body, cfg, caps) {
+function applyFormat(fmt, body, cfg, caps, model) {
   const none = cfg.mode === "none";
   const canDisable = caps.thinkingCanDisable !== false;
   // Model cannot disable thinking → clamp "none" to minimal effort instead.
@@ -195,7 +195,10 @@ function applyFormat(fmt, body, cfg, caps) {
     case "openai": {
       if (none && canDisable) { body.reasoning_effort = "none"; break; }
       const level = toLevel(eff);
-      if (level) body.reasoning_effort = level === "max" ? "xhigh" : level;
+      // GPT 5.6 accepts native `max`. Older OpenAI-compatible models still
+      // require max to be clamped to xhigh.
+      const supportsNativeMax = /^gpt-5\.6(?:-|$)/i.test(String(model || ""));
+      if (level) body.reasoning_effort = level === "max" && !supportsNativeMax ? "xhigh" : level;
       break;
     }
     case "claude-adaptive": {
@@ -296,6 +299,6 @@ export function applyThinking(targetFormat, model, body, provider = null, intent
 
   const fmt = resolveFormat(targetFormat, cleanModel, provider);
   stripAll(body);
-  applyFormat(fmt, body, cfg, caps);
+  applyFormat(fmt, body, cfg, caps, cleanModel);
   return body;
 }

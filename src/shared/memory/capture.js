@@ -498,6 +498,8 @@ async function injectMemoryContext(body = {}, context = {}) {
     const seen = new Set();
     const coreFacts = [];
     const relevantMemories = [];
+    const normalizedPrompt = String(lastUserText || '').toLowerCase();
+    const asksForMemoryRecall = /(?:what|apa|siapa).{0,40}(?:remember|ing[ae]t|know about me|tau tentang|tahu tentang|memory|memori)|(?:remember|ing[ae]t|memory|memori).{0,40}(?:me|aku|saya|gw|gue|user|tentang)/i.test(normalizedPrompt);
 
     const addTo = (bucket, rows = []) => {
       for (const memory of rows || []) {
@@ -522,12 +524,28 @@ async function injectMemoryContext(body = {}, context = {}) {
 
     // Pinned memories are always injected regardless of relevance.
     try {
-      const pinned = await memoryService.getPinnedMemories({ userId }, 20);
-      addTo(coreFacts, pinned);
+      for (const uid of userIds) {
+        const pinned = await memoryService.getPinnedMemories({ userId: uid }, 20);
+        addTo(coreFacts, pinned);
+      }
     } catch { /* older adapters may not support pins */ }
 
     // 2. Relevance-based recall for the current prompt (solved problems,
     //    project knowledge, past session summaries).
+    // Broad recall questions ("what do you remember about me?") have weak
+    // lexical overlap with actual memory content, so include recent durable
+    // memories before relevance search. This makes dashboard memory directly
+    // observable to the LLM instead of relying on lucky keyword matches.
+    if (asksForMemoryRecall) {
+      for (const uid of userIds) {
+        const rows = await memoryService.adapter.listMemories({
+          scope: SCOPE.USER,
+          userId: uid
+        }, { limit: 30, orderBy: 'timeline' });
+        addTo(relevantMemories, rows);
+      }
+    }
+
     if (lastUserText.trim()) {
       for (const uid of userIds) {
         const rows = await memoryService.searchMemories(lastUserText.slice(0, 2000), {
@@ -547,8 +565,13 @@ async function injectMemoryContext(body = {}, context = {}) {
     // 3. Token budget: core facts first, then relevant memories by order.
     const lines = [];
     let usedTokens = 0;
+    const clampMemoryText = (value, maxChars = 1600) => {
+      const text = String(value || '').trim();
+      if (text.length <= maxChars) return text;
+      return `${text.slice(0, maxChars).trimEnd()}…`;
+    };
     const pushLine = (memory, prefix = '') => {
-      const text = String(memory.content || memory.title || '').trim();
+      const text = clampMemoryText(memory.content || memory.title || '');
       if (!text) return false;
       const line = `- ${prefix}${text}`;
       const cost = tokenCounter.count(line);
@@ -562,12 +585,13 @@ async function injectMemoryContext(body = {}, context = {}) {
 
     const relevantLines = [];
     for (const memory of relevantMemories) {
-      const text = String(memory.content || memory.title || '').trim();
+      const text = clampMemoryText(memory.content || memory.title || '');
       if (!text) continue;
       const isEpisodic = memory.type === MEMORY_TYPE.EPISODIC;
       const line = `- ${isEpisodic ? '[past session] ' : ''}${text}`;
       const cost = tokenCounter.count(line);
-      if (usedTokens + cost > tokenBudget) break;
+      // One oversized or noisy memory must not block every later result.
+      if (usedTokens + cost > tokenBudget) continue;
       usedTokens += cost;
       relevantLines.push(line);
     }
@@ -627,8 +651,8 @@ async function injectMemoryContext(body = {}, context = {}) {
     }
 
     return { injected: 0 };
-  } catch {
-    return { injected: 0 };
+  } catch (error) {
+    return { injected: 0, error: error?.message || String(error) };
   }
 }
 

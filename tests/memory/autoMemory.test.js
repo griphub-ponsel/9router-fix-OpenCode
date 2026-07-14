@@ -297,6 +297,69 @@ describe('AutoMemory', () => {
       expect(systemMessage.content).toContain('EPERM');
     });
 
+    it('injects recent durable memories for broad recall questions', async () => {
+      await memoryService.saveMemory({
+        type: MEMORY_TYPE.PROJECT,
+        scope: SCOPE.USER,
+        userId: 'local-user',
+        title: 'Router architecture',
+        content: 'Canonical restart method uses a detached PowerShell process.',
+        importanceScore: 0.9
+      });
+
+      const body = { messages: [{ role: 'user', content: 'Bro, apa yang lu inget tentang gw?' }] };
+      const result = await injectMemoryContext(body, { userId: 'api:test-key' });
+      const systemMessage = body.messages.find((message) => message.role === 'system');
+
+      expect(result.injected).toBeGreaterThan(0);
+      expect(systemMessage.content).toContain('detached PowerShell process');
+    });
+
+    it('always injects pinned local-user memories into API-key requests', async () => {
+      const memoryId = await memoryService.saveMemory({
+        type: MEMORY_TYPE.SEMANTIC,
+        scope: SCOPE.USER,
+        userId: 'local-user',
+        title: 'Pinned provider rule',
+        content: 'Never replace XOG with direct xAI.',
+        importanceScore: 1
+      });
+      await memoryService.pinMemory(memoryId, 'local-user');
+
+      const body = { messages: [{ role: 'user', content: 'Update Grok config' }] };
+      const result = await injectMemoryContext(body, { userId: 'api:another-client' });
+      const systemMessage = body.messages.find((message) => message.role === 'system');
+
+      expect(result.injected).toBeGreaterThan(0);
+      expect(systemMessage.content).toContain('Never replace XOG');
+    });
+
+    it('skips an oversized memory without blocking smaller relevant memories', async () => {
+      await memoryService.saveMemory({
+        type: MEMORY_TYPE.PROJECT,
+        scope: SCOPE.USER,
+        userId: 'local-user',
+        title: 'Oversized memory',
+        content: `oversized ${'x'.repeat(10000)}`,
+        importanceScore: 0.9
+      });
+      await memoryService.saveMemory({
+        type: MEMORY_TYPE.PROJECT,
+        scope: SCOPE.USER,
+        userId: 'local-user',
+        title: 'Small useful memory',
+        content: 'Canonical memory DB is data/9router-memory.sqlite.',
+        importanceScore: 0.9
+      });
+
+      const body = { messages: [{ role: 'user', content: 'Apa yang lu inget tentang memory gw?' }] };
+      const result = await injectMemoryContext(body, { userId: 'local-user', tokenBudget: 80 });
+      const systemMessage = body.messages.find((message) => message.role === 'system');
+
+      expect(result.injected).toBeGreaterThan(0);
+      expect(systemMessage.content).toContain('Canonical memory DB');
+    });
+
     it('does not double-inject on repeated calls', async () => {
       await memoryService.saveMemory({
         type: MEMORY_TYPE.USER_PREF,

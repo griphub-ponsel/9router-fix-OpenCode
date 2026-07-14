@@ -9,6 +9,11 @@ describe("expandCopilotReasoningVariants", () => {
     expect(model.supportsReasoningEffort).toEqual(["low", "medium", "high", "xhigh", "max"]);
   });
 
+  it.each(["luna", "sol", "terra"])("exposes native max for GPT 5.6 %s", (variant) => {
+    const [model] = expandCopilotReasoningVariants([{ id: `cx/gpt-5.6-${variant}` }]);
+    expect(model.supportsReasoningEffort).toEqual(["low", "medium", "high", "xhigh", "max"]);
+  });
+
   it("falls back to low/medium/high for an unknown model", () => {
     const [model] = expandCopilotReasoningVariants([{ id: "cc/claude-haiku-4-5" }]);
     expect(model.supportsReasoningEffort).toEqual(["low", "medium", "high"]);

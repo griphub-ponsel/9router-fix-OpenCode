@@ -260,6 +260,16 @@ export async function POST(request) {
           isValid = openaiRes.ok;
           break;
 
+        case "meta":
+          const metaRes = await fetch(PROVIDERS.meta.validateUrl, {
+            headers: { "Authorization": `Bearer ${apiKey}`, "Accept": "application/json" },
+          });
+          isValid = metaRes.ok;
+          if (!isValid && metaRes.status !== 401 && metaRes.status !== 403) {
+            error = `Meta Model API returned HTTP ${metaRes.status}`;
+          }
+          break;
+
         case "vercel-ai-gateway":
           const vercelAiGatewayRes = await fetch("https://ai-gateway.vercel.sh/v1/models", {
             headers: { "Authorization": `Bearer ${apiKey}` },

@@ -347,7 +347,7 @@ export class CodexExecutor extends BaseExecutor {
 
     // Extract thinking level from model name suffix
     // e.g., gpt-5.3-codex-high → high, gpt-5.3-codex → medium (default)
-    const effortLevels = ['none', 'low', 'medium', 'high', 'xhigh'];
+    const effortLevels = ['none', 'low', 'medium', 'high', 'xhigh', 'max'];
     let modelEffort = null;
     for (const level of effortLevels) {
       if (body.model.endsWith(`-${level}`)) {

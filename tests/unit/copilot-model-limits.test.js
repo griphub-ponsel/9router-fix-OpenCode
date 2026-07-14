@@ -4,6 +4,7 @@ import {
   getCopilotContextSizeOptions,
   getCopilotContextTokens,
   getCopilotModelLimits,
+  getCopilotReasoningEfforts,
 } from "../../src/shared/utils/copilotModelLimits.js";
 
 describe("Copilot model limits", () => {
@@ -20,5 +21,6 @@ describe("Copilot model limits", () => {
       maxOutputTokens: 128_000,
     });
     expect(getCopilotContextSizeOptions(id)).toContainEqual({ value: 1_000_000, label: "1M" });
+    expect(getCopilotReasoningEfforts(id)).toEqual(["low", "medium", "high", "xhigh", "max"]);
   });
 });

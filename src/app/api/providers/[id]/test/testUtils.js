@@ -621,7 +621,7 @@ async function fetchWithConnectionProxy(url, options = {}, effectiveProxy = null
   });
 }
 
-async function testApiKeyConnection(connection, effectiveProxy = null) {
+export async function testApiKeyConnection(connection, effectiveProxy = null) {
   if (isOpenAICompatibleProvider(connection.provider)) {
     const modelsBase = connection.providerSpecificData?.baseUrl;
     if (!modelsBase) return { valid: false, error: "Missing base URL" };
@@ -701,6 +701,18 @@ async function testApiKeyConnection(connection, effectiveProxy = null) {
       case "openai": {
         const res = await fetchWithConnectionProxy("https://api.openai.com/v1/models", { headers: { Authorization: `Bearer ${connection.apiKey}` } }, effectiveProxy);
         return { valid: res.ok, error: res.ok ? null : "Invalid API key" };
+      }
+      case "meta": {
+        const res = await fetchWithConnectionProxy(PROVIDERS.meta.validateUrl, {
+          headers: { Authorization: `Bearer ${connection.apiKey}`, Accept: "application/json" },
+        }, effectiveProxy);
+        if (res.status === 401 || res.status === 403) {
+          return { valid: false, error: "Invalid Meta Model API key" };
+        }
+        return {
+          valid: res.ok,
+          error: res.ok ? null : `Meta Model API returned HTTP ${res.status}`,
+        };
       }
       case "vercel-ai-gateway": {
         const res = await fetchWithConnectionProxy("https://ai-gateway.vercel.sh/v1/models", { headers: { Authorization: `Bearer ${connection.apiKey}` } }, effectiveProxy);
