@@ -33,6 +33,16 @@ const DEFAULT_REGION = "us-east-1";
 const FETCH_TIMEOUT_MS = 30_000;
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes per credential
 
+// Kiro's July 2026 model picker exposes these through Q Chat, but the
+// ListAvailableModels catalog can omit them even for entitled accounts. Keep
+// them as supplements until the catalog endpoint catches up. Verified model
+// ids are sent unchanged to GenerateAssistantResponse.
+const KIRO_CATALOG_SUPPLEMENTS = [
+  { modelId: "gpt-5.6-luna", modelName: "GPT 5.6 Luna", rateMultiplier: 0.6, tokenLimits: { maxInputTokens: 1_000_000 } },
+  { modelId: "gpt-5.6-terra", modelName: "GPT 5.6 Terra", rateMultiplier: 1.2, tokenLimits: { maxInputTokens: 1_000_000 } },
+  { modelId: "gpt-5.6-sol", modelName: "GPT 5.6 Sol", rateMultiplier: 2.4, tokenLimits: { maxInputTokens: 1_000_000 } },
+];
+
 /** @type {Map<string, { expiresAt: number, models: any[] }>} */
 const catalogCache = new Map();
 
@@ -64,7 +74,7 @@ function regionFromProfileArn(profileArn) {
  * Keyed off whatever stable identifier we have for this credential, so the
  * same account always presents the same machineId.
  */
-function buildKiroFingerprintHeaders(credentials) {
+export function buildKiroFingerprintHeaders(credentials) {
   const seed =
     credentials?.providerSpecificData?.clientId
     || credentials?.refreshToken
@@ -286,8 +296,14 @@ export async function resolveKiroModels(credentials, options = {}) {
     }
   }
 
+  const advertisedIds = new Set(raw.map((m) => m?.modelId || m?.id).filter(Boolean));
+  const catalog = [
+    ...raw,
+    ...KIRO_CATALOG_SUPPLEMENTS.filter((m) => !advertisedIds.has(m.modelId)),
+  ];
+
   const expanded = [];
-  for (const m of raw) {
+  for (const m of catalog) {
     if (!m || typeof m !== "object") continue;
     const upstreamId = m.modelId || m.id;
     if (!upstreamId) continue;
@@ -309,10 +325,10 @@ export async function resolveKiroModels(credentials, options = {}) {
   catalogCache.set(key, {
     expiresAt: now + CACHE_TTL_MS,
     models: expanded,
-    rawModels: raw
+    rawModels: catalog
   });
 
-  return { models: expanded, rawModels: raw };
+  return { models: expanded, rawModels: catalog };
 }
 
 /**

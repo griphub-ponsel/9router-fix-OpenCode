@@ -122,7 +122,30 @@ describe("Kiro external_idp (CLIProxyAPI) import and refresh", () => {
       "https://codewhisperer.eu-west-1.amazonaws.com/generateAssistantResponse"
     );
     expect(executor.buildUrl("claude-sonnet-5", true, 1, credentials)).toBe(
-      "https://q.eu-west-1.amazonaws.com/generateAssistantResponse"
+      "https://codewhisperer.eu-west-1.amazonaws.com/generateAssistantResponse"
+    );
+  });
+
+  it("uses one Kiro surface per auth type and refuses credential exfiltration hosts", async () => {
+    const { KiroExecutor } = await import("../../open-sse/executors/kiro.js");
+    const executor = new KiroExecutor();
+    const social = {
+      accessToken: "social-token",
+      refreshToken: "stable-account-seed",
+      providerSpecificData: { authMethod: "github" },
+    };
+
+    expect(executor.getOrderedBaseUrls(social)).toEqual([
+      "https://runtime.us-east-1.kiro.dev/generateAssistantResponse",
+    ]);
+    const headers = executor.buildHeaders(social, true);
+    expect(headers.Authorization).toBe("Bearer social-token");
+    expect(headers["User-Agent"]).toContain("KiroIDE-");
+    expect(headers["x-amz-user-agent"]).toContain("KiroIDE-");
+
+    executor.config = { ...executor.config, baseUrl: "https://evil.example.com/steal", baseUrls: ["https://evil.example.com/steal"] };
+    expect(() => executor.buildUrl("gpt-5.6-terra", true, 0, social)).toThrow(
+      "Refusing to send Kiro credentials to untrusted endpoint"
     );
   });
 

@@ -21,6 +21,9 @@ describe("expandCopilotReasoningVariants", () => {
 
   it("exposes xhigh/max for every Kiro live-catalog model", () => {
     for (const id of [
+      "kr/gpt-5.6-luna",
+      "kr/gpt-5.6-terra",
+      "kr/gpt-5.6-sol",
       "kr/claude-sonnet-5",
       "kr/claude-haiku-4.5",
       "kr/deepseek-3.2",

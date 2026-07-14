@@ -16,11 +16,46 @@ const getCodexDir = () => path.join(os.homedir(), ".codex");
 const getCodexConfigPath = () => path.join(getCodexDir(), "config.toml");
 const getCodexAuthPath = () => path.join(getCodexDir(), "auth.json");
 const getCodexCatalogPath = () => path.join(getCodexDir(), "9router-models.json");
+const getCodexModelsCachePath = () => path.join(getCodexDir(), "models_cache.json");
 
 const DEFAULT_REASONING_EFFORTS = ["low", "medium", "high"];
 const VALID_REASONING_EFFORTS = new Set(["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
+// Codex model-catalog schema currently rejects `max`/`ultra` even though
+// 9Router clients can expose those efforts. A single unsupported enum value
+// makes Codex discard the entire custom catalog and show only "Custom".
+const CODEX_CATALOG_REASONING_EFFORTS = new Set(["none", "minimal", "low", "medium", "high", "xhigh"]);
 
 const normalizeReasoningEffort = (value) => VALID_REASONING_EFFORTS.has(value) ? value : "medium";
+
+const detectCodexClientVersion = async () => {
+  const candidates = [];
+  if (os.platform() === "win32") {
+    const desktopBinDir = path.join(process.env.LOCALAPPDATA || "", "OpenAI", "Codex", "bin");
+    try {
+      const dirs = await fs.readdir(desktopBinDir, { withFileTypes: true });
+      for (const dir of dirs) {
+        if (dir.isDirectory()) candidates.push(path.join(desktopBinDir, dir.name, "codex.exe"));
+      }
+    } catch { /* Codex Desktop runtime cache not installed */ }
+  }
+  candidates.push("codex");
+
+  for (const executable of candidates) {
+    try {
+      const isWindows = os.platform() === "win32";
+      const command = isWindows
+        ? `& '${String(executable).replaceAll("'", "''")}' --version`
+        : `"${String(executable).replaceAll('"', '\\"')}" --version`;
+      const { stdout } = await execAsync(command, {
+        ...(isWindows ? { shell: "powershell.exe" } : {}),
+        windowsHide: true,
+      });
+      const match = String(stdout).match(/codex-cli\s+(\d+\.\d+\.\d+)/i);
+      if (match) return match[1];
+    } catch { /* Try the next installed Codex binary */ }
+  }
+  return null;
+};
 
 const createCatalogModel = ({ slug, displayName, contextWindow, defaultReasoningEffort, reasoningEfforts, imageInput, priority }) => ({
   slug,
@@ -41,6 +76,7 @@ const createCatalogModel = ({ slug, displayName, contextWindow, defaultReasoning
   apply_patch_tool_type: null,
   truncation_policy: { mode: "tokens", limit: 10000 },
   supports_parallel_tool_calls: true,
+  supports_reasoning_summaries: true,
   supports_image_detail_original: false,
   input_modalities: imageInput ? ["text", "image"] : ["text"],
   context_window: contextWindow,
@@ -216,6 +252,7 @@ export async function POST(request) {
     // Add subagent configuration
     const effectiveSubagentModel = subagentModel || selectedActiveModel;
     setNestedSection(parsed, "agents.subagent", {
+      description: "General-purpose subagent routed through 9Router.",
       model: effectiveSubagentModel,
     });
 
@@ -229,10 +266,15 @@ export async function POST(request) {
     const normalizedReasoningEfforts = Object.fromEntries(modelsArray.map((entry) => [entry, normalizeReasoningEffort(modelReasoningEfforts?.[entry])]));
     const normalizedReasoningOptions = Object.fromEntries(modelsArray.map((entry) => {
       const options = Array.isArray(modelReasoningOptions?.[entry])
-        ? [...new Set(modelReasoningOptions[entry].filter((effort) => VALID_REASONING_EFFORTS.has(effort)))]
+        ? [...new Set(modelReasoningOptions[entry].filter((effort) => CODEX_CATALOG_REASONING_EFFORTS.has(effort)))]
         : [];
-      const defaultEffort = normalizedReasoningEfforts[entry];
-      return [entry, options.length ? (options.includes(defaultEffort) ? options : [...options, defaultEffort]) : DEFAULT_REASONING_EFFORTS];
+      const requestedDefault = normalizedReasoningEfforts[entry];
+      const defaultEffort = CODEX_CATALOG_REASONING_EFFORTS.has(requestedDefault)
+        ? requestedDefault
+        : "xhigh";
+      normalizedReasoningEfforts[entry] = defaultEffort;
+      const catalogOptions = options.length ? options : [...DEFAULT_REASONING_EFFORTS];
+      return [entry, catalogOptions.includes(defaultEffort) ? catalogOptions : [...catalogOptions, defaultEffort]];
     }));
     const cleanedVisionFallbackModels = Array.isArray(visionFallbackModels)
       ? [...new Set(visionFallbackModels.filter((entry) => typeof entry === "string" && entry.trim()).map((entry) => entry.trim()))]
@@ -251,6 +293,23 @@ export async function POST(request) {
     parsed.model_reasoning_effort = normalizedReasoningEfforts[selectedActiveModel];
 
     await fs.writeFile(getCodexCatalogPath(), JSON.stringify(catalog, null, 2));
+
+    // Codex Desktop creates a per-thread config lock that intentionally clears
+    // model_catalog_json. Its model manager then falls back to models_cache.json.
+    // Seed that cache with the same catalog and Desktop runtime version so
+    // locked/new threads still resolve display names instead of "Custom".
+    const codexClientVersion = await detectCodexClientVersion();
+    if (codexClientVersion) {
+      await fs.writeFile(getCodexModelsCachePath(), JSON.stringify({
+        // Codex gives this cache a five-minute TTL. 9Router's catalog is
+        // regenerated explicitly by Apply Settings, so keep it authoritative
+        // between launches instead of reverting locked threads to "Custom".
+        fetched_at: "9999-12-31T23:59:59Z",
+        etag: null,
+        client_version: codexClientVersion,
+        models: catalog.models,
+      }, null, 2));
+    }
 
     // Write merged config
     const configContent = stringifyTOML(parsed);
@@ -279,8 +338,13 @@ export async function POST(request) {
 
     return NextResponse.json({
       success: true,
-      message: "Codex settings applied successfully!",
+      message: "Codex settings applied. Restart Codex to reload the model catalog.",
       configPath,
+      catalogPath: getCodexCatalogPath(),
+      modelsCachePath: getCodexModelsCachePath(),
+      codexClientVersion,
+      modelCount: modelsArray.length,
+      restartRequired: true,
     });
   } catch (error) {
     console.log("Error updating codex settings:", error);

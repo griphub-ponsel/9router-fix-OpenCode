@@ -1,10 +1,25 @@
 import { BaseExecutor } from "./base.js";
 import { PROVIDERS } from "../config/providers.js";
 import { resolveKiroModel } from "../config/kiroConstants.js";
-import { v4 as uuidv4 } from "uuid";
 import { refreshKiroToken } from "../services/tokenRefresh.js";
+import { buildKiroFingerprintHeaders } from "../services/kiroModels.js";
 import { SSE_DONE, SSE_HEADERS } from "../utils/sseConstants.js";
 import { getCapabilitiesForModel } from "../providers/capabilities.js";
+
+const KIRO_ALLOWED_RUNTIME_HOSTS = new Set([
+  "runtime.us-east-1.kiro.dev",
+  "runtime.eu-central-1.kiro.dev",
+]);
+const KIRO_ALLOWED_AWS_HOST_RE = /^(?:codewhisperer|q)\.[a-z]{2}(?:-gov)?-[a-z]+-\d\.amazonaws\.com$/;
+
+function assertSafeKiroUrl(url) {
+  const parsed = new URL(url);
+  const trustedHost = KIRO_ALLOWED_RUNTIME_HOSTS.has(parsed.hostname)
+    || KIRO_ALLOWED_AWS_HOST_RE.test(parsed.hostname);
+  if (parsed.protocol !== "https:" || !trustedHost) {
+    throw new Error(`Refusing to send Kiro credentials to untrusted endpoint: ${parsed.origin}`);
+  }
+}
 
 /**
  * KiroExecutor - Executor for Kiro AI (AWS CodeWhisperer)
@@ -15,11 +30,15 @@ export class KiroExecutor extends BaseExecutor {
     super("kiro", PROVIDERS.kiro);
   }
 
+  getFallbackCount() {
+    return 1;
+  }
+
   buildHeaders(credentials, stream = true) {
     const headers = {
       ...this.config.headers,
-      "Amz-Sdk-Request": "attempt=1; max=3",
-      "Amz-Sdk-Invocation-Id": uuidv4()
+      ...buildKiroFingerprintHeaders(credentials),
+      "Accept": "application/vnd.amazon.eventstream",
     };
 
     // API-key auth: the key is stored as accessToken and sent as a bearer token
@@ -66,7 +85,13 @@ export class KiroExecutor extends BaseExecutor {
     const authMethod = credentials?.providerSpecificData?.authMethod;
     const isCodeWhispererSurface =
       authMethod === "api_key" || authMethod === "external_idp" || authMethod === "idc";
-    if (!isCodeWhispererSurface) return baseUrls;
+    // Social/Builder-ID OAuth belongs to the Kiro gateway. Do not replay its
+    // bearer token across alternate service surfaces after throttling/network
+    // failure; account rotation happens above this executor.
+    if (!isCodeWhispererSurface) {
+      const runtime = baseUrls.find((u) => u.includes(".kiro.dev/"));
+      return runtime ? [runtime] : baseUrls.slice(0, 1);
+    }
 
     const requestedRegion = String(credentials?.providerSpecificData?.region || "").trim();
     const region = /^[a-z]{2}(?:-gov)?-[a-z]+-\d$/.test(requestedRegion)
@@ -83,13 +108,17 @@ export class KiroExecutor extends BaseExecutor {
     const amazon = baseUrls
       .filter((u) => u.includes("amazonaws.com"))
       .map(regionalize);
-    const others = baseUrls.filter((u) => !u.includes("amazonaws.com"));
-    return amazon.length > 0 ? [...amazon, ...others] : baseUrls;
+    // API-key/IDC/external-IdP credentials belong to CodeWhisperer. Use one
+    // canonical AWS surface only, preventing duplicate inference requests.
+    const codewhisperer = amazon.find((u) => u.includes("codewhisperer."));
+    return codewhisperer ? [codewhisperer] : amazon.slice(0, 1);
   }
 
   buildUrl(model, stream, urlIndex = 0, credentials = null) {
     const baseUrls = this.getOrderedBaseUrls(credentials);
-    return baseUrls[urlIndex] || baseUrls[0] || this.config.baseUrl;
+    const url = baseUrls[urlIndex] || baseUrls[0] || this.config.baseUrl;
+    assertSafeKiroUrl(url);
+    return url;
   }
 
   transformRequest(model, body, stream, credentials) {

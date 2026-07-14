@@ -210,7 +210,13 @@ export default function CodexToolCard({ tool, isExpanded, onToggle, baseUrl, api
       });
       const data = await res.json();
       if (res.ok) {
-        setMessage({ type: "success", text: "Settings applied successfully!" });
+        const modelCount = Number(data.modelCount) || selectedModels.length;
+        setMessage({
+          type: "success",
+          text: data.restartRequired
+            ? `${modelCount} model${modelCount === 1 ? "" : "s"} saved. Fully quit and reopen Codex to reload the model list.`
+            : "Settings applied successfully!",
+        });
         checkCodexStatus();
       } else {
         setMessage({ type: "error", text: data.error || "Failed to apply settings" });
