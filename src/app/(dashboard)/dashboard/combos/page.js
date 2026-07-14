@@ -557,7 +557,7 @@ function AutoComboExplorer({ families = [], combos = [], comboStrategies = {}, m
                 style={{ backgroundColor: `${fam.color}15` }}
               >
                 <ProviderIcon
-                  src={fam.logo ? `/providers/${fam.logo}.png` : null}
+                  src={fam.logo ? `/providers/${fam.logo.includes(".") ? fam.logo : `${fam.logo}.png`}` : null}
                   alt={fam.label}
                   size={22}
                   className="object-contain rounded"

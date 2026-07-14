@@ -488,7 +488,7 @@ export default function ModelSelectModal({
                       <span className="material-symbols-outlined leading-none" style={{ fontSize: "10px" }}>check</span>
                     )}
                     <ProviderIcon
-                      src={family.logo ? `/providers/${family.logo}.png` : null}
+                      src={family.logo ? `/providers/${family.logo.includes(".") ? family.logo : `${family.logo}.png`}` : null}
                       alt={family.label}
                       size={13}
                       className="object-contain rounded-sm shrink-0"

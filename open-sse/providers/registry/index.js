@@ -95,6 +95,7 @@ import p91 from "./voyage-ai.js";
 import p92 from "./xiaomi-mimo.js";
 import p93 from "./xiaomi-tokenplan.js";
 import p94 from "./youcom.js";
+import pMeta from "./meta.js";
 // Fork providers: XOG (xai-oauth) + Merlin
 import pXaiOauth from "./xai-oauth.js";
 import pMerlin from "./merlin.js";
@@ -195,6 +196,7 @@ export default [
   p92,
   p93,
   p94,
+  pMeta,
   pGrokCli,
   pXaiOauth,
   pMerlin

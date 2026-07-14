@@ -135,6 +135,9 @@ const PROVIDER_MODELS = {
     { id: "deepseek-v4-pro" },
     { id: "glm-5.1" },
   ],
+  meta: [
+    { id: "muse-spark-1.1" },
+  ],
 };
 
 // Provider definitions
@@ -158,6 +161,7 @@ const APIKEY_PROVIDERS = {
   openai: { id: "openai", name: "OpenAI" },
   anthropic: { id: "anthropic", name: "Anthropic" },
   gemini: { id: "gemini", name: "Gemini" },
+  meta: { id: "meta", name: "Meta Model API" },
   merlin: { id: "merlin", name: "Merlin AI (Pro)" },
 };
 

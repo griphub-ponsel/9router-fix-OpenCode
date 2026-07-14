@@ -8,6 +8,7 @@
 // auto-combos group the same model identity across providers, so the AI brand is
 // the meaningful icon.
 export const PROVIDER_FAMILIES = [
+  { key: "muse", label: "Muse", logo: "meta.svg", color: "#0866ff", match: (id) => /muse[-_ ]?spark/i.test(id) },
   { key: "gpt", label: "GPT", logo: "openai", color: "#10a37f", match: (id) => /gpt|chatgpt|codex|(^|[^a-z])o[0-9]/i.test(id) },
   { key: "claude", label: "Claude", logo: "claude", color: "#d97757", match: (id) => /claude/i.test(id) },
   { key: "gemini", label: "Gemini", logo: "gemini", color: "#4285f4", match: (id) => /gemini/i.test(id) },
