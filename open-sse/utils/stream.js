@@ -128,8 +128,40 @@ export function createSSEStream(options = {}) {
   let openAIResponsesTerminalSeen = false;
   let openAIResponsesDoneSent = false;
   let streamDoneSent = false;  // track duplicate [DONE] across transform + flush
+  let emptyResponseSynthesized = false;
   const thinkTagState = { inThinking: false, thinkTagCarry: "" };
   const splitThinkTags = shouldSplitThinkTags(provider, model);
+
+  // Passthrough mode: if the upstream finished without any content or tool
+  // calls, emit a visible retry message so clients don't render an empty turn.
+  // Called when the upstream sends [DONE] and again from flush() as fallback.
+  function synthesizeEmptyPassthroughResponse(controller) {
+    const isGeminiFamily = provider === "antigravity" || provider === "gemini" || provider === "vertex";
+    if (emptyResponseSynthesized || isGeminiFamily) return;
+    if (accumulatedContent || accumulatedToolCallCount > 0) return;
+    emptyResponseSynthesized = true;
+
+    const emptyResponseChunk = {
+      id: `chatcmpl-empty-${Date.now().toString(36)}`,
+      object: "chat.completion.chunk",
+      created: Math.floor(Date.now() / 1000),
+      model: model || "unknown",
+      choices: [{
+        index: 0,
+        delta: {
+          role: "assistant",
+          content: "Upstream model finished without returning a final response. Please retry."
+        },
+        finish_reason: "stop"
+      }]
+    };
+    const emptyResponseOutput = formatSSE(emptyResponseChunk, FORMATS.OPENAI);
+    reqLogger?.appendConvertedChunk?.(emptyResponseOutput);
+    controller.enqueue(sharedEncoder.encode(emptyResponseOutput));
+    accumulatedContent = emptyResponseChunk.choices[0].delta.content;
+    totalContentLength += accumulatedContent.length;
+    console.warn(`[STREAM] ${provider || "unknown"} | ${model || "unknown"} | upstream completed without content or tool calls`);
+  }
 
   function emitCompletionAsSSE(payload, controller) {
     const completion = unwrapOpenAIEnvelopePayload(payload);
@@ -228,10 +260,18 @@ export function createSSEStream(options = {}) {
 
         // Passthrough mode: normalize and forward
         if (mode === STREAM_MODE.PASSTHROUGH) {
-          // Hold the upstream sentinel until flush. This lets us validate that
-          // the stream produced content/tool calls and synthesize a visible
-          // retry message before the client stops reading at [DONE].
+          // Validate the stream produced content/tool calls and synthesize a
+          // visible retry message BEFORE forwarding the sentinel. The sentinel
+          // itself must be forwarded immediately — holding it until flush()
+          // hangs clients when the upstream socket stays open after [DONE].
           if (trimmed === "data: [DONE]") {
+            synthesizeEmptyPassthroughResponse(controller);
+            if (!streamDoneSent) {
+              const doneOutput = "data: [DONE]\n\n";
+              reqLogger?.appendConvertedChunk?.(doneOutput);
+              controller.enqueue(sharedEncoder.encode(doneOutput));
+              streamDoneSent = true;
+            }
             continue;
           }
 
@@ -560,28 +600,7 @@ export function createSSEStream(options = {}) {
           // Without it they can hang until timeout and trigger failover.
           // Gemini-family clients (Antigravity, Vertex, Gemini) reject this sentinel with 400 syntax errors.
           const isGeminiFamily = provider === "antigravity" || provider === "gemini" || provider === "vertex";
-          if (!isGeminiFamily && !accumulatedContent && accumulatedToolCallCount === 0) {
-            const emptyResponseChunk = {
-              id: `chatcmpl-empty-${Date.now().toString(36)}`,
-              object: "chat.completion.chunk",
-              created: Math.floor(Date.now() / 1000),
-              model: model || "unknown",
-              choices: [{
-                index: 0,
-                delta: {
-                  role: "assistant",
-                  content: "Upstream model finished without returning a final response. Please retry."
-                },
-                finish_reason: "stop"
-              }]
-            };
-            const emptyResponseOutput = formatSSE(emptyResponseChunk, FORMATS.OPENAI);
-            reqLogger?.appendConvertedChunk?.(emptyResponseOutput);
-            controller.enqueue(sharedEncoder.encode(emptyResponseOutput));
-            accumulatedContent = emptyResponseChunk.choices[0].delta.content;
-            totalContentLength += accumulatedContent.length;
-            console.warn(`[STREAM] ${provider || "unknown"} | ${model || "unknown"} | upstream completed without content or tool calls`);
-          }
+          synthesizeEmptyPassthroughResponse(controller);
           if (!streamDoneSent && !isGeminiFamily) {
             const doneOutput = "data: [DONE]\n\n";
             reqLogger?.appendConvertedChunk?.(doneOutput);
