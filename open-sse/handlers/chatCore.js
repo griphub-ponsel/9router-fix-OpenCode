@@ -195,7 +195,10 @@ async function applyMemoryContext({ body, provider, model, clientRawRequest, log
     // the module default (MEMORY_EXTRACT_MODEL env → "auto" alias).
     scheduleAutoMemoryExtraction(body, { userId, sessionId, provider, model }, log, memoryExtractModel ? { model: memoryExtractModel } : {});
     setImmediate(() => {
-      maybeUpdateSessionSummary(sessionId, { userId }).catch(() => {});
+      maybeUpdateSessionSummary(sessionId, {
+        userId,
+        model: memoryExtractModel || undefined,
+      }).catch(() => {});
     });
   } catch (error) {
     log?.warn?.("MEMORY", `skipped: ${error?.message || error}`);

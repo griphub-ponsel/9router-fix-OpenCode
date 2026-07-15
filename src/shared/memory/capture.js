@@ -689,7 +689,11 @@ async function maybeUpdateSessionSummary(sessionId, context = {}) {
     const blob = memoryService.formatEpisodicTranscript(observations, { maxLength: 15000 });
     if (blob.length < 200) return null;
 
-    const summary = await memoryService.summarizeWithRouter(blob, { maxLength: 850, style: 'episodic' });
+    const summary = await memoryService.summarizeWithRouter(blob, {
+      maxLength: 850,
+      style: 'episodic',
+      model: context.model,
+    });
     if (!summary) return null;
 
     const userId = context.userId || 'local-user';

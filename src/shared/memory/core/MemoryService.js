@@ -724,7 +724,8 @@ class MemoryService {
 
       const summary = await this.summarizeWithRouter(blob, {
         maxLength: context.maxLength || 850,
-        style: 'episodic'
+        style: 'episodic',
+        model: context.model,
       });
 
       if (!summary) return null;
