@@ -8,7 +8,7 @@ import ApiKeySelect from "./ApiKeySelect";
 import { matchKnownEndpoint } from "./cliEndpointMatch";
 import { findModelName } from "@/shared/constants/models";
 import { formatCopilotContextSize, getCopilotContextSizeOptions, getCopilotContextTokens, getCopilotModelLimits, isLegacyCopilotContextDefault } from "@/shared/utils/copilotModelLimits";
-import { supportsCopilotVision } from "@/shared/utils/copilotModelCapabilities";
+import { supportsCopilotVisionWithCombos } from "@/shared/utils/copilotModelCapabilities";
 import { expandCopilotReasoningVariants } from "@/shared/utils/copilotReasoningVariants";
 
 export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, apiKeys, activeProviders, cloudEnabled, initialStatus, tunnelEnabled, tunnelPublicUrl, tailscaleEnabled, tailscaleUrl }) {
@@ -196,7 +196,7 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
           const next = { ...prev };
           entry.models.forEach((model) => {
             const configured = Number(model.maxInputTokens) + Number(model.maxOutputTokens);
-            const defaultContext = getCopilotContextTokens(model.id);
+            const defaultContext = getCopilotContextTokens(model.id, null, combos);
             if (configured > 0 && configured !== defaultContext && !isLegacyCopilotContextDefault(model.id, configured)) next[model.id] = configured;
             else delete next[model.id];
           });
@@ -362,8 +362,8 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
       id, name: getModelDisplayName(id),
       url: `${effectiveBaseUrl}/chat/completions`,
       apiType: "chat-completions",
-      toolCalling: true, vision: supportsCopilotVision(id),
-      ...getCopilotModelLimits(id, modelContextSizes[id]),
+      toolCalling: true, vision: supportsCopilotVisionWithCombos(id, combos),
+      ...getCopilotModelLimits(id, modelContextSizes[id], combos),
     })), combos);
     return [{
       filename: status?.configPath || "VS Code User/chatLanguageModels.json",
@@ -507,13 +507,13 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
                               className="w-full rounded border border-border bg-surface px-1.5 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-primary/50"
                               title="Advertised context size in Copilot"
                             >
-                              <option value="auto">Auto ({formatCopilotContextSize(getCopilotContextTokens(model))})</option>
-                              {getCopilotContextSizeOptions(model, modelContextSizes[model])
-                                .filter((option) => option.value !== getCopilotContextTokens(model))
+                              <option value="auto">Auto ({formatCopilotContextSize(getCopilotContextTokens(model, null, combos))})</option>
+                              {getCopilotContextSizeOptions(model, modelContextSizes[model], combos)
+                                .filter((option) => option.value !== getCopilotContextTokens(model, null, combos))
                                 .map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                             </select>
-                            <span className={`justify-self-center rounded px-1.5 py-0.5 text-[10px] font-medium ${supportsCopilotVision(model) ? "bg-green-500/10 text-green-600 dark:text-green-400" : "bg-gray-500/10 text-text-muted"}`}>
-                              {supportsCopilotVision(model) ? "Yes" : "No"}
+                            <span className={`justify-self-center rounded px-1.5 py-0.5 text-[10px] font-medium ${supportsCopilotVisionWithCombos(model, combos) ? "bg-green-500/10 text-green-600 dark:text-green-400" : "bg-gray-500/10 text-text-muted"}`}>
+                              {supportsCopilotVisionWithCombos(model, combos) ? "Yes" : "No"}
                             </span>
                             <button
                               onClick={() => removeModel(model)}

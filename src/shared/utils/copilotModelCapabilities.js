@@ -17,3 +17,29 @@ export function supportsCopilotVision(id) {
 
   return /claude|gemini|gpt-4o|gpt-5(?:\.\d+)?(?:-|$)|(?:^|[^a-z0-9])vl(?:[^a-z0-9]|$)|vision|omni|grok-4|grok-composer|glm-\d+(?:\.\d+)?v(?:[^a-z0-9]|$)/.test(normalized);
 }
+
+/**
+ * Combo-aware vision check. A combo id is its bare name (no "/"), so it never
+ * matches the string heuristics above even when every member is a vision model
+ * (e.g. a combo "opus-4.8" fanning out to "kr/claude-opus-4.8"). Resolve the
+ * combo to its members and report vision when ANY member supports it, so the
+ * Copilot config advertises `vision:true` and VS Code forwards attachments.
+ *
+ * Falls back to the plain id heuristic for non-combo ids.
+ *
+ * @param {string} id                model id or combo name
+ * @param {Array<{name:string, models?:string[]}>} combos
+ */
+export function supportsCopilotVisionWithCombos(id, combos = []) {
+  if (supportsCopilotVision(id)) return true;
+  const members = comboMembers(id, combos);
+  return members.length > 0 && members.some((m) => supportsCopilotVision(m));
+}
+
+/** Resolve a combo name to its member model ids ([] when not a combo). */
+export function comboMembers(id, combos = []) {
+  if (typeof id !== "string" || id.includes("/")) return [];
+  const list = Array.isArray(combos) ? combos : [];
+  const combo = list.find((c) => c && c.name === id);
+  return combo && Array.isArray(combo.models) ? combo.models : [];
+}

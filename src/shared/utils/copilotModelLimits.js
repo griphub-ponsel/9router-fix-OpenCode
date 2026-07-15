@@ -2,6 +2,11 @@ import { getModelLimits } from "../../../open-sse/config/providerModels.js";
 
 const DEFAULT_LIMITS = { contextTokens: 256000, maxOutputTokens: 16000 };
 const CONTEXT_TOKEN_OPTIONS = [64000, 128000, 200000, 204800, 262144, 400000, 1000000, 1048576];
+// Absolute ceiling for a manual context override — the largest ladder value.
+// Users may advertise a bigger window than the detected capability (see
+// getCopilotContextSizeOptions), so overrides are capped here, not at the
+// per-model detected max.
+const CONTEXT_TOKEN_CEILING = 1048576;
 
 const EXACT_LIMITS = {
   "gemini-3.1-pro": { contextTokens: 1048576, maxOutputTokens: 65536, reasoningEfforts: ["low", "medium", "high"] },
@@ -82,12 +87,40 @@ function resolveBaseLimits(id) {
   })();
 }
 
+/** Resolve a combo name to its member model ids ([] when not a combo). */
+function comboMemberIds(id, combos = []) {
+  if (typeof id !== "string" || id.includes("/")) return [];
+  const list = Array.isArray(combos) ? combos : [];
+  const combo = list.find((c) => c && c.name === id);
+  return combo && Array.isArray(combo.models) ? combo.models : [];
+}
+
+// Combo-aware base limits. A combo id is its bare name (no "/") so it never
+// resolves to a known model and would fall back to DEFAULT_LIMITS (256K) — even
+// when its members are 1M-context models. Resolve to members and take the
+// widest context (with the matching maxOutput) so "opus-4.8" inherits the real
+// claude-opus-4.8 window instead of the 256K floor.
+function resolveBaseLimitsWithCombos(id, combos = []) {
+  const members = comboMemberIds(id, combos);
+  if (members.length === 0) return resolveBaseLimits(id);
+  let best = null;
+  for (const member of members) {
+    const limits = resolveBaseLimits(member);
+    if (!limits?.contextTokens) continue;
+    if (!best || limits.contextTokens > best.contextTokens) best = limits;
+  }
+  return best || resolveBaseLimits(id);
+}
+
 function normalizeLimits(limits, contextTokensOverride = null) {
   if (!limits?.contextTokens) return null;
   const maxOutputTokens = limits.maxOutputTokens || DEFAULT_LIMITS.maxOutputTokens;
   const requestedContextTokens = Number(contextTokensOverride) || 0;
+  // An explicit override is an intentional manual choice — honor it up to the
+  // ladder ceiling (1M+) rather than clamping to the model's detected window.
+  // With no override, fall back to the model's true detected capability.
   const contextTokens = requestedContextTokens > 0
-    ? Math.min(requestedContextTokens, limits.contextTokens)
+    ? Math.min(requestedContextTokens, CONTEXT_TOKEN_CEILING)
     : limits.contextTokens;
   return {
     maxInputTokens: Math.max(1024, contextTokens - maxOutputTokens),
@@ -113,15 +146,15 @@ export function isLegacyCopilotContextDefault(id, contextTokens) {
   return /^gpt-5\.6(?:-|$)/.test(normalizeModelId(id)) && Number(contextTokens) === 256000;
 }
 
-export function getCopilotModelLimits(id, contextTokensOverride = null) {
+export function getCopilotModelLimits(id, contextTokensOverride = null, combos = []) {
   const effectiveOverride = isLegacyCopilotContextDefault(id, contextTokensOverride)
     ? null
     : contextTokensOverride;
-  return normalizeLimits(resolveBaseLimits(id), effectiveOverride);
+  return normalizeLimits(resolveBaseLimitsWithCombos(id, combos), effectiveOverride);
 }
 
-export function getCopilotContextTokens(id, contextTokensOverride = null) {
-  const limits = getCopilotModelLimits(id, contextTokensOverride);
+export function getCopilotContextTokens(id, contextTokensOverride = null, combos = []) {
+  const limits = getCopilotModelLimits(id, contextTokensOverride, combos);
   return limits ? limits.maxInputTokens + limits.maxOutputTokens : null;
 }
 
@@ -131,17 +164,25 @@ export function formatCopilotContextSize(tokens) {
   return `${Math.round(tokens / 1000)}K`;
 }
 
-export function getCopilotContextSizeOptions(id, currentContextTokens = null) {
-  const baseLimits = resolveBaseLimits(id);
-  const maxContextTokens = Number(baseLimits?.contextTokens) || DEFAULT_LIMITS.contextTokens;
+// Build the Context dropdown options. `Auto` (rendered by the card) always
+// reflects the model's TRUE capability via getCopilotContextTokens(). The
+// explicit options, however, always expose the full ladder up to 1M so the
+// user can advertise a larger window than the detected default even when the
+// model technically can't honor it — an intentional manual override. The
+// selected value is clamped to a useful floor (> maxOutput) but NOT to the
+// detected max, so 1M is always selectable.
+export function getCopilotContextSizeOptions(id, currentContextTokens = null, combos = []) {
+  const baseLimits = resolveBaseLimitsWithCombos(id, combos);
   const maxOutputTokens = Number(baseLimits?.maxOutputTokens) || DEFAULT_LIMITS.maxOutputTokens;
   const minUsefulContextTokens = maxOutputTokens + 1024;
   const current = Number(currentContextTokens) || 0;
+  const detectedMax = Number(baseLimits?.contextTokens) || DEFAULT_LIMITS.contextTokens;
+
   const values = new Set(
-    CONTEXT_TOKEN_OPTIONS.filter((value) => value <= maxContextTokens && value >= minUsefulContextTokens)
+    CONTEXT_TOKEN_OPTIONS.filter((value) => value >= minUsefulContextTokens)
   );
-  values.add(maxContextTokens);
-  if (current > 0) values.add(Math.min(current, maxContextTokens));
+  values.add(detectedMax);
+  if (current > 0) values.add(current);
 
   return [...values]
     .sort((a, b) => a - b)

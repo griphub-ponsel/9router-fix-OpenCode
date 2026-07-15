@@ -7,7 +7,7 @@ import os from "os";
 import { parseJSONC } from "confbox";
 import { findModelName } from "open-sse/config/providerModels.js";
 import { getCopilotModelLimits } from "@/shared/utils/copilotModelLimits.js";
-import { supportsCopilotVision } from "@/shared/utils/copilotModelCapabilities.js";
+import { supportsCopilotVisionWithCombos } from "@/shared/utils/copilotModelCapabilities.js";
 import { expandCopilotReasoningVariants } from "@/shared/utils/copilotReasoningVariants.js";
 import { getCombos, getSettings, updateSettings } from "@/lib/localDb";
 
@@ -220,19 +220,21 @@ export async function POST(request) {
     const endpointUrl = `${normalizeCopilotBaseUrl(baseUrl)}/chat/completions`;
     const keyToUse = apiKey || "sk_9router";
 
+    const combos = await getCombos().catch(() => []);
+
     const baseModels = models.map((id) => ({
       id,
       name: resolveModelDisplayName(id, modelNames),
       url: endpointUrl,
       apiType: "chat-completions",
       toolCalling: true,
-      // Advertise vision when the model natively supports it OR a vision-fallback
-      // relay is configured (so VS Code forwards images for 9Router to delegate).
-      vision: supportsCopilotVision(id) || fallbackActive,
-      ...getCopilotModelLimits(id, modelContextSizes?.[id]),
+      // Advertise vision when the model (or any combo member) natively supports
+      // it OR a vision-fallback relay is configured (so VS Code forwards images
+      // for 9Router to delegate). Combo-aware so bare combo names like
+      // "opus-4.8" inherit their members' vision capability.
+      vision: supportsCopilotVisionWithCombos(id, combos) || fallbackActive,
+      ...getCopilotModelLimits(id, modelContextSizes?.[id], combos),
     }));
-
-    const combos = await getCombos().catch(() => []);
 
     const newEntry = {
       name: "9Router",
