@@ -40,6 +40,43 @@ function collectMessageReasoning(message) {
   return parts.join("");
 }
 
+function sanitizeOpenAIStreamChunk(parsed) {
+  if (!Array.isArray(parsed?.choices)) return false;
+  let changed = false;
+
+  for (const choice of parsed.choices) {
+    if (choice?.finish_reason === "") {
+      choice.finish_reason = null;
+      changed = true;
+    }
+
+    const delta = choice?.delta;
+    if (!delta || typeof delta !== "object") continue;
+
+    const fn = delta.function_call;
+    if (fn == null || (typeof fn === "object" && !fn.name && !fn.arguments)) {
+      if ("function_call" in delta) {
+        delete delta.function_call;
+        changed = true;
+      }
+    }
+    if (Array.isArray(delta.tool_calls) && delta.tool_calls.length === 0) {
+      delete delta.tool_calls;
+      changed = true;
+    }
+    if (delta.extra_fields == null && "extra_fields" in delta) {
+      delete delta.extra_fields;
+      changed = true;
+    }
+    if (delta.refusal === "") {
+      delete delta.refusal;
+      changed = true;
+    }
+  }
+
+  return changed;
+}
+
 /**
  * Create unified SSE transform stream
  * @param {object} options
@@ -80,6 +117,7 @@ export function createSSEStream(options = {}) {
   let totalContentLength = 0;
   let accumulatedContent = "";
   let accumulatedThinking = "";
+  let accumulatedToolCallCount = 0;
   let ttftAt = null;
   let sseLineCount = 0;
   let sseEmittedCount = 0;
@@ -130,6 +168,7 @@ export function createSSEStream(options = {}) {
       }
       if (Array.isArray(message.tool_calls) && message.tool_calls.length > 0) {
         delta.tool_calls = message.tool_calls;
+        accumulatedToolCallCount += message.tool_calls.length;
       }
 
       chunkChoices.push({ index: choice.index || 0, delta, finish_reason: null });
@@ -189,6 +228,13 @@ export function createSSEStream(options = {}) {
 
         // Passthrough mode: normalize and forward
         if (mode === STREAM_MODE.PASSTHROUGH) {
+          // Hold the upstream sentinel until flush. This lets us validate that
+          // the stream produced content/tool calls and synthesize a visible
+          // retry message before the client stops reading at [DONE].
+          if (trimmed === "data: [DONE]") {
+            continue;
+          }
+
           let output;
           let injectedUsage = false;
 
@@ -203,7 +249,7 @@ export function createSSEStream(options = {}) {
               const idFixed = fixInvalidId(parsed);
 
               // Ensure OpenAI-required fields are present on streaming chunks (Letta compat)
-              let fieldsInjected = false;
+              let fieldsInjected = sanitizeOpenAIStreamChunk(parsed);
               if (parsed.choices !== undefined) {
                 if (!parsed.object) { parsed.object = "chat.completion.chunk"; fieldsInjected = true; }
                 if (!parsed.created) { parsed.created = Math.floor(Date.now() / 1000); fieldsInjected = true; }
@@ -238,6 +284,7 @@ export function createSSEStream(options = {}) {
               }
               const content = delta?.content;
               const reasoning = delta?.reasoning_content;
+              const toolCalls = delta?.tool_calls;
               if (content && typeof content === "string") {
                 totalContentLength += content.length;
                 accumulatedContent += content;
@@ -245,6 +292,9 @@ export function createSSEStream(options = {}) {
               if (reasoning && typeof reasoning === "string") {
                 totalContentLength += reasoning.length;
                 accumulatedThinking += reasoning;
+              }
+              if (Array.isArray(toolCalls) && toolCalls.length > 0) {
+                accumulatedToolCallCount += toolCalls.length;
               }
 
               const extracted = extractUsage(parsed);
@@ -510,6 +560,28 @@ export function createSSEStream(options = {}) {
           // Without it they can hang until timeout and trigger failover.
           // Gemini-family clients (Antigravity, Vertex, Gemini) reject this sentinel with 400 syntax errors.
           const isGeminiFamily = provider === "antigravity" || provider === "gemini" || provider === "vertex";
+          if (!isGeminiFamily && !accumulatedContent && accumulatedToolCallCount === 0) {
+            const emptyResponseChunk = {
+              id: `chatcmpl-empty-${Date.now().toString(36)}`,
+              object: "chat.completion.chunk",
+              created: Math.floor(Date.now() / 1000),
+              model: model || "unknown",
+              choices: [{
+                index: 0,
+                delta: {
+                  role: "assistant",
+                  content: "Upstream model finished without returning a final response. Please retry."
+                },
+                finish_reason: "stop"
+              }]
+            };
+            const emptyResponseOutput = formatSSE(emptyResponseChunk, FORMATS.OPENAI);
+            reqLogger?.appendConvertedChunk?.(emptyResponseOutput);
+            controller.enqueue(sharedEncoder.encode(emptyResponseOutput));
+            accumulatedContent = emptyResponseChunk.choices[0].delta.content;
+            totalContentLength += accumulatedContent.length;
+            console.warn(`[STREAM] ${provider || "unknown"} | ${model || "unknown"} | upstream completed without content or tool calls`);
+          }
           if (!streamDoneSent && !isGeminiFamily) {
             const doneOutput = "data: [DONE]\n\n";
             reqLogger?.appendConvertedChunk?.(doneOutput);
@@ -519,7 +591,8 @@ export function createSSEStream(options = {}) {
           if (onStreamComplete) {
             onStreamComplete({
               content: accumulatedContent,
-              thinking: accumulatedThinking
+              thinking: accumulatedThinking,
+              toolCallCount: accumulatedToolCallCount
             }, usage, ttftAt);
           }
           return;

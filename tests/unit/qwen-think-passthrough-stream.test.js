@@ -84,4 +84,54 @@ describe("Qwen passthrough think-tag compatibility", () => {
 
     expect(content).toContain("<think>raw</think>text");
   });
+
+  it("turns a successful but empty upstream stream into a visible retry response", async () => {
+    const sse = [
+      `data: ${JSON.stringify({ id: "chatcmpl-empty", choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] })}`,
+      `data: ${JSON.stringify({ id: "chatcmpl-empty", choices: [{ index: 0, delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 } })}`,
+      "data: [DONE]",
+      "",
+    ].join("\n");
+
+    const output = await runPassthrough("codebuddy-cn", sse, "hy3-preview");
+    const chunks = parseOpenAIChunks(output);
+    const content = chunks.map(c => c.choices?.[0]?.delta?.content || "").join("");
+
+    expect(content).toContain("finished without returning a final response");
+    expect(output).toContain("data: [DONE]");
+  });
+
+  it("does not synthesize text for a valid tool-call-only response", async () => {
+    const sse = [
+      `data: ${JSON.stringify({ id: "chatcmpl-tool", choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] })}`,
+      `data: ${JSON.stringify({ id: "chatcmpl-tool", choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "call_1", type: "function", function: { name: "read_file", arguments: "{}" } }] }, finish_reason: null }] })}`,
+      `data: ${JSON.stringify({ id: "chatcmpl-tool", choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] })}`,
+      "data: [DONE]",
+      "",
+    ].join("\n");
+
+    const output = await runPassthrough("codebuddy-cn", sse, "hy3-preview");
+
+    expect(output).toContain("read_file");
+    expect(output).not.toContain("finished without returning a final response");
+  });
+
+  it("sanitizes Hy3 empty legacy function fields and finish reasons", async () => {
+    const sse = [
+      `data: ${JSON.stringify({ id: "chatcmpl-hy3", choices: [{ index: 0, delta: { role: "assistant", content: "", function_call: null, refusal: "", tool_calls: [], extra_fields: null }, finish_reason: "" }] })}`,
+      `data: ${JSON.stringify({ id: "chatcmpl-hy3", choices: [{ index: 0, delta: { content: "HY_OK", function_call: null, tool_calls: [] }, finish_reason: "" }] })}`,
+      `data: ${JSON.stringify({ id: "chatcmpl-hy3", choices: [{ index: 0, delta: { role: "assistant", content: "", function_call: { name: "", arguments: "" }, tool_calls: [], extra_fields: null }, finish_reason: "stop" }] })}`,
+      "data: [DONE]",
+      "",
+    ].join("\n");
+
+    const output = await runPassthrough("codebuddy-cn", sse, "hy3-preview");
+    const chunks = parseOpenAIChunks(output);
+
+    expect(chunks.map(c => c.choices?.[0]?.delta?.content || "").join("")).toBe("HY_OK");
+    expect(chunks[0].choices[0].finish_reason).toBeNull();
+    expect(output).not.toContain("function_call");
+    expect(output).not.toContain("extra_fields");
+    expect(output).not.toContain('"tool_calls":[]');
+  });
 });
