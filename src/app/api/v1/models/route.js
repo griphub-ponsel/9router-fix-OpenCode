@@ -11,8 +11,30 @@ import { resolveKiroModels } from "open-sse/services/kiroModels.js";
 import { resolveKimchiModels } from "open-sse/services/kimchiModels.js";
 import { resolveQoderModels } from "open-sse/services/qoderModels.js";
 import { resolveCopilotModels } from "open-sse/services/copilotModels.js";
+import { resolveClinepassModels } from "open-sse/services/clinepassModels.js";
+import { resolveGrokCliModels } from "open-sse/services/grokCliModels.js";
 import { updateProviderCredentials } from "@/sse/services/tokenRefresh";
-import { capabilitiesFromServiceKind } from "open-sse/providers/capabilities.js";
+import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
+import { capabilitiesFromServiceKind, getCapabilitiesForModel } from "open-sse/providers/capabilities.js";
+
+// ── Model Allowlist ──────────────────────────────────────────────
+// When non-empty, ONLY models whose FULL ID (e.g. "cx/gpt-5.5")
+// or SHORT ID (e.g. "gpt-5.5") is in this list will appear.
+// Set to [] to show all (default 9router behaviour).
+const ALLOWED_MODELS = "griphubrouter_models_placeholder".length > 0 ? [
+  // DeepSeek
+  "deepseek-v4-flash", "deepseek-v4-pro", "ocg/deepseek-v4-flash", "ocg/deepseek-v4-pro", "kr/deepseek-3.2",
+  // OpenAI Codex
+  "cx/gpt-5.6-terra", "cx/gpt-5.6-sol", "cx/gpt-5.6-luna", "cx/gpt-5.5", "cx/gpt-5.4", "cx/gpt-5.4-mini", "cx/gpt-5.3-codex",
+  // Claude
+  "cl/anthropic/claude-opus-4.8", "cl/anthropic/claude-sonnet-4.6", "kr/claude-opus-4.8", "kr/claude-sonnet-5", "kr/claude-sonnet-4.5",
+  // Gemini
+  "ag/gemini-3-flash-agent", "ag/gemini-3.5-flash-low", "ag/gemini-pro-agent", "ag/gemini-3.1-pro-low",
+  // CodeBuddy / Misc
+  "cbcn/deepseek-v4-pro", "cbcn/deepseek-v4-flash", "cbcn/kimi-k2.7",
+  // Ollama local
+  "ollama-local/llama3.2:3b", "ollama-local/qwen2.5:7b", "ollama-local/qwen2.5-coder:7b",
+] : [];
 
 // Per-provider live model resolvers. Each receives a connection record and
 // returns { models: [{ id, name? }, ...] } | null on failure.
@@ -63,7 +85,37 @@ const LIVE_MODEL_RESOLVERS = {
       },
     });
     return result?.models?.length ? { models: result.models } : null;
-  }
+  },
+  clinepass: async (conn) => {
+    const result = await resolveClinepassModels({
+      accessToken: conn.accessToken,
+      apiKey: conn.apiKey,
+    });
+    return result?.models?.length ? { models: result.models } : null;
+  },
+  "grok-cli": async (conn) => {
+    const proxy = await resolveConnectionProxyConfig(conn.providerSpecificData || {});
+    const result = await resolveGrokCliModels({
+      ...conn,
+      connectionId: conn.id,
+    }, {
+      log: console,
+      proxyOptions: {
+        connectionProxyEnabled: proxy.connectionProxyEnabled === true,
+        connectionProxyUrl: proxy.connectionProxyUrl || "",
+        connectionNoProxy: proxy.connectionNoProxy || "",
+        vercelRelayUrl: proxy.vercelRelayUrl || "",
+        strictProxy: proxy.strictProxy === true,
+      },
+      onCredentialsRefreshed: async (refreshed) => {
+        await updateProviderCredentials(conn.id, {
+          ...refreshed,
+          existingProviderSpecificData: conn.providerSpecificData || {},
+        });
+      },
+    });
+    return result?.models?.length ? { models: result.models } : null;
+  },
 };
 
 const parseOpenAIStyleModels = (data) => {
@@ -71,8 +123,8 @@ const parseOpenAIStyleModels = (data) => {
   return data?.data || data?.models || data?.results || [];
 };
 
-// Matches provider IDs that are upstream/cross-instance connections (contain a UUID suffix)
-const UPSTREAM_CONNECTION_RE = /[-_][0-9a-f]{8,}$/i;
+// Header sent by fetchCompatibleModelIds to break recursive model fetches between 9Router instances.
+const INTERNAL_MODELS_FETCH_HEADER = "x-9r-internal-models-fetch";
 
 // LLM kind sentinel — combos/models with no explicit kind default to LLM
 const LLM_KIND = "llm";
@@ -85,6 +137,7 @@ const MODEL_TYPE_TO_KIND = {
   embedding: "embedding",
   stt: "stt",
   imageToText: "imageToText",
+  video: "video",
 };
 
 function modelKind(model) {
@@ -137,7 +190,7 @@ async function fetchCompatibleModelIds(connection) {
     const timeoutId = setTimeout(() => controller.abort(), 5000);
     const response = await fetch(url, {
       method: "GET",
-      headers,
+      headers: { ...headers, [INTERNAL_MODELS_FETCH_HEADER]: "1" },
       cache: "no-store",
       signal: controller.signal,
     });
@@ -181,7 +234,8 @@ function comboMatchesKinds(combo, kindFilter) {
  * Build OpenAI-format models list filtered by service kinds.
  * @param {string[]} kindFilter - List of service kinds to include (e.g. ["llm"], ["webSearch","webFetch"]).
  */
-export async function buildModelsList(kindFilter) {
+export async function buildModelsList(kindFilter, options = {}) {
+  const skipDynamicFetch = options.skipDynamicFetch === true;
   let connections = [];
   try {
     connections = await getProviderConnections();
@@ -311,7 +365,7 @@ export async function buildModelsList(kindFilter) {
           )
         : providerModels.map((model) => model.id);
 
-      if (isCompatibleProvider && rawModelIds.length === 0 && !UPSTREAM_CONNECTION_RE.test(providerId)) {
+      if (isCompatibleProvider && rawModelIds.length === 0 && !skipDynamicFetch) {
         rawModelIds = await fetchCompatibleModelIds(conn);
       }
 
@@ -398,7 +452,19 @@ export async function buildModelsList(kindFilter) {
 
       const mergedModelIds = Array.from(new Set([...modelIds, ...customModelIds, ...aliasModelIds]));
 
-      for (const modelId of mergedModelIds) {
+      // ── Model Allowlist Filter ──────────────────────────────────
+      // When ALLOWED_MODELS is non-empty, only models in the list survive.
+      const filteredModelIds = ALLOWED_MODELS.length > 0
+        ? mergedModelIds.filter((mid) => {
+            const fullId = `${outputAlias}/${mid}`;
+            const staticFullId = `${staticAlias}/${mid}`;
+            return ALLOWED_MODELS.includes(mid)
+                || ALLOWED_MODELS.includes(fullId)
+                || ALLOWED_MODELS.includes(staticFullId);
+          })
+        : mergedModelIds;
+
+      for (const modelId of filteredModelIds) {
         // Resolve kind: prefer custom/live metadata, then static, then ID heuristics.
         const customKind = customModelKindById.get(modelId);
         const liveKind = liveModelKindById.get(modelId);
@@ -413,7 +479,9 @@ export async function buildModelsList(kindFilter) {
           object: "model",
           owned_by: outputAlias,
         };
-        const caps = liveCapabilitiesById.get(modelId) || capabilitiesFromServiceKind(customKind || liveKind);
+        const caps = liveCapabilitiesById.get(modelId)
+          || capabilitiesFromServiceKind(customKind || liveKind)
+          || (kind === LLM_KIND ? getCapabilitiesForModel(providerId, modelId) : null);
         if (caps) model.capabilities = caps;
         models.push(model);
       }
@@ -443,6 +511,8 @@ export async function buildModelsList(kindFilter) {
   const seenModelIds = new Set();
   for (const model of models) {
     if (!model?.id || seenModelIds.has(model.id)) continue;
+    // ── Global Allowlist (applies to ALL sources: combos, static, custom) ──
+    if (ALLOWED_MODELS.length > 0 && !ALLOWED_MODELS.includes(model.id)) continue;
     seenModelIds.add(model.id);
     dedupedModels.push(model);
   }
@@ -467,9 +537,10 @@ export async function OPTIONS() {
  * GET /v1/models - OpenAI compatible models list (LLM/chat models only by default).
  * For other capabilities use /v1/models/{kind} (image, tts, stt, embedding, image-to-text, web).
  */
-export async function GET() {
+export async function GET(request) {
   try {
-    const data = await buildModelsList([LLM_KIND]);
+    const skipDynamicFetch = request?.headers?.get(INTERNAL_MODELS_FETCH_HEADER) === "1";
+    const data = await buildModelsList([LLM_KIND], { skipDynamicFetch });
     return Response.json({ object: "list", data }, {
       headers: { "Access-Control-Allow-Origin": "*" },
     });

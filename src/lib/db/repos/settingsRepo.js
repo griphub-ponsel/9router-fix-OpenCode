@@ -55,6 +55,9 @@ const DEFAULT_SETTINGS = {
   // messages, intent detection, etc. Empty = leave VS Code default.
   copilotUtilityModel: "",
   copilotUtilitySmallModel: "",
+  // Disabled by default: clients such as Hermes already own their memory
+  // lifecycle, so 9Router must not capture or inject a second memory layer.
+  memoryEnabled: false,
   // Auto-memory extraction model (ChatGPT-style memory). 9router self-calls
   // /v1/chat/completions with this model to decide what's memory-worthy.
   // Empty = fall back to MEMORY_EXTRACT_MODEL env, then the "auto" alias.

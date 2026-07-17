@@ -9,7 +9,7 @@ import { createRequestLogger } from "../utils/requestLogger.js";
 import { getModelTargetFormat, getModelStrip, getModelUpstreamId, getModelType, PROVIDER_ID_TO_ALIAS } from "../config/providerModels.js";
 import { PROVIDERS } from "../config/providers.js";
 import { createErrorResult, parseUpstreamError, formatProviderError } from "../utils/error.js";
-import { HTTP_STATUS } from "../config/runtimeConfig.js";
+import { HTTP_STATUS, TOKEN_SAVER_HEADER } from "../config/runtimeConfig.js";
 import { handleBypassRequest } from "../utils/bypassHandler.js";
 import { trackPendingRequest, appendRequestLog, saveRequestDetail } from "@/lib/usageDb.js";
 import { getExecutor } from "../executors/index.js";
@@ -213,7 +213,7 @@ async function applyMemoryContext({ body, provider, model, clientRawRequest, log
  * @param {string} options.sourceFormatOverride - Override detected source format (e.g. "openai-responses")
  */
 export async function handleChatCore(options) {
-  const { modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, clientRawRequest, connectionId, userAgent, apiKey, ccFilterNaming, rtkEnabled, headroomEnabled, headroomUrl, headroomCompressUserMessages, cavemanEnabled, cavemanLevel, ponytailEnabled, ponytailLevel, memoryExtractModel, sourceFormatOverride, providerThinking, internalVisionRelay, visionFallbackModels, autoVisionFallbackModels, resolveVisionCredentials, visionRetryAttempted } = options;
+  const { modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, clientRawRequest, connectionId, userAgent, apiKey, ccFilterNaming, rtkEnabled, headroomEnabled, headroomUrl, headroomCompressUserMessages, cavemanEnabled, cavemanLevel, ponytailEnabled, ponytailLevel, memoryEnabled, memoryExtractModel, sourceFormatOverride, providerThinking, internalVisionRelay, visionFallbackModels, autoVisionFallbackModels, resolveVisionCredentials, visionRetryAttempted } = options;
   let body = options.body;
   const { provider, model } = modelInfo;
   const requestStartTime = Date.now();
@@ -224,7 +224,7 @@ export async function handleChatCore(options) {
   const bypassResponse = handleBypassRequest(body, model, userAgent, ccFilterNaming);
   if (bypassResponse) return bypassResponse;
 
-  if (!internalVisionRelay && !visionRetryAttempted) {
+  if (memoryEnabled && !internalVisionRelay && !visionRetryAttempted) {
     await applyMemoryContext({ body, provider, model, clientRawRequest, log, memoryExtractModel });
   }
 
@@ -326,6 +326,8 @@ export async function handleChatCore(options) {
   // Expose raw client headers to translators/executors for session-id resolution
   if (credentials) credentials.rawHeaders = clientRawRequest?.headers || {};
 
+  const tokenSaverEnabled = String(getHeader(clientRawRequest?.headers, TOKEN_SAVER_HEADER) || "").toLowerCase() !== "off";
+
   // Auto-strip media blocks the model can't read (vision/audio/pdf) before translation.
   if (!passthrough) {
     const caps = getCapabilitiesForModel(provider, model);
@@ -347,7 +349,7 @@ export async function handleChatCore(options) {
   // makes Headroom work for ALL providers. Fail-open: compress mutates `body`
   // in place and returns null on any error, leaving the original body intact.
   const headroomDiagnostics = {};
-  const headroomStats = await compressWithHeadroom(body, { enabled: headroomEnabled, url: headroomUrl, model: upstreamModel, format: sourceFormat, compressUserMessages: headroomCompressUserMessages, diagnostics: headroomDiagnostics });
+  const headroomStats = await compressWithHeadroom(body, { enabled: tokenSaverEnabled && headroomEnabled, url: headroomUrl, model: upstreamModel, format: sourceFormat, compressUserMessages: headroomCompressUserMessages, diagnostics: headroomDiagnostics });
   const headroomLine = formatHeadroomLog(headroomStats);
   const headroomSizeLine = formatHeadroomSizeLog(headroomDiagnostics);
   if (headroomLine) {
@@ -355,7 +357,7 @@ export async function handleChatCore(options) {
     if (isHeadroomPhantomSavings(headroomStats, headroomDiagnostics)) {
       log?.warn?.("HEADROOM", `reported token delta, but outbound JSON shrank <5%; provider may bill near-original payload | ${headroomSizeLine}`);
     }
-  } else if (headroomEnabled) {
+  } else if (tokenSaverEnabled && headroomEnabled) {
     // Circuit-open skips repeat on every request while the proxy is down —
     // log those at debug; the initial connection failure already warned.
     const headroomSkipMsg = `skipped: ${headroomDiagnostics.reason || "compression unavailable"}${headroomDiagnostics.endpoint ? ` (${headroomDiagnostics.endpoint})` : ""}`;
@@ -401,7 +403,7 @@ export async function handleChatCore(options) {
   }
 
   // RTK: compress tool_result content
-  const rtkStats = compressMessages(translatedBody, rtkEnabled);
+  const rtkStats = compressMessages(translatedBody, tokenSaverEnabled && rtkEnabled);
   const rtkLine = formatRtkLog(rtkStats);
   if (rtkLine) console.log(rtkLine);
 
@@ -410,13 +412,13 @@ export async function handleChatCore(options) {
   // openai/claude/responses. Do not re-add a post-translation Headroom call.
 
   // Caveman: inject terse-style system prompt
-  if (cavemanEnabled && cavemanLevel) {
+  if (tokenSaverEnabled && cavemanEnabled && cavemanLevel) {
     injectCaveman(translatedBody, finalFormat, cavemanLevel);
     log?.debug?.("CAVEMAN", `${cavemanLevel} | ${finalFormat}`);
   }
 
   // Ponytail: inject lazy-senior-dev system prompt
-  if (ponytailEnabled && ponytailLevel) {
+  if (tokenSaverEnabled && ponytailEnabled && ponytailLevel) {
     injectPonytail(translatedBody, finalFormat, ponytailLevel);
     log?.debug?.("PONYTAIL", `${ponytailLevel} | ${finalFormat}`);
   }

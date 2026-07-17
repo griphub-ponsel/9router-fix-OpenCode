@@ -142,6 +142,36 @@ describe('AutoMemory', () => {
       expect(headers[MEMORY_INTERNAL_HEADER]).toBe('1');
     });
 
+    it('inherits the active request model when extraction model is auto', async () => {
+      const fetchMock = mockExtractionFetch([]);
+      vi.stubGlobal('fetch', fetchMock);
+
+      await runAutoMemoryExtraction(body, {
+        userId: 'local-user',
+        sessionId: 's2-inherit',
+        provider: 'ollama-local',
+        model: 'qwen2.5-coder:7b'
+      }, { force: true });
+
+      const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+      expect(requestBody.model).toBe('ollama-local/qwen2.5-coder:7b');
+    });
+
+    it('keeps an explicitly configured extraction model', async () => {
+      const fetchMock = mockExtractionFetch([]);
+      vi.stubGlobal('fetch', fetchMock);
+
+      await runAutoMemoryExtraction(body, {
+        userId: 'local-user',
+        sessionId: 's2-explicit',
+        provider: 'ollama-local',
+        model: 'qwen2.5-coder:7b'
+      }, { force: true, model: 'cx/gpt-5.4' });
+
+      const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+      expect(requestBody.model).toBe('cx/gpt-5.4');
+    });
+
     it('skips near-duplicate memories', async () => {
       const item = {
         kind: 'project',

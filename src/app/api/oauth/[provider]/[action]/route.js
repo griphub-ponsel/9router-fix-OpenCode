@@ -20,7 +20,10 @@ import {
   clearXaiSession,
 } from "@/lib/oauth/utils/server";
 
-async function completeXaiManualCode(code, state) {
+const XAI_OAUTH_PROVIDERS = new Set(["xai", "xai-oauth"]);
+const isXaiOAuthProvider = (provider) => XAI_OAUTH_PROVIDERS.has(provider);
+
+async function completeXaiManualCode(provider, code, state) {
   const session = state ? getXaiSessionStatus(state) : null;
   if (!session) {
     throw new Error("xAI OAuth session not found; restart the login flow and paste the code again");
@@ -29,14 +32,14 @@ async function completeXaiManualCode(code, state) {
 
   try {
     const tokenData = await exchangeTokens(
-      "xai",
+      provider,
       code,
       session.redirectUri,
       session.codeVerifier,
       state
     );
     const connection = await createProviderConnection({
-      provider: "xai",
+      provider: "xai-oauth",
       authType: "oauth",
       ...tokenData,
       expiresAt: tokenData.expiresIn
@@ -82,7 +85,7 @@ export async function GET(request, { params }) {
     }
 
     if (action === "start-proxy") {
-      if (!["codex", "xai"].includes(provider)) {
+      if (provider !== "codex" && !isXaiOAuthProvider(provider)) {
         return NextResponse.json({ error: "Proxy only supported for codex/xai" }, { status: 400 });
       }
       const appPort = searchParams.get("app_port");
@@ -92,12 +95,12 @@ export async function GET(request, { params }) {
       const state = searchParams.get("state");
       const codeVerifier = searchParams.get("code_verifier");
       const redirectUri = searchParams.get("redirect_uri");
-      const result = provider === "xai"
+      const result = isXaiOAuthProvider(provider)
         ? await startXaiProxy(Number(appPort))
         : await startCodexProxy(Number(appPort));
       let serverSide = false;
       if (result.success && state && codeVerifier && redirectUri) {
-        serverSide = provider === "xai"
+        serverSide = isXaiOAuthProvider(provider)
           ? registerXaiSession({ state, codeVerifier, redirectUri })
           : registerCodexSession({ state, codeVerifier, redirectUri });
       }
@@ -105,18 +108,18 @@ export async function GET(request, { params }) {
     }
 
     if (action === "poll-status") {
-      if (!["codex", "xai"].includes(provider)) {
+      if (provider !== "codex" && !isXaiOAuthProvider(provider)) {
         return NextResponse.json({ error: "Poll only supported for codex/xai" }, { status: 400 });
       }
       const state = searchParams.get("state");
       if (!state) {
         return NextResponse.json({ error: "Missing state" }, { status: 400 });
       }
-      const session = provider === "xai" ? getXaiSessionStatus(state) : getCodexSessionStatus(state);
+      const session = isXaiOAuthProvider(provider) ? getXaiSessionStatus(state) : getCodexSessionStatus(state);
       if (!session) return NextResponse.json({ status: "unknown" });
       if (session.status === "done" || session.status === "error") {
         const payload = { ...session };
-        if (provider === "xai") clearXaiSession(state);
+        if (isXaiOAuthProvider(provider)) clearXaiSession(state);
         else clearCodexSession(state);
         return NextResponse.json(payload);
       }
@@ -124,10 +127,10 @@ export async function GET(request, { params }) {
     }
 
     if (action === "stop-proxy") {
-      if (!["codex", "xai"].includes(provider)) {
+      if (provider !== "codex" && !isXaiOAuthProvider(provider)) {
         return NextResponse.json({ error: "Proxy only supported for codex/xai" }, { status: 400 });
       }
-      if (provider === "xai") stopXaiProxy();
+      if (isXaiOAuthProvider(provider)) stopXaiProxy();
       else stopCodexProxy();
       return NextResponse.json({ success: true });
     }
@@ -240,8 +243,8 @@ export async function POST(request, { params }) {
         });
       }
 
-      // Cline uses authorization_code without PKCE. Kimchi returns a browser token.
-      const noPkceExchangeProviders = ["cline", "kimchi"];
+      // Cline and ClinePass use authorization_code without PKCE. Kimchi returns a browser token.
+      const noPkceExchangeProviders = ["cline", "clinepass", "kimchi"];
       if (!code || !redirectUri || (!codeVerifier && !noPkceExchangeProviders.includes(provider))) {
         return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
       }
@@ -335,11 +338,11 @@ export async function POST(request, { params }) {
     }
 
     if (action === "manual-code") {
-      if (provider !== "xai") {
+      if (!isXaiOAuthProvider(provider)) {
         return NextResponse.json({ error: "Manual code only supported for xai" }, { status: 400 });
       }
       const { code, state } = body;
-      const connection = await completeXaiManualCode(String(code || "").trim(), String(state || "").trim());
+      const connection = await completeXaiManualCode(provider, String(code || "").trim(), String(state || "").trim());
       return NextResponse.json({ success: true, connection });
     }
 

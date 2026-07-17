@@ -13,7 +13,7 @@ import { ConfirmModal } from "./Modal";
 import NineRemotePromoModal from "./NineRemotePromoModal";
 
 // const VISIBLE_MEDIA_KINDS = ["embedding", "image", "imageToText", "tts", "stt", "webSearch", "webFetch", "video", "music"];
-const VISIBLE_MEDIA_KINDS = ["embedding", "image", "tts", "stt"];
+const VISIBLE_MEDIA_KINDS = ["embedding", "image", "video", "tts", "stt"];
 // Combined entry: webSearch + webFetch share one page at /dashboard/media-providers/web
 const COMBINED_WEB_ITEM = { id: "web", label: "Web Fetch & Search", icon: "travel_explore", href: "/dashboard/media-providers/web" };
 
@@ -26,7 +26,6 @@ const navItems = [
   { href: "/dashboard/quota", label: "Quota Tracker", icon: "data_usage" },
   { href: "/dashboard/token-saver", label: "Token Saver", icon: "savings" },
   { href: "/dashboard/cli-tools", label: "CLI Tools", icon: "terminal" },
-  { href: "/dashboard/memory", label: "Memory", icon: "memory", badge: "NEW" },
 ];
 
 const debugItems = [

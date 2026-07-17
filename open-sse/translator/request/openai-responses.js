@@ -201,6 +201,7 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
   delete result.prompt_cache_key;
   delete result.store;
   delete result.reasoning;
+  delete result.client_metadata;
 
   return result;
 }
@@ -270,13 +271,14 @@ export function openaiToOpenAIResponsesRequest(model, body, stream, credentials)
   const messages = body.messages || [];
 
   for (const msg of messages) {
-    if (msg.role === ROLE.SYSTEM) {
-      // Use first system message as instructions
+    if (msg.role === ROLE.SYSTEM || msg.role === ROLE.DEVELOPER) {
+      // Use the first instruction-bearing message as instructions.
+      // OpenAI recommends role="developer" for GPT-5/Codex as the system-level prompt.
       if (!hasSystemMessage) {
         result.instructions = typeof msg.content === "string" ? msg.content : "";
         hasSystemMessage = true;
       }
-      continue; // Skip system messages in input
+      continue; // Skip instruction messages in input
     }
 
     // Convert user/assistant messages to input items

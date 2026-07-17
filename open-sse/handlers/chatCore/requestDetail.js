@@ -76,6 +76,26 @@ export function buildRequestDetail(base, overrides = {}) {
   };
 }
 
+export function formatDoneLine({ usage, latency }) {
+  const normalizedUsage = usage || {};
+  const inputTokens = normalizedUsage.prompt_tokens ?? normalizedUsage.input_tokens ?? 0;
+  const outputTokens = normalizedUsage.completion_tokens ?? normalizedUsage.output_tokens ?? 0;
+  const cacheRead = normalizedUsage.cache_read_input_tokens
+    ?? normalizedUsage.cached_tokens
+    ?? normalizedUsage.prompt_tokens_details?.cached_tokens
+    ?? 0;
+  const cacheCreate = normalizedUsage.cache_creation_input_tokens ?? 0;
+  let inputSummary = `IN ${inputTokens}`;
+  if (cacheRead || cacheCreate) {
+    const cacheParts = [];
+    if (cacheRead) cacheParts.push(`↻${cacheRead}`);
+    if (cacheCreate) cacheParts.push(`+${cacheCreate}`);
+    inputSummary += ` (CACHE ${cacheParts.join(" ")})`;
+  }
+  const ttftSummary = latency?.ttft ? ` · TTFT ${latency.ttft}ms` : "";
+  return `DONE ${latency?.total ?? 0}ms${ttftSummary} · ${inputSummary} · OUT ${outputTokens}`;
+}
+
 export function saveUsageStats({ provider, model, tokens, connectionId, apiKey, endpoint, label = "USAGE" }) {
   if (!tokens || typeof tokens !== "object") return;
 

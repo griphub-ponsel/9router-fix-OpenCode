@@ -86,7 +86,12 @@ export async function getComboModels(modelStr) {
   // Only check if it's not in provider/model format
   if (modelStr.includes("/")) return null;
 
-  const combo = await getComboByName(modelStr);
+  const aliases = await getModelAliases();
+  const aliasTarget = aliases[modelStr];
+  const comboName = typeof aliasTarget === "string" && !aliasTarget.includes("/")
+    ? aliasTarget
+    : modelStr;
+  const combo = await getComboByName(comboName);
   if (combo && combo.models && combo.models.length > 0) {
     return combo.models;
   }

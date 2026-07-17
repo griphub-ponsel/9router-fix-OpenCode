@@ -129,7 +129,8 @@ function fixMissingToolResponsesOpenAI(messages) {
   }
 }
 
-// Wrap mid-conversation system text so it ends as a user turn (avoids Anthropic prefill 400)
+// Wrap mid-conversation system text so it ends as a user turn (avoids Anthropic prefill 400).
+// Uses <instructions> tags that Claude models treat as authoritative directives.
 function systemReminderText(content) {
   const parts = Array.isArray(content)
     ? content.filter(c => c?.type === CLAUDE_BLOCK.TEXT).map(c => c.text || "")

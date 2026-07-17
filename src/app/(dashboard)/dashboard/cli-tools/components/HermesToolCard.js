@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { Card, Button, ModelSelectModal, ManualConfigModal } from "@/shared/components";
 import Image from "next/image";
 import BaseUrlSelect from "./BaseUrlSelect";
 import ApiKeySelect from "./ApiKeySelect";
 import { matchKnownEndpoint } from "./cliEndpointMatch";
+import { formatCopilotContextSize, getCopilotContextSizeOptions, getCopilotContextTokens } from "@/shared/utils/copilotModelLimits";
 
 const ENDPOINT = "/api/cli-tools/hermes-settings";
 
@@ -31,11 +32,66 @@ export default function HermesToolCard({
   const [message, setMessage] = useState(null);
   const [selectedApiKey, setSelectedApiKey] = useState("");
   const [selectedModel, setSelectedModel] = useState("");
+  const [selectedModels, setSelectedModels] = useState([]);
+  const [modelDisplayNames, setModelDisplayNames] = useState({});
+  const [modelContextLengths, setModelContextLengths] = useState({});
   const [modalOpen, setModalOpen] = useState(false);
   const [modelAliases, setModelAliases] = useState({});
+  const [combos, setCombos] = useState([]);
   const [showManualConfigModal, setShowManualConfigModal] = useState(false);
   const [customBaseUrl, setCustomBaseUrl] = useState("");
+  const [sortKey, setSortKey] = useState("model");
+  const [sortDir, setSortDir] = useState("asc");
+  const [hasHydratedSort, setHasHydratedSort] = useState(false);
   const hasInitializedModel = useRef(false);
+
+  const sortStorageKey = "cliTools:sort:hermes";
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = window.localStorage.getItem(sortStorageKey);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed?.sortKey === "model" || parsed?.sortKey === "displayName") setSortKey(parsed.sortKey);
+        if (parsed?.sortDir === "asc" || parsed?.sortDir === "desc") setSortDir(parsed.sortDir);
+      }
+    } catch {
+      // Ignore corrupt storage.
+    } finally {
+      setHasHydratedSort(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !hasHydratedSort) return;
+    try {
+      window.localStorage.setItem(sortStorageKey, JSON.stringify({ sortKey, sortDir }));
+    } catch {
+      // Ignore unavailable storage.
+    }
+  }, [hasHydratedSort, sortKey, sortDir]);
+
+  const toggleSort = (key) => {
+    if (sortKey === key) {
+      setSortDir((current) => current === "asc" ? "desc" : "asc");
+    } else {
+      setSortKey(key);
+      setSortDir("asc");
+    }
+  };
+
+  const sortedModels = useMemo(() => {
+    const result = [...selectedModels].sort((leftModel, rightModel) => {
+      const left = sortKey === "displayName"
+        ? (modelDisplayNames[leftModel]?.trim() || leftModel)
+        : leftModel;
+      const right = sortKey === "displayName"
+        ? (modelDisplayNames[rightModel]?.trim() || rightModel)
+        : rightModel;
+      return left.localeCompare(right, undefined, { sensitivity: "base" });
+    });
+    return sortDir === "desc" ? result.reverse() : result;
+  }, [selectedModels, modelDisplayNames, sortKey, sortDir]);
 
   const getConfigStatus = () => {
     if (!hermesStatus?.installed) return null;
@@ -62,7 +118,10 @@ export default function HermesToolCard({
       checkStatus();
       fetchModelAliases();
     }
-    if (isExpanded) fetchModelAliases();
+    if (isExpanded) {
+      fetchModelAliases();
+      fetchCombos();
+    }
   }, [isExpanded]);
 
   const fetchModelAliases = async () => {
@@ -75,11 +134,32 @@ export default function HermesToolCard({
     }
   };
 
+  const fetchCombos = async () => {
+    try {
+      const res = await fetch("/api/combos");
+      const data = await res.json();
+      if (res.ok) setCombos(data.combos || []);
+    } catch (error) {
+      console.log("Error fetching combos:", error);
+    }
+  };
+
   useEffect(() => {
     if (hermesStatus?.installed && !hasInitializedModel.current) {
       hasInitializedModel.current = true;
       const cfg = hermesStatus.settings?.model;
-      if (cfg?.default) setSelectedModel(cfg.default);
+      const configuredModels = Array.isArray(hermesStatus.settings?.models)
+        ? hermesStatus.settings.models.filter((model) => typeof model === "string" && model.trim())
+        : [];
+      const defaultModel = cfg?.default || configuredModels[0] || "";
+      setSelectedModel(defaultModel);
+      setSelectedModels([...new Set([defaultModel, ...configuredModels].filter(Boolean))]);
+      setModelDisplayNames(hermesStatus.settings?.modelNames || {});
+      const configuredContextLengths = { ...(hermesStatus.settings?.modelContextLengths || {}) };
+      if (cfg?.context_length && defaultModel && !configuredContextLengths[defaultModel]) {
+        configuredContextLengths[defaultModel] = Number(cfg.context_length);
+      }
+      setModelContextLengths(configuredContextLengths);
     }
   }, [hermesStatus]);
 
@@ -125,6 +205,11 @@ export default function HermesToolCard({
           baseUrl: getEffectiveBaseUrl(),
           apiKey: keyToUse,
           model: selectedModel,
+          models: sortedModels,
+          modelNames: Object.fromEntries(sortedModels.map((model) => [model, modelDisplayNames[model] || model])),
+          modelContextLengths: Object.fromEntries(sortedModels.flatMap((model) => (
+            Number(modelContextLengths[model]) > 0 ? [[model, Number(modelContextLengths[model])]] : []
+          ))),
         }),
       });
       const data = await res.json();
@@ -150,6 +235,9 @@ export default function HermesToolCard({
       if (res.ok) {
         setMessage({ type: "success", text: "Settings reset successfully!" });
         setSelectedModel("");
+        setSelectedModels([]);
+        setModelDisplayNames({});
+        setModelContextLengths({});
         checkStatus();
       } else {
         setMessage({ type: "error", text: data.error || "Failed to reset settings" });
@@ -162,8 +250,27 @@ export default function HermesToolCard({
   };
 
   const handleModelSelect = (model) => {
-    setSelectedModel(model.value);
-    setModalOpen(false);
+    const value = model?.value || model?.name || model;
+    if (!value || selectedModels.includes(value)) return;
+    setSelectedModels((prev) => [...prev, value]);
+    setModelDisplayNames((prev) => ({ ...prev, [value]: model?.name || prev[value] || value }));
+    if (!selectedModel) setSelectedModel(value);
+  };
+
+  const removeModel = (model) => {
+    const nextModels = selectedModels.filter((value) => value !== model);
+    setSelectedModels(nextModels);
+    setModelDisplayNames((prev) => {
+      const next = { ...prev };
+      delete next[model];
+      return next;
+    });
+    setModelContextLengths((prev) => {
+      const next = { ...prev };
+      delete next[model];
+      return next;
+    });
+    if (selectedModel === model) setSelectedModel(nextModels[0] || "");
   };
 
   const getManualConfigs = () => {
@@ -171,7 +278,17 @@ export default function HermesToolCard({
       ? selectedApiKey
       : (!cloudEnabled ? "sk_9router" : "<API_KEY_FROM_DASHBOARD>");
 
-    const yamlContent = `model:\n  default: "${selectedModel || "provider/model-id"}"\n  provider: "custom"\n  base_url: "${getEffectiveBaseUrl()}"\n`;
+    const modelsToShow = sortedModels.length > 0 ? sortedModels : ["provider/model-id"];
+    const defaultModel = selectedModel || modelsToShow[0];
+    const modelEntries = modelsToShow.map((model) => {
+      const displayName = modelDisplayNames[model]?.trim() || model;
+      const contextLength = Number(modelContextLengths[model]);
+      const contextLine = contextLength > 0 ? `\n        context_length: ${contextLength}` : "";
+      if (displayName === model) return contextLine ? `      ${JSON.stringify(model)}:${contextLine}` : `      ${JSON.stringify(model)}: {}`;
+      return `      ${JSON.stringify(displayName)}:\n        target_model: ${JSON.stringify(model)}\n        display_name: ${JSON.stringify(displayName)}${contextLine}`;
+    }).join("\n");
+    const defaultPickerId = modelDisplayNames[defaultModel]?.trim() || defaultModel;
+    const yamlContent = `model:\n  default: ${JSON.stringify(defaultPickerId)}\n  provider: "9router"\n  base_url: ${JSON.stringify(getEffectiveBaseUrl())}\n\nproviders:\n  9router:\n    name: "9Router"\n    base_url: ${JSON.stringify(getEffectiveBaseUrl())}\n    key_env: "OPENAI_API_KEY"\n    transport: "openai_chat"\n    discover_models: false\n    default_model: ${JSON.stringify(defaultPickerId)}\n    models:\n${modelEntries}\n`;
     const envContent = `OPENAI_API_KEY=${keyToUse}\n`;
 
     return [
@@ -262,15 +379,74 @@ export default function HermesToolCard({
                   <ApiKeySelect value={selectedApiKey} onChange={setSelectedApiKey} apiKeys={apiKeys} cloudEnabled={cloudEnabled} />
                 </div>
 
-                <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr_auto] sm:items-center sm:gap-2">
+                <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr] sm:items-start sm:gap-2">
+                  <span className="text-xs font-semibold text-text-main sm:pt-1 sm:text-right sm:text-sm">Models</span>
+                  <span className="material-symbols-outlined hidden text-text-muted text-[14px] sm:mt-1.5 sm:inline">arrow_forward</span>
+                  <div className="flex min-w-0 flex-col gap-2">
+                    {selectedModels.length === 0 ? (
+                      <div className="rounded border border-border bg-surface/40 px-3 py-4 text-center text-xs text-text-muted">No models selected</div>
+                    ) : (
+                      <div className="overflow-hidden rounded border border-border bg-surface/40">
+                        <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_6rem_auto_2rem] items-center gap-2 border-b border-border bg-surface/60 px-3 py-2 text-[11px] font-medium text-text-muted">
+                          <button type="button" onClick={() => toggleSort("model")} className="flex cursor-pointer items-center gap-1 text-left transition-colors hover:text-text-main" title={`Sort by Model ${sortKey === "model" && sortDir === "asc" ? "Z-A" : "A-Z"}`}>
+                            <span>Model</span>
+                            <span className="material-symbols-outlined text-[14px] leading-none">{sortKey === "model" ? (sortDir === "asc" ? "arrow_upward" : "arrow_downward") : "unfold_more"}</span>
+                          </button>
+                          <button type="button" onClick={() => toggleSort("displayName")} className="flex cursor-pointer items-center gap-1 text-left transition-colors hover:text-text-main" title={`Sort by Display Name ${sortKey === "displayName" && sortDir === "asc" ? "Z-A" : "A-Z"}`}>
+                            <span>Display Name</span>
+                            <span className="material-symbols-outlined text-[14px] leading-none">{sortKey === "displayName" ? (sortDir === "asc" ? "arrow_upward" : "arrow_downward") : "unfold_more"}</span>
+                          </button>
+                          <span className="text-center">Context</span>
+                          <span className="text-center">Default</span>
+                          <span></span>
+                        </div>
+                        {sortedModels.map((model) => (
+                          <div key={model} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_6rem_auto_2rem] items-center gap-2 border-b border-border px-3 py-1.5 last:border-b-0 hover:bg-surface/80">
+                            <span className="min-w-0 truncate text-xs text-text-main" title={model}>{model}</span>
+                            <input type="text" value={modelDisplayNames[model] ?? model} onChange={(event) => setModelDisplayNames((prev) => ({ ...prev, [model]: event.target.value }))} className="w-full min-w-0 rounded border border-border bg-surface px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-primary/50" />
+                            <select
+                              value={modelContextLengths[model] || "auto"}
+                              onChange={(event) => setModelContextLengths((prev) => {
+                                const next = { ...prev };
+                                if (event.target.value === "auto") delete next[model];
+                                else next[model] = Number(event.target.value);
+                                return next;
+                              })}
+                              className="w-full rounded border border-border bg-surface px-1.5 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-primary/50"
+                              title="Context window advertised to Hermes"
+                            >
+                              <option value="auto">Auto ({formatCopilotContextSize(getCopilotContextTokens(model, null, combos))})</option>
+                              {getCopilotContextSizeOptions(model, modelContextLengths[model], combos)
+                                .filter((option) => option.value !== getCopilotContextTokens(model, null, combos))
+                                .map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                            </select>
+                            <span className="min-w-12 text-center">{model === selectedModel ? <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">Yes</span> : <span className="text-[10px] text-text-muted">No</span>}</span>
+                            <button onClick={() => removeModel(model)} className="flex size-5 items-center justify-center rounded text-text-muted/50 transition-colors hover:bg-red-500/10 hover:text-red-500" title="Remove model">
+                              <span className="material-symbols-outlined text-[14px]">close</span>
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <div className="flex items-center gap-3">
+                      <button onClick={() => setModalOpen(true)} disabled={!hasActiveProviders} className={`rounded border px-2 py-1 text-xs transition-colors ${hasActiveProviders ? "cursor-pointer border-border bg-surface text-text-main hover:border-primary" : "cursor-not-allowed border-border opacity-50"}`}>Add Model</button>
+                      <span className="text-xs text-text-muted">{selectedModels.length > 0 ? `${selectedModels.length} model${selectedModels.length === 1 ? "" : "s"} selected` : "Select models to add"}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr] sm:items-center sm:gap-2">
                   <span className="text-xs font-semibold text-text-main sm:text-right sm:text-sm">Default Model</span>
                   <span className="material-symbols-outlined hidden text-text-muted text-[14px] sm:inline">arrow_forward</span>
-                  <div className="relative w-full min-w-0">
-                    <input type="text" value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)} placeholder="provider/model-id" className="w-full min-w-0 pl-2 pr-7 py-2 bg-surface rounded border border-border text-xs focus:outline-none focus:ring-1 focus:ring-primary/50 sm:py-1.5" />
-                    {selectedModel && <button onClick={() => setSelectedModel("")} className="absolute right-1 top-1/2 -translate-y-1/2 p-0.5 text-text-muted hover:text-red-500 rounded transition-colors" title="Clear"><span className="material-symbols-outlined text-[14px]">close</span></button>}
-                  </div>
-                  <button onClick={() => setModalOpen(true)} disabled={!hasActiveProviders} className={`w-full sm:w-auto rounded border px-2 py-2 text-xs transition-colors sm:py-1.5 whitespace-nowrap sm:shrink-0 ${hasActiveProviders ? "bg-surface border-border text-text-main hover:border-primary cursor-pointer" : "opacity-50 cursor-not-allowed border-border"}`}>Select</button>
+                  <select value={selectedModel} onChange={(event) => setSelectedModel(event.target.value)} disabled={selectedModels.length === 0} className="w-full min-w-0 rounded border border-border bg-surface px-2 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-50 sm:py-1.5">
+                    {selectedModels.length === 0 && <option value="">Add a model first</option>}
+                    {sortedModels.map((model) => {
+                      const displayName = modelDisplayNames[model]?.trim();
+                      return <option key={model} value={model}>{displayName && displayName !== model ? `${displayName} (${model})` : model}</option>;
+                    })}
+                  </select>
                 </div>
+
               </div>
 
               {message && (
@@ -281,7 +457,7 @@ export default function HermesToolCard({
               )}
 
               <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-                <Button variant="primary" size="sm" onClick={handleApply} disabled={!selectedModel} loading={applying} className="w-full sm:w-auto">
+                <Button variant="primary" size="sm" onClick={handleApply} disabled={!selectedModel || selectedModels.length === 0} loading={applying} className="w-full sm:w-auto">
                   <span className="material-symbols-outlined text-[14px] mr-1">save</span>Apply
                 </Button>
                 <Button variant="outline" size="sm" onClick={handleReset} disabled={!hermesStatus?.has9Router} loading={restoring} className="w-full sm:w-auto">
@@ -300,7 +476,10 @@ export default function HermesToolCard({
         isOpen={modalOpen}
         onClose={() => setModalOpen(false)}
         onSelect={handleModelSelect}
+        onDeselect={(model) => removeModel(model.value)}
         selectedModel={selectedModel}
+        addedModelValues={selectedModels}
+        closeOnSelect={false}
         activeProviders={activeProviders}
         modelAliases={modelAliases}
         title="Select Model for Hermes Agent"

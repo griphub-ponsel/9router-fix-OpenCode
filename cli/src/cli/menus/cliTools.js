@@ -1,5 +1,5 @@
 const api = require("../api/client");
-const { pause, confirm } = require("../utils/input");
+const { pause, confirm, select } = require("../utils/input");
 const { showStatus } = require("../utils/display");
 const { selectModelFromList } = require("../utils/modelSelector");
 const { showMenuWithBack } = require("../utils/menuHelper");
@@ -532,7 +532,10 @@ async function buildHermesHeader() {
   const model = settings?.model || {};
   const lines = [`Status:   ${COLORS.green}✓ Configured${COLORS.reset}`];
   if (model.base_url) lines.push(`Endpoint: ${COLORS.cyan}${model.base_url}${COLORS.reset}`);
-  if (model.default)  lines.push(`Model:    ${COLORS.dim}${model.default}${COLORS.reset}`);
+  if (model.default) lines.push(`Default:  ${COLORS.dim}${model.default}${COLORS.reset}`);
+  if (Array.isArray(settings?.models) && settings.models.length > 0) {
+    lines.push(`Models:   ${COLORS.dim}${settings.models.join(", ")}${COLORS.reset}`);
+  }
   return lines.join("\n");
 }
 
@@ -546,10 +549,24 @@ async function hermesQuickSetup(port) {
     return;
   }
 
-  const model = await selectModelFromList("Select Hermes Model", "", { excludeCombos: true });
-  if (!model) return;
+  const firstModel = await selectModelFromList("Select Hermes Model", "");
+  if (!firstModel) return;
 
-  const result = await api.applyCliToolSettings("hermes", { baseUrl: endpoint, apiKey, model });
+  const models = [firstModel];
+  while (true) {
+    const more = await confirm(`Add another model? (current: ${models.length})`);
+    if (!more) break;
+    const next = await selectModelFromList(`Add Hermes Model #${models.length + 1}`, models.join(", "));
+    if (!next) break;
+    if (!models.includes(next)) models.push(next);
+  }
+
+  const defaultIndex = models.length > 1
+    ? await select("Select the default Hermes model:", models)
+    : 0;
+  const model = models[defaultIndex];
+
+  const result = await api.applyCliToolSettings("hermes", { baseUrl: endpoint, apiKey, model, models });
   showStatus(result.success ? "Hermes setup completed!" : `Failed: ${result.error}`, result.success ? "success" : "error");
   await pause();
 }

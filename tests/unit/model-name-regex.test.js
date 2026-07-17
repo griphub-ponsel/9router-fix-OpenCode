@@ -29,4 +29,26 @@ describe("model name regex fallback (C2)", () => {
     expect(m.id).toBe("glm-5");
     expect(m.name).toBe("GLM 5");
   });
+
+  it("normalizeModelId: dash between digits becomes a dot (version separator)", () => {
+    expect(normalizeModelId("claude-sonnet-4-5")).toBe("claude-sonnet-4.5");
+    expect(normalizeModelId("minimax-m2-5")).toBe("minimax-m2.5");
+    expect(normalizeModelId("deepseek-3-2")).toBe("deepseek-3.2");
+  });
+
+  it("normalizeModelId: preserves word-suffix hyphens (-thinking, -agentic)", () => {
+    expect(normalizeModelId("claude-sonnet-4-5-thinking")).toBe("claude-sonnet-4.5-thinking");
+    expect(normalizeModelId("claude-sonnet-4-5-thinking-agentic")).toBe("claude-sonnet-4.5-thinking-agentic");
+  });
+
+  it("normalizeModelId: leaves ids with no digit-digit hyphen untouched", () => {
+    expect(normalizeModelId("qwen3-coder-next")).toBe("qwen3-coder-next");
+    expect(normalizeModelId("claude-sonnet-5")).toBe("claude-sonnet-5");
+    expect(normalizeModelId("glm-5")).toBe("glm-5");
+  });
+
+  it("normalizeModelId: non-string input passes through", () => {
+    expect(normalizeModelId(undefined)).toBeUndefined();
+    expect(normalizeModelId(null)).toBeNull();
+  });
 });

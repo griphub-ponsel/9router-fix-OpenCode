@@ -174,7 +174,7 @@ const OAUTH_TEST_CONFIG = {
     authPrefix: "Bearer ",
     extraHeaders: {
       Accept: "application/json",
-      "User-Agent": "kimchi/0.0.0",
+      "User-Agent": "kimchi/0.1.40",
     },
     refreshable: false,
   },
@@ -318,7 +318,7 @@ async function refreshOAuthToken(connection) {
       return { accessToken: data.access_token, expiresIn: data.expires_in, refreshToken: data.refresh_token || refreshToken };
     }
 
-    if (provider === "codex" || provider === "grok-cli" || provider === "xai") {
+    if (provider === "codex" || provider === "grok-cli" || provider === "xai" || provider === "xai-oauth") {
       return await refreshProviderCredentials(provider, connection, console);
     }
 

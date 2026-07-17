@@ -6,44 +6,20 @@ import { promisify } from "util";
 import fs from "fs/promises";
 import path from "path";
 import os from "os";
+import { deleteModelAlias, getModelAliases, setModelAlias } from "@/models";
+import {
+  API_KEY_ENV,
+  PROVIDER_NAME,
+  readHermesConfig,
+  removeHermesConfig,
+  writeHermesConfig,
+} from "./configYaml.mjs";
 
 const execAsync = promisify(exec);
-
-const PROVIDER_NAME = "9router";
-const API_KEY_ENV = "OPENAI_API_KEY";
 
 const getHermesDir = () => path.join(os.homedir(), ".hermes");
 const getHermesConfigPath = () => path.join(getHermesDir(), "config.yaml");
 const getHermesEnvPath = () => path.join(getHermesDir(), ".env");
-
-// Match top-level "model:" block (until next non-indented, non-empty line)
-const MODEL_BLOCK_RE = /^model:[ \t]*\r?\n((?:[ \t]+.*\r?\n?|[ \t]*\r?\n)*)/m;
-
-const buildModelBlock = (model, baseUrl) =>
-  `model:\n  default: "${model}"\n  provider: "custom"\n  base_url: "${baseUrl}"\n`;
-
-// Parse current model block back to fields (best-effort, simple key:value)
-const parseModelBlock = (yaml) => {
-  const match = yaml.match(MODEL_BLOCK_RE);
-  if (!match) return null;
-  const body = match[1] || "";
-  const get = (key) => {
-    const m = body.match(new RegExp(`^[ \\t]+${key}:[ \\t]*["']?([^"'\\r\\n]+)["']?`, "m"));
-    return m ? m[1].trim() : null;
-  };
-  return {
-    default: get("default"),
-    provider: get("provider"),
-    base_url: get("base_url"),
-  };
-};
-
-const upsertModelBlock = (yaml, newBlock) => {
-  if (MODEL_BLOCK_RE.test(yaml)) return yaml.replace(MODEL_BLOCK_RE, newBlock);
-  return yaml.length > 0 ? `${newBlock}\n${yaml}` : newBlock;
-};
-
-const removeModelBlock = (yaml) => yaml.replace(MODEL_BLOCK_RE, "").replace(/^\n+/, "");
 
 // .env helpers — upsert/remove single KEY=VALUE line
 const upsertEnvVar = (envText, key, value) => {
@@ -95,8 +71,16 @@ const readEnvFile = async () => {
 // Detect 9router by base_url containing localhost/127.0.0.1 or matching tunnel URL
 const has9RouterConfig = (modelCfg) => {
   if (!modelCfg?.base_url) return false;
-  return modelCfg.provider === "custom" && /localhost|127\.0\.0\.1|0\.0\.0\.0/.test(modelCfg.base_url);
+  return ["custom", PROVIDER_NAME].includes(modelCfg.provider)
+    && /localhost|127\.0\.0\.1|0\.0\.0\.0/.test(modelCfg.base_url);
 };
+
+const getDisplayAliases = (models, modelNames) => Object.fromEntries(
+  models.flatMap((targetModel) => {
+    const displayName = typeof modelNames?.[targetModel] === "string" ? modelNames[targetModel].trim() : "";
+    return displayName && displayName !== targetModel ? [[displayName, targetModel]] : [];
+  })
+);
 
 export async function GET() {
   try {
@@ -105,10 +89,10 @@ export async function GET() {
       return NextResponse.json({ installed: false, settings: null, message: "Hermes Agent is not installed" });
     }
     const yaml = await readConfigYaml();
-    const model = parseModelBlock(yaml);
+    const { model, models, modelNames, modelContextLengths } = readHermesConfig(yaml);
     return NextResponse.json({
       installed: true,
-      settings: { model },
+      settings: { model, models, modelNames, modelContextLengths },
       has9Router: has9RouterConfig(model),
       configPath: getHermesConfigPath(),
     });
@@ -120,9 +104,39 @@ export async function GET() {
 
 export async function POST(request) {
   try {
-    const { baseUrl, apiKey, model } = await request.json();
-    if (!baseUrl || !model) {
-      return NextResponse.json({ error: "baseUrl and model are required" }, { status: 400 });
+    const { baseUrl, apiKey, model, models, modelNames = {}, modelContextLengths = {} } = await request.json();
+    const selectedModels = Array.from(new Set(
+      (Array.isArray(models) ? models : [model])
+        .filter((value) => typeof value === "string" && value.trim())
+        .map((value) => value.trim())
+    ));
+    const defaultModel = typeof model === "string" ? model.trim() : "";
+    if (!baseUrl || !defaultModel || selectedModels.length === 0) {
+      return NextResponse.json({ error: "baseUrl, model, and models are required" }, { status: 400 });
+    }
+    if (!selectedModels.includes(defaultModel)) {
+      return NextResponse.json({ error: "Default model must be included in models" }, { status: 400 });
+    }
+    const normalizedModelContextLengths = {};
+    for (const selectedModel of selectedModels) {
+      const rawContextLength = modelContextLengths?.[selectedModel];
+      if (rawContextLength == null || rawContextLength === "") continue;
+      const contextLength = Number(rawContextLength);
+      if (!Number.isSafeInteger(contextLength) || contextLength < 1024) {
+        return NextResponse.json({ error: `Context length for '${selectedModel}' must be an integer of at least 1024` }, { status: 400 });
+      }
+      normalizedModelContextLengths[selectedModel] = contextLength;
+    }
+
+    const displayAliases = getDisplayAliases(selectedModels, modelNames);
+    const pickerIds = selectedModels.map((targetModel) => (
+      (typeof modelNames?.[targetModel] === "string" && modelNames[targetModel].trim()) || targetModel
+    ));
+    if (Object.keys(displayAliases).some((displayName) => displayName.includes("/"))) {
+      return NextResponse.json({ error: "Hermes display names cannot contain '/'" }, { status: 400 });
+    }
+    if (new Set(pickerIds).size !== pickerIds.length) {
+      return NextResponse.json({ error: "Hermes display names must be unique" }, { status: 400 });
     }
 
     const dir = getHermesDir();
@@ -132,7 +146,32 @@ export async function POST(request) {
 
     // Update config.yaml — replace/insert model: block, keep everything else
     const existingYaml = await readConfigYaml();
-    const newYaml = upsertModelBlock(existingYaml, buildModelBlock(model, normalizedBaseUrl));
+    const previousConfig = readHermesConfig(existingYaml);
+    const previousDisplayAliases = getDisplayAliases(previousConfig.models, previousConfig.modelNames);
+    const existingAliases = await getModelAliases();
+    const conflict = Object.entries(displayAliases).find(
+      ([displayName, targetModel]) => existingAliases[displayName] && existingAliases[displayName] !== targetModel
+    );
+    if (conflict) {
+      return NextResponse.json({ error: `Display name '${conflict[0]}' is already used by another model` }, { status: 409 });
+    }
+
+    for (const [displayName, targetModel] of Object.entries(previousDisplayAliases)) {
+      if (!displayAliases[displayName] && existingAliases[displayName] === targetModel) {
+        await deleteModelAlias(displayName);
+      }
+    }
+    for (const [displayName, targetModel] of Object.entries(displayAliases)) {
+      await setModelAlias(displayName, targetModel);
+    }
+
+    const newYaml = writeHermesConfig(existingYaml, {
+      models: selectedModels,
+      modelNames,
+      modelContextLengths: normalizedModelContextLengths,
+      defaultModel,
+      baseUrl: normalizedBaseUrl,
+    });
     await fs.writeFile(getHermesConfigPath(), newYaml);
 
     // Update .env — upsert OPENAI_API_KEY only when caller provides one
@@ -165,7 +204,15 @@ export async function DELETE() {
       }
       throw error;
     }
-    const newYaml = removeModelBlock(yaml);
+    const existingConfig = readHermesConfig(yaml);
+    const displayAliases = getDisplayAliases(existingConfig.models, existingConfig.modelNames);
+    const existingAliases = await getModelAliases();
+    for (const [displayName, targetModel] of Object.entries(displayAliases)) {
+      if (existingAliases[displayName] === targetModel) {
+        await deleteModelAlias(displayName);
+      }
+    }
+    const newYaml = removeHermesConfig(yaml);
     await fs.writeFile(configPath, newYaml);
     return NextResponse.json({ success: true, message: `${PROVIDER_NAME} model block removed` });
   } catch (error) {

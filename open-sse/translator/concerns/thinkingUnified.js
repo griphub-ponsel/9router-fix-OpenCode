@@ -132,6 +132,15 @@ function toGeminiThinkingLevel(cfg) {
   return effortToThinkingLevel(raw);
 }
 
+function toKimiReasoningEffort(cfg) {
+  const level = toLevel(cfg);
+  if (level === "auto") return "high";
+  if (level === "minimal") return "low";
+  if (level === "xhigh") return "max";
+  if (["low", "medium", "high", "max"].includes(level)) return level;
+  return null;
+}
+
 const GEMINI_LEVEL_OUTPUT_FLOOR = {
   minimal: 4096,
   low: 8192,
@@ -203,6 +212,7 @@ function applyFormat(fmt, body, cfg, caps, model) {
     }
     case "claude-adaptive": {
       if (none && canDisable) { body.thinking = { type: "disabled" }; break; }
+      body.thinking = { type: "adaptive" };
       const level = toLevel(eff);
       // Anthropic output_config.effort only accepts low|medium|high — clamp xhigh/max → high.
       body.output_config = { effort: level === "xhigh" || level === "max" ? "high" : level };
@@ -250,8 +260,8 @@ function applyFormat(fmt, body, cfg, caps, model) {
     }
     case "kimi": {
       if (none && canDisable) { body.thinking = { type: "disabled" }; break; }
-      const level = toLevel(eff);
-      if (level) body.reasoning_effort = level === "max" ? "high" : level;
+      const effort = toKimiReasoningEffort(eff);
+      if (effort) body.reasoning_effort = effort;
       break;
     }
     case "minimax": {

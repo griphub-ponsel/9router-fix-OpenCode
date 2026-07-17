@@ -299,7 +299,14 @@ function shouldExtract(sessionId, turns, config) {
  * fire-and-forget in production (see scheduleAutoMemoryExtraction).
  */
 async function runAutoMemoryExtraction(body = {}, context = {}, overrides = {}) {
-  const config = { ...DEFAULTS, ...overrides };
+  const inheritedModel = context.provider && context.model
+    ? `${context.provider}/${context.model}`
+    : '';
+  const config = {
+    ...DEFAULTS,
+    ...(DEFAULTS.model === 'auto' && inheritedModel ? { model: inheritedModel } : {}),
+    ...overrides
+  };
   if (!config.enabled) return { ran: false, reason: 'disabled' };
 
   const turns = getConversationTurns(body, config);

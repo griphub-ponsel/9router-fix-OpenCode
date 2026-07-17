@@ -10,12 +10,15 @@ async function setupDb() {
   process.env.DATA_DIR = tempDir;
   vi.resetModules();
 
-  const { createProviderNode } = await import("@/models/index.js");
-  const { getModelInfo } = await import("@/sse/services/model.js");
+  const { createCombo, createProviderNode, setModelAlias } = await import("@/models/index.js");
+  const { getComboModels, getModelInfo } = await import("@/sse/services/model.js");
 
   return {
+    createCombo,
     createProviderNode,
+    getComboModels,
     getModelInfo,
+    setModelAlias,
     cleanup() {
       fs.rmSync(tempDir, { recursive: true, force: true });
     },
@@ -76,5 +79,20 @@ describe("model routing", () => {
         provider: "openai-compatible-chat-test",
         model: "gpt-image-1",
       });
+  });
+
+  it("resolves a friendly model alias to a combo", async () => {
+    const ctx = await setupDb();
+    cleanup = ctx.cleanup;
+
+    await ctx.createCombo({
+      name: "deepseek-v4",
+      models: ["or/deepseek-v4", "cl/deepseek-v4"],
+      kind: "fallback",
+    });
+    await ctx.setModelAlias("DeepSeek V4 Auto", "deepseek-v4");
+
+    await expect(ctx.getComboModels("DeepSeek V4 Auto"))
+      .resolves.toEqual(["or/deepseek-v4", "cl/deepseek-v4"]);
   });
 });
