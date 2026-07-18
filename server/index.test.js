@@ -3,7 +3,18 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { clearConsoleLogs, getConsoleLogs } from '../src/lib/consoleLogBuffer.js';
 import { createServer } from './index.js';
+
+test('captures console output as soon as the Express server is created', () => {
+  clearConsoleLogs();
+  createServer({ securityMiddleware: (request, response, next) => next() });
+
+  const marker = `express-bootstrap-log-${Date.now()}`;
+  console.log(marker);
+
+  assert.ok(getConsoleLogs().includes(marker));
+});
 
 test('serves the SPA for frontend routes without falling back for API routes', async (t) => {
   const workingDirectory = await mkdtemp(join(tmpdir(), '9router-spa-'));

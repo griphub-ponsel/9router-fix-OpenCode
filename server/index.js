@@ -1,10 +1,12 @@
 import express from 'express';
 import { resolve } from 'node:path';
+import { initConsoleLogCapture } from '../src/lib/consoleLogBuffer.js';
 import { createRouteAdapter } from './adapter.js';
 import { createRouteDiscovery } from './route-discovery.js';
 import { createSecurityMiddleware } from './security.js';
 
 export function createServer({ securityMiddleware = createSecurityMiddleware() } = {}) {
+  initConsoleLogCapture();
   const app = express();
   const clientDirectory = resolve(process.cwd(), 'dist');
   app.disable('x-powered-by');
