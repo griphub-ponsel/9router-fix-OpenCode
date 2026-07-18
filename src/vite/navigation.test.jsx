@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+// React is required by tsx's classic JSX transform in this node:test file.
+// eslint-disable-next-line no-unused-vars
 import React, { lazy, Suspense } from 'react';
 import { JSDOM } from 'jsdom';
 import { createRoot } from 'react-dom/client';
