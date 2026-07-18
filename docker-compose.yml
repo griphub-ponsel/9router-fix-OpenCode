@@ -15,6 +15,7 @@ services:
       HOSTNAME: "0.0.0.0"
       NODE_ENV: production
       HEADROOM_URL: http://headroom:8787
+    command: node dist-server/index.js
     depends_on:
       - headroom
 

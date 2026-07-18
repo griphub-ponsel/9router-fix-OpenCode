@@ -38,6 +38,10 @@ const systemItems = [
   { href: "/dashboard/skills", label: "Skills", icon: "extension" },
 ];
 
+const NAV_ROW_CLASS = "flex min-h-9 w-full items-center gap-3 rounded-lg px-3 py-1.5 text-left transition-all group";
+const NAV_ICON_CLASS = "material-symbols-outlined flex h-5 w-5 shrink-0 items-center justify-center text-center text-[18px] leading-none";
+const NAV_LABEL_CLASS = "min-w-0 flex-1 text-left text-[13px] font-medium leading-5";
+
 export default function Sidebar({ onClose }) {
   const pathname = usePathname();
   const [mediaOpen, setMediaOpen] = useState(false);
@@ -119,8 +123,8 @@ export default function Sidebar({ onClose }) {
         {/* Logo */}
         <div className="px-6 py-4 flex flex-col gap-2">
           <Link href="/dashboard" className="flex items-center gap-3">
-            <div className="flex items-center justify-center size-9 rounded-[10px] bg-gradient-to-br from-brand-500 to-brand-700 shadow-[var(--shadow-warm)]">
-              <span className="material-symbols-outlined text-white text-[20px]">hub</span>
+            <div className="flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-[10px] shadow-[var(--shadow-warm)]">
+              <img src="/favicon.svg" alt="9Router logo" className="h-full w-full object-cover" />
             </div>
             <div className="flex flex-col">
               <h1 className="text-lg font-semibold tracking-tight text-text-main">
@@ -163,7 +167,7 @@ export default function Sidebar({ onClose }) {
               href={item.href}
               onClick={onClose}
               className={cn(
-                "flex items-center gap-3 px-3 py-1 rounded-lg transition-all group",
+                NAV_ROW_CLASS,
                 isActive(item.href)
                   ? "bg-primary/10 text-primary"
                   : "text-text-muted hover:bg-surface-2 hover:text-text-main"
@@ -171,13 +175,13 @@ export default function Sidebar({ onClose }) {
             >
               <span
                 className={cn(
-                  "material-symbols-outlined text-[18px]",
+                  NAV_ICON_CLASS,
                   isActive(item.href) ? "fill-1" : "group-hover:text-primary transition-colors"
                 )}
               >
                 {item.icon}
               </span>
-              <span className="text-[13px] font-medium">{item.label}</span>
+              <span className={NAV_LABEL_CLASS}>{item.label}</span>
             </Link>
           ))}
 
@@ -191,15 +195,15 @@ export default function Sidebar({ onClose }) {
             <button
               onClick={() => setMediaOpen((v) => !v)}
               className={cn(
-                "w-full flex items-center gap-3 px-3 py-1 rounded-lg transition-all group",
+                NAV_ROW_CLASS,
                 pathname.startsWith("/dashboard/media-providers")
                   ? "bg-primary/10 text-primary"
                   : "text-text-muted hover:bg-surface-2 hover:text-text-main"
               )}
             >
-              <span className="material-symbols-outlined text-[18px]">perm_media</span>
-              <span className="text-[13px] font-medium flex-1 text-left">Media Providers</span>
-              <span className="material-symbols-outlined text-[14px] transition-transform" style={{ transform: mediaOpen ? "rotate(180deg)" : "rotate(0deg)" }}>
+              <span className={NAV_ICON_CLASS}>perm_media</span>
+              <span className={NAV_LABEL_CLASS}>Media Providers</span>
+              <span className="material-symbols-outlined flex h-5 w-5 shrink-0 items-center justify-center text-[14px] leading-none transition-transform" style={{ transform: mediaOpen ? "rotate(180deg)" : "rotate(0deg)" }}>
                 expand_more
               </span>
             </button>
@@ -244,7 +248,7 @@ export default function Sidebar({ onClose }) {
                 href={item.href}
                 onClick={onClose}
                 className={cn(
-                  "flex items-center gap-3 px-3 py-1 rounded-lg transition-all group",
+                  NAV_ROW_CLASS,
                   isActive(item.href)
                     ? "bg-primary/10 text-primary"
                     : "text-text-muted hover:bg-surface-2 hover:text-text-main"
@@ -252,13 +256,13 @@ export default function Sidebar({ onClose }) {
               >
                 <span
                   className={cn(
-                    "material-symbols-outlined text-[18px]",
+                    NAV_ICON_CLASS,
                     isActive(item.href) ? "fill-1" : "group-hover:text-primary transition-colors"
                   )}
                 >
                   {item.icon}
                 </span>
-                <span className="text-[13px] font-medium">{item.label}</span>
+                <span className={NAV_LABEL_CLASS}>{item.label}</span>
               </Link>
             ))}
 
@@ -271,7 +275,7 @@ export default function Sidebar({ onClose }) {
                   href={item.href}
                   onClick={onClose}
                   className={cn(
-                    "flex items-center gap-3 px-3 py-1 rounded-lg transition-all group",
+                    NAV_ROW_CLASS,
                     isActive(item.href)
                       ? "bg-primary/10 text-primary"
                       : "text-text-muted hover:bg-surface-2 hover:text-text-main"
@@ -279,13 +283,13 @@ export default function Sidebar({ onClose }) {
                 >
                   <span
                     className={cn(
-                      "material-symbols-outlined text-[18px]",
+                      NAV_ICON_CLASS,
                       isActive(item.href) ? "fill-1" : "group-hover:text-primary transition-colors"
                     )}
                   >
                     {item.icon}
                   </span>
-                  <span className="text-[13px] font-medium">{item.label}</span>
+                  <span className={NAV_LABEL_CLASS}>{item.label}</span>
                 </Link>
               ) : null;
             })}
@@ -294,14 +298,14 @@ export default function Sidebar({ onClose }) {
             <button
               onClick={() => setShowRemoteModal(true)}
               className={cn(
-                "flex items-center gap-3 px-3 py-1 rounded-lg transition-all group w-full",
+                NAV_ROW_CLASS,
                 "text-text-muted hover:bg-surface-2 hover:text-text-main"
               )}
             >
-              <span className="material-symbols-outlined text-[18px] group-hover:text-primary transition-colors">
+              <span className={`${NAV_ICON_CLASS} group-hover:text-primary transition-colors`}>
                 computer
               </span>
-              <span className="text-[13px] font-medium">Remote</span>
+              <span className={NAV_LABEL_CLASS}>Remote</span>
             </button>
 
             {/* Settings */}
@@ -309,7 +313,7 @@ export default function Sidebar({ onClose }) {
               href="/dashboard/profile"
               onClick={onClose}
               className={cn(
-                "flex items-center gap-3 px-3 py-1 rounded-lg transition-all group",
+                NAV_ROW_CLASS,
                 isActive("/dashboard/profile")
                   ? "bg-primary/10 text-primary"
                   : "text-text-muted hover:bg-surface-2 hover:text-text-main"
@@ -317,13 +321,13 @@ export default function Sidebar({ onClose }) {
             >
               <span
                 className={cn(
-                  "material-symbols-outlined text-[18px]",
+                  NAV_ICON_CLASS,
                   isActive("/dashboard/profile") ? "fill-1" : "group-hover:text-primary transition-colors"
                 )}
               >
                 settings
               </span>
-              <span className="text-[13px] font-medium">Settings</span>
+              <span className={NAV_LABEL_CLASS}>Settings</span>
             </Link>
           </div>
         </nav>

@@ -9,8 +9,6 @@ const appDir = path.resolve(cliDir, "..");
 const rootDir = path.resolve(appDir, "..");
 const cliAppDir = process.env.NINEROUTER_CLI_APP_DIR || path.join(cliDir, "app");
 const buildHomeDir = path.join(cliDir, ".build-home");
-const buildDistDirName = ".next-cli-build";
-const buildDistDir = path.join(appDir, buildDistDirName);
 
 // Exclude patterns for files/folders we don't want to copy
 const EXCLUDE_PATTERNS = [
@@ -116,7 +114,7 @@ function removeDirForRebuild(dir) {
   }
 }
 
-console.log("📦 Building 9Router CLI package with Next.js...\n");
+console.log("📦 Building 9Router CLI package...\n");
 
 fs.mkdirSync(buildHomeDir, { recursive: true });
 fs.mkdirSync(path.join(buildHomeDir, "AppData", "Roaming"), { recursive: true });
@@ -135,8 +133,8 @@ if (appPkg.version !== cliPkg.version) {
   console.log(`✅ Version already synced: ${cliPkg.version}\n`);
 }
 
-// Step 1: Build app with Next.js (workspace tracing root → traced node_modules in standalone).
-console.log("1️⃣  Building Next.js app...");
+// Step 1: Build the Vite client and Express API server.
+console.log("1️⃣  Building application...");
 try {
   execSync("npm run build", {
     stdio: "inherit",
@@ -147,13 +145,11 @@ try {
       USERPROFILE: buildHomeDir,
       APPDATA: path.join(buildHomeDir, "AppData", "Roaming"),
       LOCALAPPDATA: path.join(buildHomeDir, "AppData", "Local"),
-      NEXT_DIST_DIR: buildDistDirName,
-      NEXT_TRACING_ROOT_MODE: "workspace",
     }
   });
-  console.log("✅ Next.js build completed\n");
+  console.log("✅ Application build completed\n");
 } catch (error) {
-  console.error("❌ Next.js build failed");
+  console.error("❌ Application build failed");
   process.exit(1);
 }
 
@@ -163,52 +159,48 @@ removeDirForRebuild(cliAppDir);
 fs.mkdirSync(cliAppDir, { recursive: true });
 console.log("✅ Cleaned\n");
 
-// Step 3: Copy Next.js standalone build to app/cli/app.
-// Newer Next.js standalone output writes server.js/package.json plus .next/, src/, and
-// node_modules/ directly under .next/standalone. Older builds may still use a nested app/.
-console.log("3️⃣  Copying Next.js standalone build to app/cli/app...");
-const standaloneRoot = path.join(appDir, ".next", "standalone");
-const standaloneRootResolved = path.join(buildDistDir, "standalone");
-let standaloneRootToUse = fs.existsSync(standaloneRootResolved) ? standaloneRootResolved : standaloneRoot;
-// Next.js 16 nests standalone output under the project name when NEXT_TRACING_ROOT_MODE=workspace
-// e.g. .next-cli-build/standalone/9router/server.js
-const pkgName = path.basename(appDir);
-const nestedRoot = path.join(standaloneRootToUse, pkgName);
-if (fs.existsSync(path.join(nestedRoot, "server.js")) && !fs.existsSync(path.join(standaloneRootToUse, "server.js"))) {
-  console.log(`ℹ️  Detected nested standalone output: ${pkgName}/`);
-  standaloneRootToUse = nestedRoot;
+// Step 3: Copy the Vite client and bundled Express server.
+console.log("3️⃣  Copying production build to app/cli/app...");
+for (const directory of ["dist", "dist-server"]) {
+  const source = path.join(appDir, directory);
+  if (!fs.existsSync(source)) {
+    console.error(`❌ ${directory} build output not found`);
+    process.exit(1);
+  }
+  copyRecursive(source, path.join(cliAppDir, directory));
 }
-const standaloneApp = fs.existsSync(path.join(standaloneRootToUse, "server.js"))
-  ? standaloneRootToUse
-  : path.join(standaloneRootToUse, "app");
-if (!fs.existsSync(standaloneApp)) {
-  console.error("❌ Next.js standalone build not found under .next/standalone");
-  console.error("Expected either .next/standalone/server.js or .next/standalone/app/");
+if (!fs.existsSync(path.join(cliAppDir, "dist-server", "index.js"))) {
+  console.error("❌ dist-server/index.js not found");
   process.exit(1);
 }
-copyRecursive(standaloneApp, cliAppDir);
+console.log("✅ Copied production build\n");
 
-// Older nested-app layout stores traced node_modules at standalone root.
-const standaloneNodeModules = path.join(standaloneRootToUse, "node_modules");
-if (standaloneApp !== standaloneRootToUse && fs.existsSync(standaloneNodeModules)) {
-  copyRecursive(standaloneNodeModules, path.join(cliAppDir, "node_modules"));
-}
-console.log("✅ Copied standalone build\n");
-
-// Step 3a: Copy custom server (injects real socket IP, strips spoofable XFF).
-const customServerSrc = path.join(appDir, "custom-server.js");
-if (fs.existsSync(customServerSrc)) {
-  fs.copyFileSync(customServerSrc, path.join(cliAppDir, "custom-server.js"));
-  console.log("✅ Copied custom-server.js\n");
-} else {
-  console.warn("⚠️  custom-server.js not found — server will run without real-IP injection\n");
-}
-
-// Step 3b: Ensure sql.js (pure JS fallback) bundled in app/cli/app/node_modules.
+// Step 3b: Bundle runtime dependencies required by the external server build.
 // Strip better-sqlite3 (native) — it lives in ~/.9router/runtime to avoid
 // Windows EBUSY during global CLI updates. node:sqlite (Node ≥22.5) is also
 // available as a no-install middle tier.
-console.log("3️⃣ b Configuring SQLite drivers...");
+console.log("3️⃣ b Installing production runtime dependencies...");
+const runtimeDependenciesPath = path.join(appDir, "dist-server", "runtime-dependencies.json");
+if (!fs.existsSync(runtimeDependenciesPath)) {
+  console.error("❌ dist-server/runtime-dependencies.json not found");
+  process.exit(1);
+}
+const runtimeDependencies = JSON.parse(fs.readFileSync(runtimeDependenciesPath, "utf8"));
+delete runtimeDependencies["better-sqlite3"];
+const runtimePackage = {
+  private: true,
+  dependencies: runtimeDependencies,
+};
+fs.writeFileSync(path.join(cliAppDir, "package.json"), JSON.stringify(runtimePackage, null, 2) + "\n");
+try {
+  execSync("npm install --omit=dev --ignore-scripts --legacy-peer-deps --no-audit --no-fund", {
+    stdio: "inherit",
+    cwd: cliAppDir,
+  });
+} catch {
+  console.error("❌ Failed to install production runtime dependencies");
+  process.exit(1);
+}
 function ensureModuleInBundle(pkg) {
   const dest = path.join(cliAppDir, "node_modules", pkg);
   if (fs.existsSync(dest)) {
@@ -236,43 +228,8 @@ if (fs.existsSync(betterDir)) {
 }
 console.log("");
 
-// Step 4: Copy static files
-console.log("4️⃣  Copying static files...");
-const staticSrc = path.join(appDir, ".next", "static");
-const staticSrcResolved = path.join(buildDistDir, "static");
-const staticDest = path.join(cliAppDir, buildDistDirName, "static");
-if (fs.existsSync(staticSrcResolved) || fs.existsSync(staticSrc)) {
-  copyRecursive(fs.existsSync(staticSrcResolved) ? staticSrcResolved : staticSrc, staticDest);
-  console.log("✅ Copied static files\n");
-} else {
-  console.log("⏭️  No static files found\n");
-}
-
-// Step 5: Copy public folder if exists
-console.log("5️⃣  Copying public folder...");
-const publicSrc = path.join(appDir, "public");
-const publicDest = path.join(cliAppDir, "public");
-if (fs.existsSync(publicSrc)) {
-  copyRecursive(publicSrc, publicDest);
-  console.log("✅ Copied public folder\n");
-} else {
-  console.log("⏭️  No public folder found\n");
-}
-
-// Step 6: Copy vendor-chunks (required for production)
-console.log("6️⃣  Copying vendor-chunks...");
-const vendorChunksSrc = path.join(appDir, ".next", "server", "vendor-chunks");
-const vendorChunksSrcResolved = path.join(buildDistDir, "server", "vendor-chunks");
-const vendorChunksDest = path.join(cliAppDir, buildDistDirName, "server", "vendor-chunks");
-if (fs.existsSync(vendorChunksSrcResolved) || fs.existsSync(vendorChunksSrc)) {
-  copyRecursive(fs.existsSync(vendorChunksSrcResolved) ? vendorChunksSrcResolved : vendorChunksSrc, vendorChunksDest);
-  console.log("✅ Copied vendor-chunks\n");
-} else {
-  console.log("⏭️  No vendor-chunks found\n");
-}
-
-// Step 7: Copy MITM server files (not bundled by Next.js standalone)
-console.log("7️⃣  Copying MITM server files...");
+// Step 4: Copy MITM server files.
+console.log("4️⃣  Copying MITM server files...");
 const mitmSrc = path.join(appDir, "src", "mitm");
 const mitmDest = path.join(cliAppDir, "src", "mitm");
 if (fs.existsSync(mitmSrc)) {
@@ -282,8 +239,8 @@ if (fs.existsSync(mitmSrc)) {
   console.log("⏭️  No MITM files found\n");
 }
 
-// Step 7b: Copy standalone updater (headless Node process for install progress)
-console.log("7️⃣ b Copying updater files...");
+// Step 4b: Copy standalone updater (headless Node process for install progress)
+console.log("4️⃣ b Copying updater files...");
 const updaterSrc = path.join(appDir, "src", "lib", "updater");
 const updaterDest = path.join(cliAppDir, "src", "lib", "updater");
 if (fs.existsSync(updaterSrc)) {
@@ -293,8 +250,8 @@ if (fs.existsSync(updaterSrc)) {
   console.log("⏭️  No updater files found\n");
 }
 
-// Step 8: Build MITM server (config driven - see app/cli/scripts/buildMitm.js)
-console.log("8️⃣  Building MITM server...");
+// Step 5: Build MITM server (config driven - see app/cli/scripts/buildMitm.js)
+console.log("5️⃣  Building MITM server...");
 try {
   execSync("node scripts/buildMitm.js", { stdio: "inherit", cwd: cliDir });
   console.log("✅ MITM server build completed\n");

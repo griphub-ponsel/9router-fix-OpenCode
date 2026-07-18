@@ -292,28 +292,34 @@ export async function POST(request) {
     };
     parsed.model_reasoning_effort = normalizedReasoningEfforts[selectedActiveModel];
 
+    // Commit the two sources of truth FIRST — the model catalog (display names)
+    // and the merged config.toml. These must never be blocked by the optional
+    // client-version probe below, which can hang on a slow/absent Codex binary.
     await fs.writeFile(getCodexCatalogPath(), JSON.stringify(catalog, null, 2));
+    const configContent = stringifyTOML(parsed);
+    await fs.writeFile(configPath, configContent);
 
     // Codex Desktop creates a per-thread config lock that intentionally clears
     // model_catalog_json. Its model manager then falls back to models_cache.json.
     // Seed that cache with the same catalog and Desktop runtime version so
     // locked/new threads still resolve display names instead of "Custom".
-    const codexClientVersion = await detectCodexClientVersion();
+    // This is best-effort: detectCodexClientVersion() shells out to `codex
+    // --version`, which can hang on a cold/absent install — so it runs after the
+    // real config is committed and any failure is swallowed.
+    const codexClientVersion = await detectCodexClientVersion().catch(() => null);
     if (codexClientVersion) {
-      await fs.writeFile(getCodexModelsCachePath(), JSON.stringify({
-        // Codex gives this cache a five-minute TTL. 9Router's catalog is
-        // regenerated explicitly by Apply Settings, so keep it authoritative
-        // between launches instead of reverting locked threads to "Custom".
-        fetched_at: "9999-12-31T23:59:59Z",
-        etag: null,
-        client_version: codexClientVersion,
-        models: catalog.models,
-      }, null, 2));
+      try {
+        await fs.writeFile(getCodexModelsCachePath(), JSON.stringify({
+          // Codex gives this cache a five-minute TTL. 9Router's catalog is
+          // regenerated explicitly by Apply Settings, so keep it authoritative
+          // between launches instead of reverting locked threads to "Custom".
+          fetched_at: "9999-12-31T23:59:59Z",
+          etag: null,
+          client_version: codexClientVersion,
+          models: catalog.models,
+        }, null, 2));
+      } catch { /* models_cache seed is optional — config already committed */ }
     }
-
-    // Write merged config
-    const configContent = stringifyTOML(parsed);
-    await fs.writeFile(configPath, configContent);
 
     // Update auth.json with OPENAI_API_KEY (Codex reads this first)
     const authPath = getCodexAuthPath();

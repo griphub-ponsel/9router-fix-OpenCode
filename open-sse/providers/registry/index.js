@@ -15,6 +15,7 @@ import p12 from "./cerebras.js";
 import p13 from "./chutes.js";
 import p14 from "./claude.js";
 import p15 from "./cline.js";
+import pClinepass from "./clinepass.js";
 import p16 from "./cloudflare-ai.js";
 import p17 from "./codebuddy-cn.js";
 import p18 from "./codex.js";
@@ -198,6 +199,7 @@ export default [
   p94,
   pMeta,
   pGrokCli,
+  pClinepass,
   pXaiOauth,
   pMerlin
 ];

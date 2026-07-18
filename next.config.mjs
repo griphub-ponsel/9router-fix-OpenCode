@@ -13,6 +13,14 @@ const proxyClientMaxBodySize = process.env.NINEROUTER_PROXY_CLIENT_MAX_BODY_SIZE
 const nextConfig = {
   distDir: process.env.NEXT_DIST_DIR || ".next",
   output: "standalone",
+  // Allow phone/LAN access in `next dev` (Next 15.2+/16 blocks cross-origin
+  // /_next/* + HMR unless the host is listed here). Include common LAN IPs.
+  allowedDevOrigins: [
+    "192.168.18.149",
+    "http://192.168.18.149:20128",
+    "127.0.0.1",
+    "localhost",
+  ],
   // Keep native/optional runtime packages out of Turbopack's server graph.
   // cloakbrowser lazy-loads optional playwright-core only when ZCode launches;
   // bundling it eagerly makes unrelated API routes fail during development.

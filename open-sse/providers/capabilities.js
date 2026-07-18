@@ -104,6 +104,7 @@ export const MODEL_CAPABILITIES = {
   "qwen-3.7-max":      { vision: true, videoInput: true, reasoning: true, thinkingFormat: "qwen", contextWindow: 1000000, maxOutput: 65536 },
   "kimi-k2.7":         { vision: true, pdf: true, reasoning: true, thinkingFormat: "kimi", thinkingCanDisable: false, contextWindow: 262144, maxOutput: 262144 },
   "kimi-k2.7-code":    { vision: true, pdf: true, reasoning: true, thinkingFormat: "kimi", thinkingCanDisable: false, contextWindow: 262144, maxOutput: 262144 },
+  "kimi-k3":           { vision: true, pdf: true, reasoning: true, thinkingFormat: "kimi", contextWindow: 262144, maxOutput: 262144 },
   "minimax-m3":        { vision: true, videoInput: true, pdf: true, reasoning: true, thinkingFormat: "minimax", contextWindow: 1000000, maxOutput: 512000 },
   // NOTE: minimax-m2.7 is TEXT-ONLY (matches *minimax-m2.7* pattern below). It
   // previously carried vision:true here, which skipped vision delegation and
@@ -233,6 +234,7 @@ export const PATTERN_CAPABILITIES = [
   { pattern: "*qwen*",          caps: { reasoning: true, thinkingFormat: "qwen", contextWindow: 262144 } },
 
   // ── Kimi (enabled→reasoning_effort; K2.7-code cannot disable) ─────
+  { pattern: "*kimi*k3*",       caps: { vision: true, pdf: true, reasoning: true, thinkingFormat: "kimi", contextWindow: 262144, maxOutput: 262144 } },
   { pattern: "*kimi*k2.7*code*", caps: { vision: true, reasoning: true, thinkingFormat: "kimi", thinkingCanDisable: false, contextWindow: 262144, maxOutput: 262144 } },
   { pattern: "*kimi*k2*",       caps: { vision: true, reasoning: true, thinkingFormat: "kimi", contextWindow: 262144, maxOutput: 262144 } },
   { pattern: "*kimi*",          caps: { reasoning: true, thinkingFormat: "kimi", contextWindow: 262144 } },

@@ -30,8 +30,9 @@ const ALLOWED_MODELS = "griphubrouter_models_placeholder".length > 0 ? [
   "cl/anthropic/claude-opus-4.8", "cl/anthropic/claude-sonnet-4.6", "kr/claude-opus-4.8", "kr/claude-sonnet-5", "kr/claude-sonnet-4.5",
   // Gemini
   "ag/gemini-3-flash-agent", "ag/gemini-3.5-flash-low", "ag/gemini-pro-agent", "ag/gemini-3.1-pro-low",
-  // CodeBuddy / Misc
+  // CodeBuddy / ClinePass / CommandCode / Misc
   "cbcn/deepseek-v4-pro", "cbcn/deepseek-v4-flash", "cbcn/kimi-k2.7",
+  "kimi-k3", "cline-pass/kimi-k3", "moonshotai/kimi-k3",
   // Ollama local
   "ollama-local/llama3.2:3b", "ollama-local/qwen2.5:7b", "ollama-local/qwen2.5-coder:7b",
 ] : [];

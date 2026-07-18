@@ -21,6 +21,9 @@ cli/.build-home/
 product
 # production
 /build
+/dist/
+/dist-server/
+/.logs/
 .idea/
 
 # misc

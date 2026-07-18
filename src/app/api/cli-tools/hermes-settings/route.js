@@ -12,8 +12,12 @@ import {
   PROVIDER_NAME,
   readHermesConfig,
   removeHermesConfig,
-  writeHermesConfig,
 } from "./configYaml.mjs";
+import {
+  resolveHermesContextLengths,
+  syncHermesProfileConfigs,
+} from "./profileSync.mjs";
+import { buildModelsList } from "../../v1/models/route.js";
 
 const execAsync = promisify(exec);
 
@@ -89,10 +93,10 @@ export async function GET() {
       return NextResponse.json({ installed: false, settings: null, message: "Hermes Agent is not installed" });
     }
     const yaml = await readConfigYaml();
-    const { model, models, modelNames, modelContextLengths } = readHermesConfig(yaml);
+    const { model, models, modelNames, modelContextLengths, delegation } = readHermesConfig(yaml);
     return NextResponse.json({
       installed: true,
-      settings: { model, models, modelNames, modelContextLengths },
+      settings: { model, models, modelNames, modelContextLengths, delegation },
       has9Router: has9RouterConfig(model),
       configPath: getHermesConfigPath(),
     });
@@ -104,7 +108,7 @@ export async function GET() {
 
 export async function POST(request) {
   try {
-    const { baseUrl, apiKey, model, models, modelNames = {}, modelContextLengths = {} } = await request.json();
+    const { baseUrl, apiKey, model, models, modelNames = {}, modelContextLengths = {}, subagentModel, subagentProvider } = await request.json();
     const selectedModels = Array.from(new Set(
       (Array.isArray(models) ? models : [model])
         .filter((value) => typeof value === "string" && value.trim())
@@ -117,7 +121,15 @@ export async function POST(request) {
     if (!selectedModels.includes(defaultModel)) {
       return NextResponse.json({ error: "Default model must be included in models" }, { status: 400 });
     }
-    const normalizedModelContextLengths = {};
+    // Subagent model is optional — empty string means "inherit parent model".
+    // When provided it must be one of the configured models so delegation stays
+    // routable through 9Router.
+    const normalizedSubagentModel = typeof subagentModel === "string" ? subagentModel.trim() : "";
+    if (normalizedSubagentModel && !selectedModels.includes(normalizedSubagentModel)) {
+      return NextResponse.json({ error: "Subagent model must be one of the configured models (or empty to inherit)" }, { status: 400 });
+    }
+    const normalizedSubagentProvider = typeof subagentProvider === "string" ? subagentProvider.trim() : "";
+    const manualModelContextLengths = {};
     for (const selectedModel of selectedModels) {
       const rawContextLength = modelContextLengths?.[selectedModel];
       if (rawContextLength == null || rawContextLength === "") continue;
@@ -125,8 +137,15 @@ export async function POST(request) {
       if (!Number.isSafeInteger(contextLength) || contextLength < 1024) {
         return NextResponse.json({ error: `Context length for '${selectedModel}' must be an integer of at least 1024` }, { status: 400 });
       }
-      normalizedModelContextLengths[selectedModel] = contextLength;
+      manualModelContextLengths[selectedModel] = contextLength;
     }
+
+    const liveModels = await buildModelsList(["llm"]);
+    const normalizedModelContextLengths = resolveHermesContextLengths(
+      selectedModels,
+      manualModelContextLengths,
+      liveModels
+    );
 
     const displayAliases = getDisplayAliases(selectedModels, modelNames);
     const pickerIds = selectedModels.map((targetModel) => (
@@ -165,14 +184,15 @@ export async function POST(request) {
       await setModelAlias(displayName, targetModel);
     }
 
-    const newYaml = writeHermesConfig(existingYaml, {
+    const syncResult = await syncHermesProfileConfigs(fs, getHermesDir(), {
       models: selectedModels,
       modelNames,
       modelContextLengths: normalizedModelContextLengths,
       defaultModel,
       baseUrl: normalizedBaseUrl,
+      subagentModel: normalizedSubagentModel,
+      subagentProvider: normalizedSubagentProvider,
     });
-    await fs.writeFile(getHermesConfigPath(), newYaml);
 
     // Update .env — upsert OPENAI_API_KEY only when caller provides one
     if (apiKey) {
@@ -183,8 +203,10 @@ export async function POST(request) {
 
     return NextResponse.json({
       success: true,
-      message: "Hermes settings applied successfully!",
+      message: `Hermes settings applied to ${syncResult.updated} profiles!`,
       configPath: getHermesConfigPath(),
+      profilesUpdated: syncResult.updated,
+      profiles: syncResult.profiles,
     });
   } catch (error) {
     console.log("Error updating hermes settings:", error);

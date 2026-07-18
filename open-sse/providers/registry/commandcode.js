@@ -28,6 +28,7 @@ export default {
     },
   },
   models: [
+    { id: "kimi-k3", name: "Kimi K3" },
     { id: "deepseek/deepseek-v4-pro", name: "DeepSeek V4 Pro" },
     { id: "deepseek/deepseek-v4-flash", name: "DeepSeek V4 Flash" },
     { id: "moonshotai/Kimi-K2.6", name: "Kimi K2.6" },

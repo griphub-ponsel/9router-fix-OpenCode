@@ -32,6 +32,8 @@ export default {
     },
   },
   models: [
+    { id: "cline-pass/kimi-k3", name: "Kimi K3 (ClinePass)" },
+    { id: "moonshotai/kimi-k3", name: "Kimi K3 (Cline API)" },
     { id: "cline-pass/glm-5.2", name: "GLM-5.2 (ClinePass)" },
     { id: "cline-pass/kimi-k2.7-code", name: "Kimi K2.7 Code (ClinePass)" },
     { id: "cline-pass/kimi-k2.6", name: "Kimi K2.6 (ClinePass)" },

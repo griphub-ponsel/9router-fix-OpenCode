@@ -139,6 +139,7 @@ export default function LoginPage() {
       <div className="landing-grid absolute inset-0 pointer-events-none" aria-hidden="true" />
       <div className="relative z-10 w-full max-w-md">
         <div className="text-center mb-8">
+          <img src="/favicon.svg" alt="9Router logo" className="mx-auto mb-3 size-14 rounded-xl shadow-[var(--shadow-warm)]" />
           <h1 className="text-3xl font-bold text-primary mb-2">9Router</h1>
           <p className="text-text-muted">
             {authMode === "oidc" && oidcConfigured

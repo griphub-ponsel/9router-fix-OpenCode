@@ -35,6 +35,8 @@ export default function HermesToolCard({
   const [selectedModels, setSelectedModels] = useState([]);
   const [modelDisplayNames, setModelDisplayNames] = useState({});
   const [modelContextLengths, setModelContextLengths] = useState({});
+  const [newModelBadges, setNewModelBadges] = useState({});
+  const [subagentModel, setSubagentModel] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [modelAliases, setModelAliases] = useState({});
   const [combos, setCombos] = useState([]);
@@ -160,6 +162,11 @@ export default function HermesToolCard({
         configuredContextLengths[defaultModel] = Number(cfg.context_length);
       }
       setModelContextLengths(configuredContextLengths);
+      // Restore saved subagent model (delegation.model) — empty means inherit parent.
+      const savedDelegation = hermesStatus.settings?.delegation;
+      if (savedDelegation && typeof savedDelegation.model === "string") {
+        setSubagentModel(savedDelegation.model);
+      }
     }
   }, [hermesStatus]);
 
@@ -210,11 +217,18 @@ export default function HermesToolCard({
           modelContextLengths: Object.fromEntries(sortedModels.flatMap((model) => (
             Number(modelContextLengths[model]) > 0 ? [[model, Number(modelContextLengths[model])]] : []
           ))),
+          subagentModel: subagentModel || "",
+          subagentProvider: subagentModel ? "9router" : "",
         }),
       });
       const data = await res.json();
       if (res.ok) {
-        setMessage({ type: "success", text: "Settings applied successfully!" });
+        setMessage({
+          type: "success",
+          text: data.profilesUpdated
+            ? `Settings applied to ${data.profilesUpdated} Hermes profiles!`
+            : "Settings applied successfully!",
+        });
         checkStatus();
       } else {
         setMessage({ type: "error", text: data.error || "Failed to apply settings" });
@@ -238,6 +252,7 @@ export default function HermesToolCard({
         setSelectedModels([]);
         setModelDisplayNames({});
         setModelContextLengths({});
+        setNewModelBadges({});
         checkStatus();
       } else {
         setMessage({ type: "error", text: data.error || "Failed to reset settings" });
@@ -254,6 +269,7 @@ export default function HermesToolCard({
     if (!value || selectedModels.includes(value)) return;
     setSelectedModels((prev) => [...prev, value]);
     setModelDisplayNames((prev) => ({ ...prev, [value]: model?.name || prev[value] || value }));
+    setNewModelBadges((prev) => ({ ...prev, [value]: true }));
     if (!selectedModel) setSelectedModel(value);
   };
 
@@ -266,6 +282,11 @@ export default function HermesToolCard({
       return next;
     });
     setModelContextLengths((prev) => {
+      const next = { ...prev };
+      delete next[model];
+      return next;
+    });
+    setNewModelBadges((prev) => {
       const next = { ...prev };
       delete next[model];
       return next;
@@ -402,7 +423,14 @@ export default function HermesToolCard({
                         </div>
                         {sortedModels.map((model) => (
                           <div key={model} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_6rem_auto_2rem] items-center gap-2 border-b border-border px-3 py-1.5 last:border-b-0 hover:bg-surface/80">
-                            <span className="min-w-0 truncate text-xs text-text-main" title={model}>{model}</span>
+                            <span className="flex min-w-0 items-center gap-1.5" title={model}>
+                              <span className="min-w-0 truncate text-xs text-text-main">{model}</span>
+                              {newModelBadges[model] && (
+                                <span className="shrink-0 rounded bg-emerald-500/15 px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-500">
+                                  New
+                                </span>
+                              )}
+                            </span>
                             <input type="text" value={modelDisplayNames[model] ?? model} onChange={(event) => setModelDisplayNames((prev) => ({ ...prev, [model]: event.target.value }))} className="w-full min-w-0 rounded border border-border bg-surface px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-primary/50" />
                             <select
                               value={modelContextLengths[model] || "auto"}
@@ -445,6 +473,21 @@ export default function HermesToolCard({
                       return <option key={model} value={model}>{displayName && displayName !== model ? `${displayName} (${model})` : model}</option>;
                     })}
                   </select>
+                </div>
+
+                <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr] sm:items-center sm:gap-2">
+                  <span className="text-xs font-semibold text-text-main sm:text-right sm:text-sm">Subagent Model</span>
+                  <span className="material-symbols-outlined hidden text-text-muted text-[14px] sm:inline">arrow_forward</span>
+                  <div className="flex min-w-0 flex-col gap-1">
+                    <select value={subagentModel} onChange={(event) => setSubagentModel(event.target.value)} disabled={selectedModels.length === 0} className="w-full min-w-0 rounded border border-border bg-surface px-2 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-50 sm:py-1.5">
+                      <option value="">Inherit parent model (default)</option>
+                      {sortedModels.map((model) => {
+                        const displayName = modelDisplayNames[model]?.trim();
+                        return <option key={model} value={model}>{displayName && displayName !== model ? `${displayName} (${model})` : model}</option>;
+                      })}
+                    </select>
+                    <span className="text-[11px] text-text-muted">Model for delegate_task subagents. Inherit = same as main agent.</span>
+                  </div>
                 </div>
 
               </div>

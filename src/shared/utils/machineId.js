@@ -1,4 +1,6 @@
-import { machineIdSync } from 'node-machine-id';
+import nodeMachineId from 'node-machine-id';
+
+const { machineIdSync } = nodeMachineId;
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';

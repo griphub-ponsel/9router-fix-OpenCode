@@ -4,9 +4,57 @@ export const API_KEY_ENV = "OPENAI_API_KEY";
 const MODEL_BLOCK_RE = /^model:[ \t]*\r?\n((?:[ \t]+.*\r?\n?|[ \t]*\r?\n)*)/m;
 const PROVIDERS_BLOCK_RE = /^providers:[ \t]*\r?\n((?:[ \t]+.*\r?\n?|[ \t]*\r?\n)*)/m;
 const ROUTER_PROVIDER_RE = /^  9router:[ \t]*\r?\n((?:[ \t]{4}.*\r?\n?|[ \t]*\r?\n)*)/m;
+const DELEGATION_BLOCK_RE = /^delegation:[ \t]*\r?\n((?:[ \t]+.*\r?\n?|[ \t]*\r?\n)*)/m;
 
 const buildModelBlock = (model, baseUrl) =>
   `model:\n  default: ${JSON.stringify(model)}\n  provider: "${PROVIDER_NAME}"\n  base_url: ${JSON.stringify(baseUrl)}\n`;
+
+// Build ONLY the delegation keys 9Router manages (model + provider). Other
+// delegation.* keys the user set by hand (max_iterations, reasoning_effort,
+// etc.) are preserved by merging, never regenerated from scratch.
+const buildDelegationBlock = (subagentModel, subagentProvider) => {
+  const lines = ["delegation:"];
+  lines.push(`  model: ${JSON.stringify(subagentModel || "")}`);
+  lines.push(`  provider: ${JSON.stringify(subagentProvider || "")}`);
+  return `${lines.join("\n")}\n`;
+};
+
+// Parse delegation.model / delegation.provider from an existing config.
+const parseDelegationBlock = (yaml) => {
+  const match = yaml.match(DELEGATION_BLOCK_RE);
+  if (!match) return { model: "", provider: "" };
+  const body = match[1] || "";
+  const get = (key) => {
+    const m = body.match(new RegExp(`^[ \\t]+${key}:[ \\t]*("(?:[^"\\\\]|\\\\.)*"|'(?:[^']|'')*'|[^"'\\r\\n][^\\r\\n]*)`, "m"));
+    if (!m) return "";
+    const raw = m[1].trim();
+    if (raw.startsWith('"')) { try { return JSON.parse(raw); } catch { return ""; } }
+    if (raw.startsWith("'")) return raw.slice(1, -1).replace(/''/g, "'");
+    return raw;
+  };
+  return { model: get("model"), provider: get("provider") };
+};
+
+// Upsert delegation.model/provider into an existing delegation: block while
+// preserving every other key the user may have set there. If no block exists,
+// append a fresh two-key block at the end of the file.
+const upsertDelegationBlock = (yaml, subagentModel, subagentProvider) => {
+  const setKey = (body, key, value) => {
+    const re = new RegExp(`^([ \\t]+)${key}:.*$`, "m");
+    const line = `  ${key}: ${JSON.stringify(value || "")}`;
+    if (re.test(body)) return body.replace(re, line);
+    return `${body}${line}\n`;
+  };
+  const match = yaml.match(DELEGATION_BLOCK_RE);
+  if (!match) {
+    const sep = yaml.length === 0 ? "" : (yaml.endsWith("\n") ? "\n" : "\n\n");
+    return `${yaml}${sep}${buildDelegationBlock(subagentModel, subagentProvider)}`;
+  }
+  let body = match[1] || "";
+  body = setKey(body, "model", subagentModel);
+  body = setKey(body, "provider", subagentProvider);
+  return yaml.replace(DELEGATION_BLOCK_RE, `delegation:\n${body}`);
+};
 
 const buildRouterProviderBlock = (models, modelNames, modelContextLengths, defaultModel, baseUrl) => {
   const modelEntries = models.map((model) => {
@@ -140,21 +188,32 @@ export const readHermesConfig = (yaml) => {
   const model = parseModelBlock(yaml);
   const { models, modelNames, modelContextLengths, pickerTargets } = parseRouterModels(yaml);
   const defaultModel = pickerTargets[model?.default] || model?.default;
+  const delegation = parseDelegationBlock(yaml);
   return {
     model: model ? { ...model, default: defaultModel } : null,
     models: models.length > 0 ? models : (model?.default ? [model.default] : []),
     modelNames,
     modelContextLengths,
+    delegation,
   };
 };
 
-export const writeHermesConfig = (yaml, { models, modelNames = {}, modelContextLengths = {}, defaultModel, baseUrl }) => {
+export const writeHermesConfig = (yaml, { models, modelNames = {}, modelContextLengths = {}, defaultModel, baseUrl, subagentModel, subagentProvider }) => {
   const defaultPickerId = (typeof modelNames?.[defaultModel] === "string" && modelNames[defaultModel].trim()) || defaultModel;
   const withProvider = upsertRouterProviderBlock(
     yaml,
     buildRouterProviderBlock(models, modelNames, modelContextLengths, defaultModel, baseUrl)
   );
-  return upsertModelBlock(withProvider, buildModelBlock(defaultPickerId, baseUrl));
+  const withModel = upsertModelBlock(withProvider, buildModelBlock(defaultPickerId, baseUrl));
+  // Only touch the delegation block when the caller actually passes a value —
+  // undefined means "leave the user's existing delegation config alone".
+  if (subagentModel === undefined && subagentProvider === undefined) return withModel;
+  const existingDelegation = parseDelegationBlock(withModel);
+  return upsertDelegationBlock(
+    withModel,
+    subagentModel !== undefined ? subagentModel : existingDelegation.model,
+    subagentProvider !== undefined ? subagentProvider : existingDelegation.provider
+  );
 };
 
 export const removeHermesConfig = (yaml) => {
