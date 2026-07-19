@@ -14,17 +14,27 @@ export default function CLIToolsPageClient({ machineId }) {
 
   useEffect(() => {
     let mounted = true;
-    (async () => {
+    const loadStatuses = async () => {
       try {
-        const res = await fetch(ALL_STATUSES_URL);
+        const res = await fetch(`${ALL_STATUSES_URL}?t=${Date.now()}`, { cache: "no-store" });
         if (res.ok && mounted) setToolStatuses(await res.json());
       } catch (error) {
         console.log("Error fetching tool statuses:", error);
       } finally {
         if (mounted) setLoading(false);
       }
-    })();
-    return () => { mounted = false; };
+    };
+    loadStatuses();
+    const refreshStatuses = () => {
+      if (document.visibilityState === "visible") loadStatuses();
+    };
+    globalThis.addEventListener("focus", refreshStatuses);
+    document.addEventListener("visibilitychange", refreshStatuses);
+    return () => {
+      mounted = false;
+      globalThis.removeEventListener("focus", refreshStatuses);
+      document.removeEventListener("visibilitychange", refreshStatuses);
+    };
   }, []);
 
   if (loading) {

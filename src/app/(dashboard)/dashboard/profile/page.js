@@ -23,6 +23,9 @@ export default function ProfilePage() {
   const { theme, setTheme, isDark } = useTheme();
   const [locale, setLocale] = useState("en");
   const [langOpen, setLangOpen] = useState(false);
+  const [restartOpen, setRestartOpen] = useState(false);
+  const [isRestarting, setIsRestarting] = useState(false);
+  const [restartError, setRestartError] = useState("");
   const [shutdownOpen, setShutdownOpen] = useState(false);
   const [isShuttingDown, setIsShuttingDown] = useState(false);
   const [settings, setSettings] = useState({ fallbackStrategy: "fill-first" });
@@ -551,6 +554,34 @@ export default function ProfilePage() {
   };
 
   const observabilityEnabled = settings.enableObservability === true;
+
+  const handleRestart = async () => {
+    setIsRestarting(true);
+    setRestartError("");
+    try {
+      const response = await fetch("/api/version/restart", { method: "POST" });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.success) throw new Error(data.message || "Failed to schedule restart");
+      setRestartOpen(false);
+
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      const deadline = Date.now() + 45000;
+      while (Date.now() < deadline) {
+        try {
+          const health = await fetch(`/api/health?restart=${Date.now()}`, { cache: "no-store" });
+          if (health.ok) {
+            globalThis.location.reload();
+            return;
+          }
+        } catch { /* server is between processes */ }
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+      throw new Error("9Router did not become healthy within 45 seconds");
+    } catch (error) {
+      setRestartError(error.message || "Failed to restart 9Router");
+      setIsRestarting(false);
+    }
+  };
 
   const handleShutdown = async () => {
     setIsShuttingDown(true);
@@ -1106,6 +1137,17 @@ export default function ProfilePage() {
           <Button
             variant="outline"
             fullWidth
+            icon="restart_alt"
+            onClick={() => setRestartOpen(true)}
+            disabled={isShuttingDown}
+            loading={isRestarting}
+            className="text-orange-500 border-orange-200 hover:bg-orange-50 hover:border-orange-300"
+          >
+            {isRestarting ? "Restarting..." : "Restart"}
+          </Button>
+          <Button
+            variant="outline"
+            fullWidth
             icon="power_settings_new"
             onClick={() => setShutdownOpen(true)}
             className="text-red-500 border-red-200 hover:bg-red-50 hover:border-red-300"
@@ -1121,6 +1163,7 @@ export default function ProfilePage() {
             Logout
           </Button>
         </div>
+        {restartError ? <p className="text-sm text-red-500">{restartError}</p> : null}
 
         {/* App Info */}
         <div className="text-center text-xs sm:text-sm text-text-muted py-4">
@@ -1136,6 +1179,17 @@ export default function ProfilePage() {
           setLangOpen(false);
           setLocale(next);
         }}
+      />
+      <ConfirmModal
+        isOpen={restartOpen}
+        onClose={() => setRestartOpen(false)}
+        onConfirm={handleRestart}
+        title="Restart 9Router"
+        message="9Router will stop briefly and start again automatically. Active requests will be interrupted."
+        confirmText="Restart"
+        cancelText="Cancel"
+        variant="warning"
+        loading={isRestarting}
       />
       <ConfirmModal
         isOpen={shutdownOpen}

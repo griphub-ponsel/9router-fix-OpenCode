@@ -25,6 +25,13 @@ npm run build && PORT=20128 HOSTNAME=0.0.0.0 npm run start           # productio
 - Default runtime port is **20128** (dashboard at `/dashboard`, API at `/v1`).
 - Lint: `npx eslint .` (config `eslint.config.mjs`, extends `eslint-config-next`).
 
+### Restart safety (mandatory)
+
+- Never restart 9Router with a bare `kill`, `kill_terminal`, or by terminating the server-owning agent session. A dead server cannot respawn itself and may also terminate the agent's active LLM stream.
+- Use the authenticated local **Profile → Restart** button (`POST /api/version/restart`). It delegates ownership before exit: CLI-supervised runs respawn through the CLI; direct production runs use `scripts/restart-server.mjs` as a detached helper.
+- Build while the existing server remains live. Restart only after a successful build, and only once. Frontend-only `npm run build:client` changes do not require a server restart.
+- Diagnose restart failures in `.logs/restart.log` and replacement server output in `.logs/server.log`.
+
 CLI package (`cli/`):
 ```bash
 npm run cli:pack       # build + npm pack from root

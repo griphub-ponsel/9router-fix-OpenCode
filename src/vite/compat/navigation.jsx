@@ -1,3 +1,4 @@
+import { startTransition } from 'react';
 import { useLocation, useNavigate, useParams as useRouterParams, useSearchParams as useRouterSearchParams } from 'react-router-dom';
 
 export class NavigationSignal extends Error {
@@ -26,8 +27,8 @@ export function notFound() {
 export function useRouter() {
   const navigate = useNavigate();
   return {
-    push: (href, options) => navigate(href, { state: options?.state }),
-    replace: (href, options) => navigate(href, { replace: true, state: options?.state }),
+    push: (href, options) => startTransition(() => navigate(href, { state: options?.state })),
+    replace: (href, options) => startTransition(() => navigate(href, { replace: true, state: options?.state })),
     back: () => navigate(-1),
     forward: () => navigate(1),
     refresh: () => window.location.reload(),

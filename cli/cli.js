@@ -616,7 +616,8 @@ function startServer(updatePromise) {
       env: {
         ...buildEnvWithRuntime(process.env),
         PORT: port.toString(),
-        HOSTNAME: host
+        HOSTNAME: host,
+        NINEROUTER_SUPERVISED: "1"
       }
     });
     if (!showLog && child.stderr) {

@@ -7,26 +7,30 @@ function DashboardAuthGate({ children }) {
   const location = useLocation();
   const navigate = useNavigate();
   const isDashboard = location.pathname.startsWith('/dashboard');
-  const [checkedPath, setCheckedPath] = useState(null);
+  const [dashboardChecked, setDashboardChecked] = useState(false);
 
   useEffect(() => {
-    if (!isDashboard) return undefined;
+    if (!isDashboard) {
+      setDashboardChecked(false);
+      return undefined;
+    }
+    if (dashboardChecked) return undefined;
 
     const controller = new AbortController();
     fetch('/api/settings', { signal: controller.signal, credentials: 'same-origin' })
       .then((response) => {
         const destination = dashboardAuthDestination(location.pathname, response.status);
         if (destination) navigate(destination, { replace: true });
-        else setCheckedPath(location.pathname);
+        else setDashboardChecked(true);
       })
       .catch((error) => {
         if (error.name !== 'AbortError') navigate('/login', { replace: true });
       });
 
     return () => controller.abort();
-  }, [isDashboard, location.pathname, navigate]);
+  }, [dashboardChecked, isDashboard, location.pathname, navigate]);
 
-  return isDashboard && checkedPath !== location.pathname
+  return isDashboard && !dashboardChecked
     ? <main>Checking session...</main>
     : children;
 }

@@ -131,6 +131,19 @@ npm run build
 PORT=20128 HOSTNAME=0.0.0.0 npm run start
 ```
 
+### Restarting safely
+
+Use **Profile → Restart** in the dashboard for an exact server restart. The
+restart request is handed to an external helper before the current server exits;
+the helper starts a replacement process and waits for `/api/health` to pass.
+When 9Router is launched by the CLI, the CLI remains alive and performs the
+respawn instead.
+
+Do not restart a directly launched server with a bare `kill`, because the process
+that receives the signal cannot start itself again after it exits. The restart
+button is local-only and requires dashboard authentication. Runtime logs are
+written to `.logs/restart.log` and `.logs/server.log`.
+
 Default URLs:
 
 - Dashboard: `http://localhost:20128/dashboard`

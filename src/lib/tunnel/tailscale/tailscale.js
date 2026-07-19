@@ -24,6 +24,14 @@ const SOCKET_FLAG = IS_WINDOWS ? [] : ["--socket", TAILSCALE_SOCKET];
 const SYSTEM_TAILSCALE_SOCKET = IS_WINDOWS ? null : "/var/run/tailscale/tailscaled.sock";
 const SYSTEM_SOCKET_FLAG = SYSTEM_TAILSCALE_SOCKET ? ["--socket", SYSTEM_TAILSCALE_SOCKET] : [];
 
+// The macOS app exposes its daemon through the CLI's default connection rather
+// than /var/run/tailscale/tailscaled.sock. Remember whichever daemon answers.
+let activeSocketFlags = IS_MAC || IS_WINDOWS ? [] : SOCKET_FLAG;
+
+function getActiveSocketFlags() {
+  return activeSocketFlags;
+}
+
 // Well-known Windows install path
 const WINDOWS_TAILSCALE_BIN = "C:\\Program Files\\Tailscale\\tailscale.exe";
 
@@ -89,7 +97,7 @@ export function isTailscaleInstalled() {
 
 /** Build tailscale CLI args with custom socket (no root needed) */
 function tsArgs(...args) {
-  return [...SOCKET_FLAG, ...args];
+  return [...getActiveSocketFlags(), ...args];
 }
 
 // Async strict probe: authoritative, awaitable (never blocks event loop). Updates cache.
@@ -97,12 +105,8 @@ export async function isTailscaleLoggedInStrict() {
   const bin = getTailscaleBin();
   if (!bin) return false;
   try {
-    const { stdout } = await execAsync(`"${bin}" ${SOCKET_FLAG.join(" ")} status --json`, {
-      windowsHide: true,
-      env: { ...process.env, PATH: EXTENDED_PATH },
-      timeout: 5000
-    });
-    const json = JSON.parse(stdout);
+    const json = await probeStatusAsync(bin);
+    if (!json) return false;
     // BackendState=Running + Self.Online=true → device still exists in tailnet
     const loggedIn = json.BackendState === "Running" && json.Self?.Online === true;
     loggedInCache.value = loggedIn;
@@ -136,11 +140,14 @@ function bgRefreshLoggedIn() {
 
 // Probe `status --json` over custom then system socket. Resolves parsed JSON or null. Never blocks event loop.
 async function probeStatusAsync(bin) {
-  for (const socketArgs of [SOCKET_FLAG, SYSTEM_SOCKET_FLAG]) {
+  const candidates = [getActiveSocketFlags(), SOCKET_FLAG, ...(IS_MAC || IS_WINDOWS ? [[]] : []), SYSTEM_SOCKET_FLAG]
+    .filter((args, index, all) => all.findIndex((candidate) => candidate.join("\0") === args.join("\0")) === index);
+  for (const socketArgs of candidates) {
     try {
       const { stdout } = await execAsync(`"${bin}" ${socketArgs.join(" ")} status --json`, {
         windowsHide: true, env: { ...process.env, PATH: EXTENDED_PATH }, timeout: PROBE_TIMEOUT_MS,
       });
+      activeSocketFlags = socketArgs;
       return JSON.parse(stdout);
     } catch { /* try next socket */ }
   }
@@ -162,7 +169,7 @@ function bgRefreshRunning() {
     return;
   }
   runningCache.refreshing = true;
-  execAsync(`"${bin}" ${SOCKET_FLAG.join(" ")} funnel status --json`, { windowsHide: true, timeout: PROBE_TIMEOUT_MS })
+  execAsync(`"${bin}" ${getActiveSocketFlags().join(" ")} funnel status --json`, { windowsHide: true, timeout: PROBE_TIMEOUT_MS })
     .then(({ stdout }) => {
       try {
         const json = JSON.parse(stdout);
@@ -188,7 +195,7 @@ export async function isTailscaleRunningStrict() {
   const bin = getTailscaleBin();
   if (!bin) return false;
   try {
-    const { stdout } = await execAsync(`"${bin}" ${SOCKET_FLAG.join(" ")} funnel status --json`, {
+    const { stdout } = await execAsync(`"${bin}" ${getActiveSocketFlags().join(" ")} funnel status --json`, {
       windowsHide: true,
       timeout: PROBE_TIMEOUT_MS,
     });
@@ -222,7 +229,7 @@ function bgRefreshFunnelUrl(port) {
   const bin = getTailscaleBin();
   if (!bin) return;
   funnelUrlCache.refreshing = true;
-  execAsync(`"${bin}" ${SOCKET_FLAG.join(" ")} status --json`, { windowsHide: true, timeout: PROBE_TIMEOUT_MS })
+  execAsync(`"${bin}" ${getActiveSocketFlags().join(" ")} status --json`, { windowsHide: true, timeout: PROBE_TIMEOUT_MS })
     .then(({ stdout }) => {
       try {
         const json = JSON.parse(stdout);
@@ -243,7 +250,7 @@ function getActualFunnelUrl() {
   const bin = getTailscaleBin();
   if (!bin) return null;
   try {
-    const out = execSync(`"${bin}" ${SOCKET_FLAG.join(" ")} status --json`, {
+    const out = execSync(`"${bin}" ${getActiveSocketFlags().join(" ")} status --json`, {
       encoding: "utf8",
       windowsHide: true,
       env: { ...process.env, PATH: EXTENDED_PATH },
@@ -555,6 +562,25 @@ export async function startDaemonWithPassword(sudoPassword) {
     return;
   }
 
+  // The macOS GUI app owns its daemon and does not ship a standalone
+  // `tailscaled` binary. Reuse it instead of trying to spawn another daemon.
+  if (IS_MAC) {
+    const bin = getTailscaleBin();
+    if (bin) {
+      try {
+        const { stdout } = await execAsync(`"${bin}" status --json`, {
+          windowsHide: true,
+          env: { ...process.env, PATH: EXTENDED_PATH },
+          timeout: PROBE_TIMEOUT_MS,
+        });
+        if (JSON.parse(stdout).BackendState === "Running") {
+          activeSocketFlags = [];
+          return;
+        }
+      } catch { /* no GUI daemon; try standalone daemon below */ }
+    }
+  }
+
   const currentMode = isDaemonTunMode(); // true=TUN, false=userspace, null=not running
   // No password but a healthy TUN daemon already runs → keep TUN, never downgrade-kill it.
   const wantTun = sudoPassword ? true : currentMode === true;
@@ -583,7 +609,9 @@ export async function startDaemonWithPassword(sudoPassword) {
   // Reclaim folder ownership (previous root daemon may have locked it)
   await ensureUserOwnedDir(TAILSCALE_DIR);
 
-  const tailscaledBin = IS_MAC ? "/usr/local/bin/tailscaled" : "tailscaled";
+  // Resolve via PATH (EXTENDED_PATH covers both Intel `/usr/local/bin` and
+  // Apple Silicon `/opt/homebrew/bin`) instead of a hardcoded Intel-only path.
+  const tailscaledBin = "tailscaled";
   const daemonArgs = [
     `--socket=${TAILSCALE_SOCKET}`,
     `--statedir=${TAILSCALE_DIR}`,
@@ -598,6 +626,9 @@ export async function startDaemonWithPassword(sudoPassword) {
       cwd: os.tmpdir(),
       env: { ...process.env, PATH: EXTENDED_PATH },
     });
+    // Without this handler, a spawn failure (e.g. ENOENT) is an unhandled
+    // 'error' event that crashes the whole process.
+    child.on("error", (err) => console.error(`[Tailscale] daemon spawn failed: ${err.message}`));
     child.stdin.write(`${sudoPassword}\n`);
     child.stdin.end();
     child.unref();
@@ -608,6 +639,7 @@ export async function startDaemonWithPassword(sudoPassword) {
       cwd: os.tmpdir(),
       env: { ...process.env, PATH: EXTENDED_PATH },
     });
+    child.on("error", (err) => console.error(`[Tailscale] daemon spawn failed: ${err.message}`));
     child.unref();
   }
 
@@ -625,7 +657,7 @@ function getAuthUrlFromStatus() {
   const bin = getTailscaleBin();
   if (!bin) return null;
   try {
-    const out = execSync(`"${bin}" ${SOCKET_FLAG.join(" ")} status --json`, {
+    const out = execSync(`"${bin}" ${getActiveSocketFlags().join(" ")} status --json`, {
       encoding: "utf8", windowsHide: true, timeout: 2000
     });
     const j = JSON.parse(out);
@@ -743,7 +775,7 @@ export async function startFunnel(port) {
   if (!bin) throw new Error("Tailscale not installed");
 
   // Reset any existing funnel
-  try { execSync(`"${bin}" ${SOCKET_FLAG.join(" ")} funnel --bg reset`, { stdio: "ignore", windowsHide: true }); } catch (e) { /* ignore */ }
+  try { execSync(`"${bin}" ${getActiveSocketFlags().join(" ")} funnel --bg reset`, { stdio: "ignore", windowsHide: true }); } catch (e) { /* ignore */ }
 
   return new Promise((resolve, reject) => {
     const child = spawn(bin, tsArgs("funnel", "--bg", `${port}`), {
@@ -825,7 +857,7 @@ export async function provisionCert(hostname) {
   const keyFile = path.join(certsDir, `${hostname}.key`);
   try {
     await execAsync(
-      `"${bin}" ${SOCKET_FLAG.join(" ")} cert --cert-file "${certFile}" --key-file "${keyFile}" "${hostname}"`,
+      `"${bin}" ${getActiveSocketFlags().join(" ")} cert --cert-file "${certFile}" --key-file "${keyFile}" "${hostname}"`,
       { windowsHide: true, env: { ...process.env, PATH: EXTENDED_PATH }, timeout: 30000 }
     );
     console.log(`[Tailscale] cert provisioned for ${hostname}`);
@@ -838,7 +870,7 @@ export async function provisionCert(hostname) {
 export function stopFunnel() {
   const bin = getTailscaleBin();
   if (!bin) return;
-  try { execSync(`"${bin}" ${SOCKET_FLAG.join(" ")} funnel --bg reset`, { stdio: "ignore", windowsHide: true }); } catch (e) { /* ignore */ }
+  try { execSync(`"${bin}" ${getActiveSocketFlags().join(" ")} funnel --bg reset`, { stdio: "ignore", windowsHide: true }); } catch (e) { /* ignore */ }
 }
 
 /** Kill tailscaled daemon (runs as root, needs sudo) */

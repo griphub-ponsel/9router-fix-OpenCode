@@ -97,6 +97,7 @@ export default function HermesToolCard({
 
   const getConfigStatus = () => {
     if (!hermesStatus?.installed) return null;
+    if (hermesStatus.has9Router) return "configured";
     const cfg = hermesStatus.settings?.model;
     if (!cfg?.base_url) return "not_configured";
     if (matchKnownEndpoint(cfg.base_url, { tunnelPublicUrl, tailscaleUrl })) return "configured";
@@ -124,6 +125,19 @@ export default function HermesToolCard({
       fetchModelAliases();
       fetchCombos();
     }
+  }, [isExpanded]);
+
+  useEffect(() => {
+    if (!isExpanded) return undefined;
+    const refreshStatus = () => {
+      if (document.visibilityState === "visible") checkStatus();
+    };
+    globalThis.addEventListener("focus", refreshStatus);
+    document.addEventListener("visibilitychange", refreshStatus);
+    return () => {
+      globalThis.removeEventListener("focus", refreshStatus);
+      document.removeEventListener("visibilitychange", refreshStatus);
+    };
   }, [isExpanded]);
 
   const fetchModelAliases = async () => {
@@ -173,11 +187,14 @@ export default function HermesToolCard({
   const checkStatus = async () => {
     setChecking(true);
     try {
-      const res = await fetch(ENDPOINT);
+      const res = await fetch(`${ENDPOINT}?t=${Date.now()}`, { cache: "no-store" });
       const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to check Hermes settings");
       setHermesStatus(data);
     } catch (error) {
-      setHermesStatus({ installed: false, error: error.message });
+      // Keep the last known disk-backed status during a server restart or
+      // transient request failure; refresh-on-focus will reconcile it later.
+      setMessage({ type: "error", text: error.message });
     } finally {
       setChecking(false);
     }

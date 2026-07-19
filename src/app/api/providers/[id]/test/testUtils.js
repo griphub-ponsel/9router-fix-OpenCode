@@ -871,7 +871,10 @@ export async function testApiKeyConnection(connection, effectiveProxy = null) {
         if (res.status === 401 || res.status === 403) {
           return { valid: false, error: "Invalid Cline API key" };
         }
-        return { valid: res.ok || res.status !== 404, error: res.ok ? null : `Cline API returned ${res.status}` };
+        // A malformed empty body is expected to receive 400. Reaching request
+        // validation proves the Bearer key passed authentication; only explicit
+        // auth failures above should mark this connection invalid.
+        return { valid: true, error: null };
       }
       case "assemblyai": {
         const res = await fetchWithConnectionProxy("https://api.assemblyai.com/v1/account", { headers: { Authorization: `Bearer ${connection.apiKey}` } }, effectiveProxy);

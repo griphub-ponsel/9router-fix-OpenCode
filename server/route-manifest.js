@@ -156,6 +156,7 @@ export const routeModules = [
   { file: "src/app/api/v1/web/fetch/route.js", pathname: "/api/v1/web/fetch", load: () => import("../src/app/api/v1/web/fetch/route.js") },
   { file: "src/app/api/v1beta/models/[...path]/route.js", pathname: "/api/v1beta/models/[...path]", load: () => import("../src/app/api/v1beta/models/[...path]/route.js") },
   { file: "src/app/api/v1beta/models/route.js", pathname: "/api/v1beta/models", load: () => import("../src/app/api/v1beta/models/route.js") },
+  { file: "src/app/api/version/restart/route.js", pathname: "/api/version/restart", load: () => import("../src/app/api/version/restart/route.js") },
   { file: "src/app/api/version/route.js", pathname: "/api/version", load: () => import("../src/app/api/version/route.js") },
   { file: "src/app/api/version/shutdown/route.js", pathname: "/api/version/shutdown", load: () => import("../src/app/api/version/shutdown/route.js") },
   { file: "src/app/api/version/update/route.js", pathname: "/api/version/update", load: () => import("../src/app/api/version/update/route.js") },
