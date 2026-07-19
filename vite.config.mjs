@@ -25,8 +25,9 @@ const jsxInJavaScript = {
   name: 'jsx-in-javascript',
   enforce: 'pre',
   async transform(code, id) {
-    if (!id.startsWith(path.resolve(rootDir, 'src')) || !id.endsWith('.js')) return null;
-    return transformWithEsbuild(code, id, { loader: 'jsx', jsx: 'automatic' });
+    const cleanId = id.split('?', 1)[0];
+    if (!cleanId.startsWith(path.resolve(rootDir, 'src')) || !cleanId.endsWith('.js')) return null;
+    return transformWithEsbuild(code, cleanId, { loader: 'jsx', jsx: 'automatic' });
   },
 };
 
@@ -64,6 +65,12 @@ export default defineConfig(({ mode }) => {
           xfwd: true,
         }]),
       ),
+    },
+    optimizeDeps: {
+      // Rolldown's dependency scanner parses .js before plugins run and chokes on
+      // JSX in Next-style page files. Skip pre-bundling; our jsxInJavaScript
+      // transform (above) handles JSX in .js during normal module graph.
+      noDiscovery: true,
     },
     build: {
       outDir: 'dist',
