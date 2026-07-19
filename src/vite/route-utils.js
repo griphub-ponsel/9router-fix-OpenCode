@@ -1,5 +1,11 @@
 const APP_PREFIX = '/src/app/';
 
+export function dashboardAuthDestination(pathname, status) {
+  if (!pathname.startsWith('/dashboard')) return null;
+  return status === 401 || status === 403 ? '/login' : null;
+}
+
+
 export function pagePathToRoute(pagePath) {
   const relativePath = pagePath.replace(APP_PREFIX, '').replace(/\/?page\.js$/, '');
   const segments = relativePath.split('/').filter((segment) => segment && !/^\(.+\)$/.test(segment));

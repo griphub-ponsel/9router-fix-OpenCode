@@ -3,7 +3,15 @@ import { access, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { pagePathToRoute, sortRoutes } from './route-utils.js';
+import { dashboardAuthDestination, pagePathToRoute, sortRoutes } from './route-utils.js';
+
+test('redirects an unauthenticated Vite dashboard request to login', () => {
+  assert.equal(dashboardAuthDestination('/dashboard/providers', 401), '/login');
+  assert.equal(dashboardAuthDestination('/dashboard', 403), '/login');
+  assert.equal(dashboardAuthDestination('/dashboard', 200), null);
+  assert.equal(dashboardAuthDestination('/login', 401), null);
+});
+
 
 const appDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../app');
 

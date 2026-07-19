@@ -1,7 +1,35 @@
-import { Component, Suspense, lazy, useEffect } from 'react';
+import { Component, Suspense, lazy, useEffect, useState } from 'react';
 import { Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { NavigationSignal } from './compat/navigation.jsx';
-import { pagePathToRoute, sortRoutes } from './route-utils.js';
+import { dashboardAuthDestination, pagePathToRoute, sortRoutes } from './route-utils.js';
+
+function DashboardAuthGate({ children }) {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const isDashboard = location.pathname.startsWith('/dashboard');
+  const [checkedPath, setCheckedPath] = useState(null);
+
+  useEffect(() => {
+    if (!isDashboard) return undefined;
+
+    const controller = new AbortController();
+    fetch('/api/settings', { signal: controller.signal, credentials: 'same-origin' })
+      .then((response) => {
+        const destination = dashboardAuthDestination(location.pathname, response.status);
+        if (destination) navigate(destination, { replace: true });
+        else setCheckedPath(location.pathname);
+      })
+      .catch((error) => {
+        if (error.name !== 'AbortError') navigate('/login', { replace: true });
+      });
+
+    return () => controller.abort();
+  }, [isDashboard, location.pathname, navigate]);
+
+  return isDashboard && checkedPath !== location.pathname
+    ? <main>Checking session...</main>
+    : children;
+}
 
 const pages = import.meta.glob('/src/app/**/page.js');
 const layouts = import.meta.glob('/src/app/**/layout.js');
@@ -79,18 +107,20 @@ export default function App() {
 
   return (
     <RouteBoundary locationKey={location.key}>
-      <Suspense fallback={<main>Loading...</main>}>
-        <Routes>
-          {routeEntries.map(({ route, Page }) => (
-            <Route
-              key={route}
-              path={route}
-              element={<RoutedPage key={route} Page={Page} dashboard={route === '/dashboard' || route.startsWith('/dashboard/')} />}
-            />
-          ))}
-          <Route path="*" element={<main>Not Found</main>} />
-        </Routes>
-      </Suspense>
+      <DashboardAuthGate>
+        <Suspense fallback={<main>Loading...</main>}>
+          <Routes>
+            {routeEntries.map(({ route, Page }) => (
+              <Route
+                key={route}
+                path={route}
+                element={<RoutedPage key={route} Page={Page} dashboard={route === '/dashboard' || route.startsWith('/dashboard/')} />}
+              />
+            ))}
+            <Route path="*" element={<main>Not Found</main>} />
+          </Routes>
+        </Suspense>
+      </DashboardAuthGate>
     </RouteBoundary>
   );
 }

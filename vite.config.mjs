@@ -37,6 +37,11 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [browserSafeModuleAliases, jsxInJavaScript, react({ include: /\.[jt]sx?$/ })],
+    define: {
+      // Next replaces process.env in browser bundles. Keep the Vite dev graph
+      // browser-safe without exposing any real server environment variables.
+      'process.env': {},
+    },
     resolve: {
       alias: [
         { find: '@/shared/utils/machineId.js', replacement: path.resolve(rootDir, 'src/vite/browser/machineId.js') },
@@ -67,10 +72,27 @@ export default defineConfig(({ mode }) => {
       ),
     },
     optimizeDeps: {
-      // Rolldown's dependency scanner parses .js before plugins run and chokes on
-      // JSX in Next-style page files. Skip pre-bundling; our jsxInJavaScript
-      // transform (above) handles JSX in .js during normal module graph.
+      // Rolldown's dependency scanner parses app .js before plugins run and
+      // chokes on JSX. Disable discovery, but explicitly prebundle the CJS
+      // dependencies that require ESM interop in the browser.
       noDiscovery: true,
+      include: [
+        'react',
+        'react-dom',
+        'react-dom/client',
+        'react-router-dom',
+        'prop-types',
+        'react-is',
+        'recharts',
+        'decimal.js-light',
+        'lodash',
+        'zustand',
+        'zustand/middleware',
+        'use-sync-external-store/with-selector',
+        'use-sync-external-store/with-selector.js',
+        'use-sync-external-store/shim/with-selector',
+        'use-sync-external-store/shim/with-selector.js',
+      ],
     },
     build: {
       outDir: 'dist',
