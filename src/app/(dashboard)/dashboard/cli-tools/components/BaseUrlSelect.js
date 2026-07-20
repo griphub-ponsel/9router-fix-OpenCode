@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { UPDATER_CONFIG } from "@/shared/constants/config";
+import { resolveInitialEndpointSelection } from "./baseUrlSelection";
 
 const STORAGE_KEY = "9router.cliToolEndpointPresets";
 const CUSTOM_VALUE = "__custom__";
@@ -81,19 +82,18 @@ export default function BaseUrlSelect({
     [requiresExternalUrl, tunnelEnabled, tunnelPublicUrl, tailscaleEnabled, tailscaleUrl, cloudEnabled, cloudUrl, savedPresets, withV1]
   );
 
-  // Always default to first option (127.0.0.1) on mount, ignore persisted value
+  // Restore the endpoint persisted by the tool config and keep the visible
+  // option synchronized when status arrives after this component mounts.
   useEffect(() => {
-    if (initializedRef.current) return;
     if (options.length === 0) return;
-    initializedRef.current = true;
-    const first = options.find((o) => o.value !== CUSTOM_VALUE);
-    if (first) {
-      setMode(first.value);
-      onChange(first.url);
-    } else {
-      setMode(CUSTOM_VALUE);
+    const selection = resolveInitialEndpointSelection(options, value);
+    setMode(selection.mode);
+    setCustomInput(selection.customInput);
+    if (!initializedRef.current) {
+      initializedRef.current = true;
+      if (!value && selection.url) onChange(selection.url);
     }
-  }, [options, onChange]);
+  }, [options, value, onChange]);
 
   const handleSelect = (e) => {
     const next = e.target.value;

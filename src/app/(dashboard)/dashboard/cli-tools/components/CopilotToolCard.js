@@ -10,6 +10,7 @@ import { findModelName } from "@/shared/constants/models";
 import { formatCopilotContextSize, getCopilotContextSizeOptions, getCopilotContextTokens, getCopilotModelLimits, isLegacyCopilotContextDefault } from "@/shared/utils/copilotModelLimits";
 import { supportsCopilotVisionWithCombos } from "@/shared/utils/copilotModelCapabilities";
 import { expandCopilotReasoningVariants } from "@/shared/utils/copilotReasoningVariants";
+import { resolveConfiguredApiBaseUrl } from "./baseUrlSelection";
 
 export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, apiKeys, activeProviders, cloudEnabled, initialStatus, tunnelEnabled, tunnelPublicUrl, tailscaleEnabled, tailscaleUrl }) {
   const [status, setStatus] = useState(initialStatus || null);
@@ -182,6 +183,8 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
   useEffect(() => {
     if (status?.config && Array.isArray(status.config)) {
       const entry = status.config.find((e) => e.name === "9Router");
+      const configuredBaseUrl = resolveConfiguredApiBaseUrl(entry?.models?.[0]?.url);
+      if (configuredBaseUrl) setCustomBaseUrl(configuredBaseUrl);
       if (entry?.models?.length > 0) {
         const sortedModels = sortModels(entry.models.map((m) => m.id));
         setSelectedModels(sortedModels);
