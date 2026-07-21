@@ -37,6 +37,8 @@ export default function HermesToolCard({
   const [modelContextLengths, setModelContextLengths] = useState({});
   const [newModelBadges, setNewModelBadges] = useState({});
   const [subagentModel, setSubagentModel] = useState("");
+  const [imageModel, setImageModel] = useState("");
+  const [imageModels, setImageModels] = useState([]);
   const [modalOpen, setModalOpen] = useState(false);
   const [modelAliases, setModelAliases] = useState({});
   const [combos, setCombos] = useState([]);
@@ -181,8 +183,32 @@ export default function HermesToolCard({
       if (savedDelegation && typeof savedDelegation.model === "string") {
         setSubagentModel(savedDelegation.model);
       }
+      // Restore saved image model preference (stored in 9Router settings, not Hermes config.yaml)
+      if (typeof hermesStatus.settings?.imageModel === "string") {
+        setImageModel(hermesStatus.settings.imageModel);
+      }
     }
   }, [hermesStatus]);
+
+  // Fetch available image models from /v1/models/image (may return empty due to a
+  // kind-filter bug — known working IDs are added as fallback so the selector is
+  // never empty even when the endpoint returns nothing).
+  useEffect(() => {
+    if (!isExpanded) return;
+    const fallbackImageModels = [
+      { id: "cx/gpt-5.5-image", name: "GPT 5.5 Image" },
+      { id: "cx/gpt-5.4-image", name: "GPT 5.4 Image" },
+      { id: "cx/gpt-5.3-image", name: "GPT 5.3 Image" },
+      { id: "ag/gemini-3.1-flash-image", name: "Gemini 3.1 Flash Image" },
+    ];
+    fetch("/v1/models/image")
+      .then((r) => r.json())
+      .then((data) => {
+        const list = Array.isArray(data?.data) ? data.data.map((m) => ({ id: m.id, name: m.id })) : [];
+        setImageModels(list.length > 0 ? list : fallbackImageModels);
+      })
+      .catch(() => setImageModels(fallbackImageModels));
+  }, [isExpanded]);
 
   const checkStatus = async () => {
     setChecking(true);
@@ -236,6 +262,7 @@ export default function HermesToolCard({
           ))),
           subagentModel: subagentModel || "",
           subagentProvider: subagentModel ? "9router" : "",
+          imageModel: imageModel || "",
         }),
       });
       const data = await res.json();
@@ -270,6 +297,7 @@ export default function HermesToolCard({
         setModelDisplayNames({});
         setModelContextLengths({});
         setNewModelBadges({});
+        setImageModel("");
         checkStatus();
       } else {
         setMessage({ type: "error", text: data.error || "Failed to reset settings" });
@@ -504,6 +532,20 @@ export default function HermesToolCard({
                       })}
                     </select>
                     <span className="text-[11px] text-text-muted">Model for delegate_task subagents. Inherit = same as main agent.</span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr] sm:items-center sm:gap-2">
+                  <span className="text-xs font-semibold text-text-main sm:text-right sm:text-sm">Image Model</span>
+                  <span className="material-symbols-outlined hidden text-text-muted text-[14px] sm:inline">arrow_forward</span>
+                  <div className="flex min-w-0 flex-col gap-1">
+                    <select value={imageModel} onChange={(event) => setImageModel(event.target.value)} className="w-full min-w-0 rounded border border-border bg-surface px-2 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-primary/50 sm:py-1.5">
+                      <option value="">Auto (cx/gpt-5.5-image)</option>
+                      {imageModels.map((model) => (
+                        <option key={model.id} value={model.id}>{model.name || model.id}</option>
+                      ))}
+                    </select>
+                    <span className="text-[11px] text-text-muted">Default model for image generation. Used by the 9router-image Hermes skill.</span>
                   </div>
                 </div>
 

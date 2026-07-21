@@ -282,6 +282,8 @@ export async function buildModelsList(kindFilter, options = {}) {
   }
 
   const models = [];
+  // Chat allowlist must not hide media catalogs (/v1/models/video, image, …).
+  const enforceChatAllowlist = kindFilter.includes(LLM_KIND);
 
   // Combos first (filtered by kind). Web combos expose `kind` so AI knows search vs fetch.
   for (const combo of combos) {
@@ -365,6 +367,19 @@ export async function buildModelsList(kindFilter, options = {}) {
             ),
           )
         : providerModels.map((model) => model.id);
+
+      // Chat allowlists (enabledModels) often omit media-only models. When the
+      // client asks for a non-LLM kind, always union static registry models of
+      // that kind so e.g. grok-imagine-video appears on /v1/models/video.
+      if (hasExplicitEnabledModels && !kindFilter.includes(LLM_KIND)) {
+        const mediaIds = providerModels
+          .filter((m) => kindFilter.includes(modelKind(m)))
+          .map((m) => m.id)
+          .filter((id) => typeof id === "string" && id.trim() !== "");
+        if (mediaIds.length > 0) {
+          rawModelIds = Array.from(new Set([...rawModelIds, ...mediaIds]));
+        }
+      }
 
       if (isCompatibleProvider && rawModelIds.length === 0 && !skipDynamicFetch) {
         rawModelIds = await fetchCompatibleModelIds(conn);
@@ -455,7 +470,8 @@ export async function buildModelsList(kindFilter, options = {}) {
 
       // ── Model Allowlist Filter ──────────────────────────────────
       // When ALLOWED_MODELS is non-empty, only models in the list survive.
-      const filteredModelIds = ALLOWED_MODELS.length > 0
+      // Skipped for pure media kind queries (video/image/tts/…).
+      const filteredModelIds = (enforceChatAllowlist && ALLOWED_MODELS.length > 0)
         ? mergedModelIds.filter((mid) => {
             const fullId = `${outputAlias}/${mid}`;
             const staticFullId = `${staticAlias}/${mid}`;
@@ -513,7 +529,8 @@ export async function buildModelsList(kindFilter, options = {}) {
   for (const model of models) {
     if (!model?.id || seenModelIds.has(model.id)) continue;
     // ── Global Allowlist (applies to ALL sources: combos, static, custom) ──
-    if (ALLOWED_MODELS.length > 0 && !ALLOWED_MODELS.includes(model.id)) continue;
+    // Only enforce for LLM lists — media kind endpoints list capability models.
+    if (enforceChatAllowlist && ALLOWED_MODELS.length > 0 && !ALLOWED_MODELS.includes(model.id)) continue;
     seenModelIds.add(model.id);
     dedupedModels.push(model);
   }
@@ -536,7 +553,7 @@ export async function OPTIONS() {
 
 /**
  * GET /v1/models - OpenAI compatible models list (LLM/chat models only by default).
- * For other capabilities use /v1/models/{kind} (image, tts, stt, embedding, image-to-text, web).
+ * For other capabilities use /v1/models/{kind} (image, tts, stt, embedding, image-to-text, web, video).
  */
 export async function GET(request) {
   try {

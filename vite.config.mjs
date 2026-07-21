@@ -63,6 +63,9 @@ export default defineConfig(({ mode }) => {
       ],
     },
     server: {
+      // Tailscale Funnel / Serveo / LAN hostnames hit Vite first; without this
+      // Vite 6+ returns 403 "This host is not allowed".
+      allowedHosts: true,
       proxy: Object.fromEntries(
         ['/api', '/v1', '/v1beta', '/mcp'].map((prefix) => [prefix, {
           target: `http://127.0.0.1:${apiPort}`,

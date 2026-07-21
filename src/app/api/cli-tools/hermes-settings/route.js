@@ -7,6 +7,7 @@ import fs from "fs/promises";
 import path from "path";
 import os from "os";
 import { deleteModelAlias, getModelAliases, setModelAlias } from "@/models";
+import { getSettings, updateSettings } from "@/lib/localDb";
 import {
   API_KEY_ENV,
   PROVIDER_NAME,
@@ -94,9 +95,13 @@ export async function GET() {
     }
     const yaml = await readConfigYaml();
     const { model, models, modelNames, modelContextLengths, delegation } = readHermesConfig(yaml);
+    // Fetch persisted image-model preference (stored in 9Router settings, not Hermes config.yaml
+    // because Hermes has no native image_model config field yet).
+    const settings = await getSettings().catch(() => ({}));
+    const imageModel = typeof settings?.hermesImageModel === "string" ? settings.hermesImageModel : "";
     return NextResponse.json({
       installed: true,
-      settings: { model, models, modelNames, modelContextLengths, delegation },
+      settings: { model, models, modelNames, modelContextLengths, delegation, imageModel },
       has9Router: has9RouterConfig(model),
       configPath: getHermesConfigPath(),
     });
@@ -108,7 +113,7 @@ export async function GET() {
 
 export async function POST(request) {
   try {
-    const { baseUrl, apiKey, model, models, modelNames = {}, modelContextLengths = {}, subagentModel, subagentProvider } = await request.json();
+    const { baseUrl, apiKey, model, models, modelNames = {}, modelContextLengths = {}, subagentModel, subagentProvider, imageModel } = await request.json();
     const selectedModels = Array.from(new Set(
       (Array.isArray(models) ? models : [model])
         .filter((value) => typeof value === "string" && value.trim())
@@ -141,10 +146,16 @@ export async function POST(request) {
     }
 
     const liveModels = await buildModelsList(["llm"]);
+    const routerSettings = await getSettings().catch(() => ({}));
+    const savedContextLengths = (
+      routerSettings?.codexCliModelContextSizes
+      && typeof routerSettings.codexCliModelContextSizes === "object"
+    ) ? routerSettings.codexCliModelContextSizes : {};
     const normalizedModelContextLengths = resolveHermesContextLengths(
       selectedModels,
       manualModelContextLengths,
-      liveModels
+      liveModels,
+      savedContextLengths
     );
 
     const displayAliases = getDisplayAliases(selectedModels, modelNames);
@@ -200,6 +211,14 @@ export async function POST(request) {
       const newEnv = upsertEnvVar(existingEnv, API_KEY_ENV, apiKey);
       await fs.writeFile(getHermesEnvPath(), newEnv);
     }
+
+    // Persist image-model preference to 9Router settings (Hermes config.yaml has no
+    // native image_model field). The 9router-image Hermes skill reads this via
+    // /api/settings to know which model to use for image generation.
+    const normalizedImageModel = typeof imageModel === "string" ? imageModel.trim() : "";
+    await updateSettings({ hermesImageModel: normalizedImageModel }).catch((e) => {
+      console.log("Failed to persist hermesImageModel:", e);
+    });
 
     return NextResponse.json({
       success: true,

@@ -92,6 +92,23 @@ const parseModelBlock = (yaml) => {
   };
 };
 
+const parseRouterBaseUrl = (yaml) => {
+  const providersMatch = yaml.match(PROVIDERS_BLOCK_RE);
+  if (!providersMatch) return null;
+  const routerMatch = providersMatch[1].match(ROUTER_PROVIDER_RE);
+  if (!routerMatch) return null;
+  const valueMatch = (routerMatch[1] || "").match(
+    /^    base_url:[ \t]*("(?:[^"\\]|\\.)*"|'(?:[^']|'')*'|[^"'\r\n][^\r\n]*)/m
+  );
+  if (!valueMatch) return null;
+  const raw = valueMatch[1].trim();
+  if (raw.startsWith('"')) {
+    try { return JSON.parse(raw); } catch { return null; }
+  }
+  if (raw.startsWith("'")) return raw.slice(1, -1).replace(/''/g, "'");
+  return raw;
+};
+
 const parseRouterModels = (yaml) => {
   const providersMatch = yaml.match(PROVIDERS_BLOCK_RE);
   if (!providersMatch) return { models: [], modelNames: {}, modelContextLengths: {} };
@@ -186,11 +203,16 @@ const upsertRouterProviderBlock = (yaml, newBlock) => {
 
 export const readHermesConfig = (yaml) => {
   const model = parseModelBlock(yaml);
+  const routerBaseUrl = parseRouterBaseUrl(yaml);
   const { models, modelNames, modelContextLengths, pickerTargets } = parseRouterModels(yaml);
   const defaultModel = pickerTargets[model?.default] || model?.default;
   const delegation = parseDelegationBlock(yaml);
   return {
-    model: model ? { ...model, default: defaultModel } : null,
+    model: model ? {
+      ...model,
+      default: defaultModel,
+      base_url: model.base_url || (model.provider === PROVIDER_NAME ? routerBaseUrl : null),
+    } : null,
     models: models.length > 0 ? models : (model?.default ? [model.default] : []),
     modelNames,
     modelContextLengths,

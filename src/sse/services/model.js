@@ -86,6 +86,15 @@ export async function getComboModels(modelStr) {
   // Only check if it's not in provider/model format
   if (modelStr.includes("/")) return null;
 
+  // Prefer an exact combo-name match before consulting model aliases. The
+  // aliases table is also used for display labels (for example
+  // `kimi-k3 -> "Kimi K3"`), so treating every bare alias value as a routing
+  // target makes valid combo ids resolve to their display name and disappear.
+  const directCombo = await getComboByName(modelStr);
+  if (directCombo?.models?.length > 0) {
+    return directCombo.models;
+  }
+
   const aliases = await getModelAliases();
   const aliasTarget = aliases[modelStr];
   const comboName = typeof aliasTarget === "string" && !aliasTarget.includes("/")

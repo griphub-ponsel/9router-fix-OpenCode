@@ -95,4 +95,19 @@ describe("model routing", () => {
     await expect(ctx.getComboModels("DeepSeek V4 Auto"))
       .resolves.toEqual(["or/deepseek-v4", "cl/deepseek-v4"]);
   });
+
+  it("keeps a direct combo id routable when its model alias is a display label", async () => {
+    const ctx = await setupDb();
+    cleanup = ctx.cleanup;
+
+    await ctx.createCombo({
+      name: "kimi-k3",
+      models: ["cl/cline-pass/kimi-k3", "cbcn/kimi-k3"],
+      kind: "fallback",
+    });
+    await ctx.setModelAlias("kimi-k3", "Kimi K3");
+
+    await expect(ctx.getComboModels("kimi-k3"))
+      .resolves.toEqual(["cl/cline-pass/kimi-k3", "cbcn/kimi-k3"]);
+  });
 });

@@ -15,7 +15,8 @@ import * as log from "../utils/logger.js";
 
 // Video generation is xAI-only today; requests without a provider prefix
 // (bare model id, or multipart bodies we deliberately don't parse) land here.
-const DEFAULT_VIDEO_PROVIDER = "xai";
+// Local registry id is xai-oauth (alias xog / xai) — not upstream's "xai".
+const DEFAULT_VIDEO_PROVIDER = "xai-oauth";
 
 // Creation POSTs are billable jobs — only rotate to another account for
 // errors that upstream rejects BEFORE creating a job (auth/quota). A 5xx may

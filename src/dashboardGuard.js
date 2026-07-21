@@ -90,6 +90,21 @@ const LOCAL_ONLY_PATHS = [
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
 
+// Build a redirect URL that preserves the original protocol when behind a
+// trusted reverse proxy (Tailscale Funnel, nginx, etc.). Without this,
+// request.url is always http:// because the proxy connects via plain HTTP,
+// causing redirects to http://hostname/path → browser fails on port 80.
+function buildRedirectUrl(request, path) {
+  const viaProxy = request.headers.get("x-9r-via-proxy");
+  const xfProto = viaProxy && request.headers.get("x-forwarded-proto");
+  if (xfProto) {
+    const proto = xfProto.split(",")[0].trim() || "https";
+    const host = request.headers.get("host") || request.nextUrl.host;
+    return new URL(path, `${proto}://${host}`);
+  }
+  return new URL(path, request.url);
+}
+
 function isLoopbackHostname(h) {
   if (!h) return false;
   const name = h.split(":")[0].replace(/^\[|\]$/g, "").toLowerCase();
@@ -231,7 +246,7 @@ export async function proxy(request) {
           const tunnelHost = settings.tunnelUrl ? new URL(settings.tunnelUrl).hostname.toLowerCase() : "";
           const tailscaleHost = settings.tailscaleUrl ? new URL(settings.tailscaleUrl).hostname.toLowerCase() : "";
           if ((tunnelHost && host === tunnelHost) || (tailscaleHost && host === tailscaleHost)) {
-            return NextResponse.redirect(new URL("/login", request.url));
+            return NextResponse.redirect(buildRedirectUrl(request, "/login"));
           }
         }
       }
@@ -248,16 +263,16 @@ export async function proxy(request) {
       if (await verifyDashboardAuthToken(token)) {
         return NextResponse.next();
       } else {
-        return NextResponse.redirect(new URL("/login", request.url));
+        return NextResponse.redirect(buildRedirectUrl(request, "/login"));
       }
     }
 
-    return NextResponse.redirect(new URL("/login", request.url));
+    return NextResponse.redirect(buildRedirectUrl(request, "/login"));
   }
 
   // Redirect / to /dashboard if logged in, or /dashboard if it's the root
   if (pathname === "/") {
-    return NextResponse.redirect(new URL("/dashboard", request.url));
+    return NextResponse.redirect(buildRedirectUrl(request, "/dashboard"));
   }
 
   return NextResponse.next();

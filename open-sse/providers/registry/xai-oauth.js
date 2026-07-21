@@ -2,6 +2,8 @@ export default {
   id: "xai-oauth",
   priority: 281,
   alias: "xog",
+  // Accept upstream-style "xai/..." model ids (Grok Imagine video docs / skill).
+  aliases: ["xai"],
   display: {
     name: "xAI Grok",
     icon: "auto_awesome",
@@ -43,6 +45,11 @@ export default {
     { id: "grok-4.20-multi-agent-0309", name: "Grok 4.20 Multi-Agent" },
     { id: "grok-4", name: "Grok 4" },
     { id: "grok-3", name: "Grok 3" },
+    // Grok Imagine video (async job API). Docs:
+    // https://docs.x.ai/developers/rest-api-reference/inference/videos
+    { id: "grok-imagine-video", name: "Grok Imagine Video", params: ["duration", "aspect_ratio", "resolution"], kind: "video" },
   ],
-  serviceKinds: ["llm"],
+  serviceKinds: ["llm", "video"],
+  // Async video jobs (POST returns { request_id }, GET polls until done/failed).
+  videoConfig: { baseUrl: "https://api.x.ai/v1/videos" },
 };

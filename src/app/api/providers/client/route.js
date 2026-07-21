@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getProviderConnections } from "@/lib/localDb";
 import { backfillCodexEmails } from "@/lib/oauth/providers";
 import { USAGE_APIKEY_PROVIDERS, USAGE_SUPPORTED_PROVIDERS } from "@/shared/constants/providers";
+import { sortConnections } from "./sortConnections.js";
 
 const SAFE_FIELDS = [
   "id", "provider", "authType", "name", "email", "displayName",
@@ -54,26 +55,6 @@ function parsePositiveInt(value, fallback) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-function sortConnections(connections, sort) {
-  const list = [...connections];
-
-  if (sort === "provider") {
-    return list.sort((a, b) => {
-      const orderA = USAGE_SUPPORTED_PROVIDERS.indexOf(a.provider);
-      const orderB = USAGE_SUPPORTED_PROVIDERS.indexOf(b.provider);
-      if (orderA !== orderB) return orderA - orderB;
-      return a.provider.localeCompare(b.provider);
-    });
-  }
-
-  return list.sort((a, b) => {
-    const priorityA = a.priority ?? Number.MAX_SAFE_INTEGER;
-    const priorityB = b.priority ?? Number.MAX_SAFE_INTEGER;
-    if (priorityA !== priorityB) return priorityA - priorityB;
-    return (a.provider || "").localeCompare(b.provider || "");
-  });
-}
-
 export async function GET(request) {
   try {
     await backfillCodexEmails();
@@ -99,7 +80,11 @@ export async function GET(request) {
       return true;
     });
 
-    const sortedConnections = sortConnections(accountFilteredConnections, sort);
+    const sortedConnections = sortConnections(
+      accountFilteredConnections,
+      sort,
+      USAGE_SUPPORTED_PROVIDERS,
+    );
     const total = sortedConnections.length;
     const totalPages = Math.max(1, Math.ceil(total / pageSize));
     const currentPage = Math.min(page, totalPages);

@@ -362,10 +362,13 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
     const effectiveBaseUrl = getEffectiveBaseUrl();
     const modelsToShow = selectedModels.length > 0 ? selectedModels : ["provider/model-id"];
     const configModels = expandCopilotReasoningVariants(modelsToShow.map((id) => ({
-      id, name: getModelDisplayName(id),
+      id,
+      name: getModelDisplayName(id),
       url: `${effectiveBaseUrl}/chat/completions`,
       apiType: "chat-completions",
-      toolCalling: true, vision: supportsCopilotVisionWithCombos(id, combos),
+      requestHeaders: { Authorization: `Bearer ${keyToUse}` },
+      toolCalling: true,
+      vision: supportsCopilotVisionWithCombos(id, combos),
       ...getCopilotModelLimits(id, modelContextSizes[id], combos),
     })), combos);
     return [{
@@ -380,8 +383,7 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
     }, ...((utilityModel || utilitySmallModel) ? [{
       filename: "VS Code User/settings.json (merge these keys)",
       content: JSON.stringify({
-        ...(utilityModel ? { "chat.utilityModel": `customendpoint/${utilityModel}` } : {}),
-        ...(utilitySmallModel ? { "chat.utilitySmallModel": `customendpoint/${utilitySmallModel}` } : {}),
+        "chat.byokUtilityModelDefault": "mainAgent",
       }, null, 2),
     }] : [])];
   };

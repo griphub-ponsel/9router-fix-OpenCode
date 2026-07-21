@@ -28,7 +28,12 @@ export const listHermesConfigPaths = async (fs, hermesDir) => {
   return paths;
 };
 
-export const resolveHermesContextLengths = (models, overrides = {}, catalogModels = []) => {
+export const resolveHermesContextLengths = (
+  models,
+  overrides = {},
+  catalogModels = [],
+  savedContextLengths = {}
+) => {
   const liveContexts = new Map(
     catalogModels.flatMap((entry) => {
       const contextLength = Number(entry?.capabilities?.contextWindow);
@@ -40,6 +45,8 @@ export const resolveHermesContextLengths = (models, overrides = {}, catalogModel
   return Object.fromEntries(models.flatMap((model) => {
     const override = Number(overrides?.[model]);
     if (Number.isSafeInteger(override) && override >= 1024) return [[model, override]];
+    const saved = Number(savedContextLengths?.[model]);
+    if (Number.isSafeInteger(saved) && saved >= 1024) return [[model, saved]];
     const detected = liveContexts.get(model);
     return detected ? [[model, detected]] : [];
   }));

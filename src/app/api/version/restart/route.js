@@ -51,13 +51,16 @@ export async function POST() {
 
   try {
     restartState.scheduled = true;
-    const supervised = process.env.NINEROUTER_SUPERVISED === '1';
+    // Vite dev supervisor (scripts/dev-vite.mjs): exit only — parent rebuilds API
+    // and keeps the public Vite port alive so Tailscale Funnel does not go dark.
+    const devSupervisor = process.env.NINEROUTER_DEV_SUPERVISOR === '1';
+    const supervised = process.env.NINEROUTER_SUPERVISED === '1' || devSupervisor;
     const helperPid = supervised ? null : await spawnRestartHelper();
     scheduleExit();
     return NextResponse.json({
       success: true,
       message: 'Restart scheduled',
-      mode: supervised ? 'supervised' : 'detached-helper',
+      mode: devSupervisor ? 'dev-supervisor' : supervised ? 'supervised' : 'detached-helper',
       helperPid,
     });
   } catch (error) {

@@ -7,6 +7,8 @@ description: Generate videos via 9Router /v1/videos/generations using xAI Grok I
 
 Requires `NINEROUTER_URL` (and `NINEROUTER_KEY` if auth enabled). See https://raw.githubusercontent.com/decolua/9router/refs/heads/master/skills/9router/SKILL.md for setup.
 
+On this fork the provider id is **xai-oauth** (alias **xog**, also accepts **xai/**). Model id: `xog/grok-imagine-video`.
+
 Requires a connected **xAI account** in the 9Router dashboard — either **Grok Build OAuth** (SuperGrok / X Premium+ subscription sign-in) or a direct **xAI API key** from console.x.ai. The two are separate auth types with separate billing; the dashboard shows which one each connection uses.
 
 ## Endpoints (async job flow)
@@ -24,7 +26,7 @@ Request fields (passed through to xAI unchanged — see https://docs.x.ai/develo
 
 | Field | Required | Notes |
 |---|---|---|
-| `model` | no | `xai/grok-imagine-video` (prefix is stripped before upstream) |
+| `model` | no | `xog/grok-imagine-video` (prefix is stripped before upstream) |
 | `prompt` | yes for T2V | video description |
 | `duration` | no | seconds |
 | `aspect_ratio` | no | `16:9`, `9:16`, `1:1`, `4:3`, `3:4`, `3:2`, `2:3` |
@@ -40,7 +42,7 @@ Submit a job:
 curl -X POST "$NINEROUTER_URL/v1/videos/generations" \
   -H "Authorization: Bearer $NINEROUTER_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"model":"xai/grok-imagine-video","prompt":"A cinematic tracking shot through a neon city at night","duration":8,"aspect_ratio":"16:9","resolution":"720p"}'
+  -d '{"model":"xog/grok-imagine-video","prompt":"A cinematic tracking shot through a neon city at night","duration":8,"aspect_ratio":"16:9","resolution":"720p"}'
 # → {"request_id":"abc123"}   (response header x-9router-connection-id: <id>)
 ```
 

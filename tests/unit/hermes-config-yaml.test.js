@@ -40,6 +40,17 @@ test("writes and reads a curated Hermes model list with one default", () => {
     models: config.models,
     modelNames: config.modelNames,
     modelContextLengths: config.modelContextLengths,
+    delegation: { model: "", provider: "" },
+  });
+});
+
+test("reads the 9Router base URL from the provider block when model block omits it", () => {
+  const yaml = `model:\n  default: GPT 5.6 Sol\n  provider: 9router\nproviders:\n  9router:\n    name: 9Router\n    base_url: http://127.0.0.1:20128/v1\n    models:\n      GPT 5.6 Sol:\n        target_model: cx/gpt-5.6-sol\n        display_name: GPT 5.6 Sol\n`;
+
+  assert.deepEqual(readHermesConfig(yaml).model, {
+    default: "cx/gpt-5.6-sol",
+    provider: "9router",
+    base_url: "http://127.0.0.1:20128/v1",
   });
 });
 

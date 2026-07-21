@@ -3,7 +3,8 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { log, err } = require("../logger");
-const { TOOL_HOSTS } = require("../../shared/constants/mitmToolHosts.js");
+// JSON is dual-friendly (CJS require + Vite ESM). Avoid requiring the .js ESM shim.
+const TOOL_HOSTS = require("../../shared/constants/mitmToolHosts.json");
 const { runElevatedPowerShell, isAdmin } = require("../winElevated.js");
 
 /**

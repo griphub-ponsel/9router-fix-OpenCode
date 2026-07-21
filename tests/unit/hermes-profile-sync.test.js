@@ -25,18 +25,21 @@ const catalog = {
   baseUrl: "http://127.0.0.1:20128/v1",
 };
 
-test("auto context is read from the live 9Router catalog and manual overrides win", () => {
+test("auto context follows the saved selector, then live catalog, while manual overrides win", () => {
   const result = resolveHermesContextLengths(
-    ["cx/gpt-5.6-sol", "new/model", "unknown/model"],
+    ["cx/gpt-5.6-sol", "qwen3.7-max", "new/model", "unknown/model"],
     { "cx/gpt-5.6-sol": 400_000 },
     [
       { id: "cx/gpt-5.6-sol", capabilities: { contextWindow: 1_000_000 } },
+      { id: "qwen3.7-max", capabilities: {} },
       { id: "new/model", capabilities: { contextWindow: 1_048_576 } },
       { id: "broken/model", capabilities: { contextWindow: "invalid" } },
-    ]
+    ],
+    { "qwen3.7-max": 1_000_000 }
   );
   assert.deepEqual(result, {
     "cx/gpt-5.6-sol": 400_000,
+    "qwen3.7-max": 1_000_000,
     "new/model": 1_048_576,
   });
 });
