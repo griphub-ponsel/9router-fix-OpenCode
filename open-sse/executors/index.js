@@ -25,6 +25,7 @@ import { CodeBuddyExecutor } from "./codebuddy-cn.js";
 import { MerlinExecutor } from "./merlin.js";
 import { DefaultExecutor } from "./default.js";
 import { GlmExecutor } from "./glm.js";
+import { HyperagentExecutor } from "./hyperagent.js";
 
 const executors = {
   glm: new GlmExecutor(),
@@ -58,6 +59,7 @@ const executors = {
   mmf: new MimoFreeExecutor(), // Alias for mimo-free
   "codebuddy-cn": new CodeBuddyExecutor(),
   merlin: new MerlinExecutor(),
+  hyperagent: new HyperagentExecutor(),
 };
 
 const defaultCache = new Map();
@@ -99,3 +101,4 @@ export { MimoFreeExecutor } from "./mimo-free.js";
 export { CodeBuddyExecutor } from "./codebuddy-cn.js";
 export { MerlinExecutor } from "./merlin.js";
 export { GlmExecutor } from "./glm.js";
+export { HyperagentExecutor } from "./hyperagent.js";

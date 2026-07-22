@@ -42,7 +42,7 @@ async function getInternalHeaders() {
   try {
     const keys = await getApiKeys();
     apiKey = keys.find((k) => k.isActive !== false)?.key || null;
-  } catch {}
+  } catch { /* best effort */ }
 
   const headers = { "Content-Type": "application/json" };
   if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
@@ -50,7 +50,16 @@ async function getInternalHeaders() {
   return headers;
 }
 
-export async function pingModelByKind(model, kind, baseUrl = `http://127.0.0.1:${process.env.PORT || UPDATER_CONFIG.appPort}`) {
+const DEFAULT_MODEL_TEST_TIMEOUT_MS = 15000;
+const SLOW_MODEL_TEST_TIMEOUT_MS = 60000;
+
+function getModelTestTimeoutMs(model) {
+  return /^(?:ha|hyperagent)\//.test(String(model || ""))
+    ? SLOW_MODEL_TEST_TIMEOUT_MS
+    : DEFAULT_MODEL_TEST_TIMEOUT_MS;
+}
+
+async function performModelPing(model, kind, baseUrl, timeoutMs) {
   const headers = await getInternalHeaders();
   const start = Date.now();
 
@@ -59,12 +68,12 @@ export async function pingModelByKind(model, kind, baseUrl = `http://127.0.0.1:$
       method: "POST",
       headers,
       body: JSON.stringify({ model, input: "test" }),
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     const latencyMs = Date.now() - start;
     const rawText = await res.text().catch(() => "");
     let parsed = null;
-    try { parsed = rawText ? JSON.parse(rawText) : null; } catch {}
+    try { parsed = rawText ? JSON.parse(rawText) : null; } catch { /* best effort */ }
 
     if (!res.ok) {
       const detail = parsed?.error?.message || parsed?.error || rawText;
@@ -82,12 +91,12 @@ export async function pingModelByKind(model, kind, baseUrl = `http://127.0.0.1:$
       method: "POST",
       headers,
       body: JSON.stringify({ model, prompt: "test" }),
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     const latencyMs = Date.now() - start;
     const rawText = await res.text().catch(() => "");
     let parsed = null;
-    try { parsed = rawText ? JSON.parse(rawText) : null; } catch {}
+    try { parsed = rawText ? JSON.parse(rawText) : null; } catch { /* best effort */ }
 
     if (!res.ok) {
       const detail = parsed?.error?.message || parsed?.msg || parsed?.message || parsed?.error || rawText;
@@ -111,12 +120,12 @@ export async function pingModelByKind(model, kind, baseUrl = `http://127.0.0.1:$
       method: "POST",
       headers: Object.fromEntries(Object.entries(headers).filter(([key]) => key.toLowerCase() !== "content-type")),
       body: form,
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     const latencyMs = Date.now() - start;
     const rawText = await res.text().catch(() => "");
     let parsed = null;
-    try { parsed = rawText ? JSON.parse(rawText) : null; } catch {}
+    try { parsed = rawText ? JSON.parse(rawText) : null; } catch { /* best effort */ }
 
     if (!res.ok) {
       const detail = parsed?.error?.message || parsed?.msg || parsed?.message || parsed?.error || rawText;
@@ -141,13 +150,13 @@ export async function pingModelByKind(model, kind, baseUrl = `http://127.0.0.1:$
       stream: false,
       messages: [{ role: "user", content: "hi" }],
     }),
-    signal: AbortSignal.timeout(15000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   const latencyMs = Date.now() - start;
 
   const rawText = await res.text().catch(() => "");
   let parsed = null;
-  try { parsed = rawText ? JSON.parse(rawText) : null; } catch {}
+  try { parsed = rawText ? JSON.parse(rawText) : null; } catch { /* best effort */ }
 
   if (!res.ok) {
     const detail = parsed?.error?.message || parsed?.msg || parsed?.message || parsed?.error || rawText;
@@ -190,4 +199,25 @@ export async function pingModelByKind(model, kind, baseUrl = `http://127.0.0.1:$
   }
 
   return { ok: true, latencyMs, error: null, status: res.status };
+}
+
+export async function pingModelByKind(
+  model,
+  kind,
+  baseUrl = `http://127.0.0.1:${process.env.PORT || UPDATER_CONFIG.appPort}`
+) {
+  const timeoutMs = getModelTestTimeoutMs(model);
+  try {
+    return await performModelPing(model, kind, baseUrl, timeoutMs);
+  } catch (error) {
+    if (error?.name === "TimeoutError" || error?.name === "AbortError") {
+      return {
+        ok: false,
+        latencyMs: timeoutMs,
+        error: `Model test timed out after ${timeoutMs / 1000}s`,
+        status: 504,
+      };
+    }
+    throw error;
+  }
 }

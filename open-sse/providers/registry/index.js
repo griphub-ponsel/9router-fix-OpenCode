@@ -45,6 +45,7 @@ import p43 from "./grok-cli.js";
 import p44 from "./grok-web.js";
 import p45 from "./groq.js";
 import p46 from "./huggingface.js";
+import hyperagent from "./hyperagent.js";
 import p47 from "./hyperbolic.js";
 import p48 from "./iflow.js";
 import p49 from "./inworld.js";
@@ -104,6 +105,7 @@ import p102 from "./xiaomi-tokenplan.js";
 import p103 from "./youcom.js";
 
 export default [
+  hyperagent,
   p0,
   p1,
   p2,

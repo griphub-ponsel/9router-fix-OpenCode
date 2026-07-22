@@ -165,6 +165,29 @@ describe("model test route kind routing", () => {
     );
   });
 
+  it("returns a structured model result when an upstream probe times out", async () => {
+    global.fetch = vi.fn().mockRejectedValue(
+      new DOMException("The operation was aborted due to timeout", "TimeoutError")
+    );
+
+    const { POST } = await import("../../src/app/api/models/test/route.js");
+    const req = new Request("http://localhost/api/models/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "ha/claude-fable-5" }),
+    });
+
+    const res = await POST(req);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body).toMatchObject({
+      ok: false,
+      error: "Model test timed out after 60s",
+      status: 504,
+    });
+  });
+
   it("returns formatted HTTP errors for non-2xx embedding responses", async () => {
     global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       error: { message: "bad upstream" },

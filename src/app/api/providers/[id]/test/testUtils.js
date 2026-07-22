@@ -911,6 +911,33 @@ export async function testApiKeyConnection(connection, effectiveProxy = null) {
         const valid = !!(data && data.user);
         return { valid, error: valid ? null : "Session expired — re-paste cookie" };
       }
+      case "hyperagent": {
+        let sessionToken = String(connection.apiKey || "").trim();
+        if (sessionToken.startsWith("__Host-hyperagent_session=")) {
+          sessionToken = sessionToken.slice("__Host-hyperagent_session=".length).split(";")[0];
+        }
+        if (!sessionToken) return { valid: false, error: "Missing Hyperagent session cookie" };
+        const res = await fetchWithConnectionProxy("https://hyperagent.com/api/auth/me", {
+          method: "GET",
+          headers: {
+            Accept: "application/json",
+            Cookie: `__Host-hyperagent_session=${sessionToken}`,
+            Origin: "https://hyperagent.com",
+            Referer: "https://hyperagent.com/threads/new",
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/150 Safari/537.36",
+          },
+          signal: AbortSignal.timeout(8000),
+        }, effectiveProxy);
+        if (res.status === 401 || res.status === 403) {
+          return { valid: false, error: "Hyperagent session expired — import a fresh cookie" };
+        }
+        if (!res.ok) {
+          return { valid: false, error: `Hyperagent session probe returned HTTP ${res.status}` };
+        }
+        const data = await res.json().catch(() => null);
+        const valid = !!(data && typeof data === "object" && !data.error);
+        return { valid, error: valid ? null : "Hyperagent session probe returned an unexpected response" };
+      }
       case "merlin": {
         const token = connection.apiKey.startsWith("Bearer ") ? connection.apiKey.slice(7).trim() : connection.apiKey;
         const res = await fetchWithConnectionProxy("https://www.getmerlin.in/arcane/api/v2/thread/unified", {

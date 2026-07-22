@@ -33,6 +33,13 @@ const ALLOWED_MODELS = "griphubrouter_models_placeholder".length > 0 ? [
   // CodeBuddy / ClinePass / CommandCode / Misc
   "cbcn/deepseek-v4-pro", "cbcn/deepseek-v4-flash", "cbcn/kimi-k2.7",
   "kimi-k3", "cline-pass/kimi-k3", "moonshotai/kimi-k3",
+  // Hyperagent subscription — concrete selectable model IDs from the live catalog
+  "ha/claude-fable-5", "ha/claude-opus-4-8", "ha/claude-opus-4-7", "ha/claude-opus-4-6", "ha/claude-opus-4-5-20251101",
+  "ha/claude-sonnet-5", "ha/claude-sonnet-4-6", "ha/claude-sonnet-4-5-20250929", "ha/claude-haiku-4-5-20251001",
+  "ha/openai/gpt-5.5", "ha/openai/gpt-5.6-sol", "ha/openai/gpt-5.6-terra", "ha/openai/gpt-5.6-luna",
+  "ha/moonshotai/kimi-k3", "ha/moonshotai/kimi-k2.6", "ha/zai/glm-5.2", "ha/zai/glm-5.2-fast",
+  "ha/alibaba/qwen3.7-plus", "ha/google/gemini-3.5-flash", "ha/deepseek/deepseek-v4-pro", "ha/sakana/fugu-ultra",
+  "ha/xai/grok-4.5", "ha/meta/muse-spark-1.1", "ha/thinkingmachines/inkling",
   // Ollama local
   "ollama-local/llama3.2:3b", "ollama-local/qwen2.5:7b", "ollama-local/qwen2.5-coder:7b",
 ] : [];
